@@ -1,0 +1,17 @@
+# CMake build output
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+# ESP-IDF output
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*~
