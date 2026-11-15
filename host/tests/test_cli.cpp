@@ -94,6 +94,7 @@ void exit_codes() {
     assert(run_cli({}, {}) == 2 && run_cli({"bogus"}, {}) == 2);
     assert(run_cli({"attach", "--bogus"}, {}) == 2 && run_cli({"attach", "--port"}, {}) == 2); // unknown option, missing value
     Pty pty;
+    if (!exclusive_open_is_enforced()) return void(std::puts("exit_codes: busy-port check skipped, this platform does not enforce exclusive open on a pty"));
     auto other_program = Source::open(pty.slave, 921600); // the port is taken
     assert(other_program);
     assert(run_cli({"attach", "--port", pty.slave, "--no-open", "--data-dir", (fs::temp_directory_path() / "malgrind_cli_b").string()}, {}) == 1);

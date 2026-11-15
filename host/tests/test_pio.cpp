@@ -22,7 +22,8 @@ bool any_contains(const std::vector<std::string>& v, std::string_view part) {
     return std::ranges::any_of(v, [&](const std::string& s) { return contains(s, part); });
 }
 fs::path fresh(const char* name) {
-    const auto p = fs::temp_directory_path() / name;
+    // canonical: on macOS /tmp and /var are symlinks, and the current directory is reported without them
+    const auto p = fs::canonical(fs::temp_directory_path()) / name;
     fs::remove_all(p);
     fs::create_directories(p);
     return p;

@@ -129,6 +129,7 @@ void attach_snapshot_stop() {
 void busy_port() {
     Harness h("malgrind_serve_d");
     Pty pty;
+    if (!exclusive_open_is_enforced()) return void(std::puts("busy_port: skipped, this platform does not enforce exclusive open on a pty"));
     auto other_program = Source::open(pty.slave, 921600); // somebody else has the port
     assert(other_program);
     const auto probe = h.call({{"cmd", "probe"}, {"port", pty.slave}});

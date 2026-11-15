@@ -2,6 +2,8 @@
 
 // Test helpers shared by the tests that need a serial port without a board.
 
+#include "source.hpp"
+
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -29,6 +31,15 @@ struct Pty {
         if (master >= 0) close(master), master = -1;
     }
 };
+
+// Whether a second open of a port is refused while the first holds it (TIOCEXCL). Linux enforces it on a pty; a macOS pty does
+// not, although its real serial ports do. Tests of the "port is busy" paths run only where it is enforced (elsewhere they would
+// attach successfully, and a live attach never ends by itself). Probes a pty of its own: the flag can outlive the close.
+inline bool exclusive_open_is_enforced() {
+    Pty scratch;
+    auto first = malgrind::host::Source::open(scratch.slave, 921600);
+    return first && !malgrind::host::Source::open(scratch.slave, 921600);
+}
 
 template <class Pred>
 bool wait_for(Pred pred, std::chrono::milliseconds limit = std::chrono::milliseconds(3000)) {
