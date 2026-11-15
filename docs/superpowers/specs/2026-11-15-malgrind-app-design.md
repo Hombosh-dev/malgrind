@@ -1,0 +1,193 @@
+# malgrind: desktop app design
+
+Status: draft for approval, 2026-11-15. Supersedes the CLI-plus-browser shape of `mulcan`.
+
+## 1. Intent
+
+mulcan today: an ESP32 sampling profiler with a `mulcan run|attach|detect` CLI and a live flamegraph in the browser.
+malgrind turns it into a **desktop application** (`.deb`, `.dmg`): "valgrind for microcontrollers". The user opens it,
+presses **New run** (or attaches to a board that is already running their program), and watches live analysis of
+their own firmware: flamegraph, function table, heap over time, FreeRTOS tasks, memory errors. Old runs are kept
+and can be reopened, rewound, compared and exported.
+
+Why: this is a Modern C++ course project that should also be a tool an embedded developer would really use.
+At least ~60% of the logic must be C++ (measured by lines at the end, see section 10); the rest may use any language.
+No tight deadline; everything below is expected before the defense.
+
+## 2. Goals, non-goals, anti-goals
+
+**Goals**
+- A packaged app for Linux (`.deb`) and macOS (`.dmg`, built in CI, verified by the user on a Mac).
+- Live-profile a program that is already running on the board, without resetting it (attach).
+- Four analyses, all live and all replayable from history: callgrind-like, massif-like, FreeRTOS tasks, memcheck-like.
+- History with summary, time scrubbing, diff of two runs, name and notes, export.
+- Remove the agent from a board again (section 6).
+- Overhead: about 0% while the agent sleeps; about 1.5% per 1 kHz per core while sampling (today's figure).
+  Heap checking costs more and the UI says so.
+
+**Non-goals (this version)**
+- Windows; any MCU except ESP32 classic (the core and port structure stay chip-neutral, no new ports now).
+- JTAG-probe attach and QEMU emulation.
+- Own build system or flasher: building and flashing is PlatformIO's job (`pio`).
+- Several boards at once; a background daemon (closing the window ends the run); cloud or sharing.
+- Uninitialised-memory and arbitrary invalid-read/write detection (needs emulation; this is not real memcheck).
+- Code signing and notarization. The `.dmg` is unsigned, so macOS shows a Gatekeeper warning.
+
+**Anti-goals (failure even if it "works")**
+- Changing the user's source files.
+- Leaving an agent in the firmware without the user being told.
+- Two readers on one serial port silently splitting the bytes (the port stays opened exclusively).
+- Analysis logic duplicated in TypeScript. The UI renders; the C++ sidecar computes.
+
+## 3. Approaches considered
+
+**Shell/UI stack.** (a) **Tauri**: thin Rust shell, TypeScript UI, C++ sidecar. Bundles deb/dmg/AppImage, native
+menu and dialogs, small. Costs one more toolchain (Rust). (b) C++ with `webview/webview` and CPack: all C++, but
+menus, dialogs and the macOS `.app` bundle are hand work. (c) Qt 6/QML: native C++ UI, but the flamegraph must be
+rewritten and packaging is heavy. **Chosen: (a)**, user's decision. Rust stays about 150 lines (spawn sidecar, window,
+menu, folder/save dialogs).
+
+**Data source.** (a) **Sleeping agent** in the firmware, injected at build time. (b) JTAG probe: needs ESP-Prog, ~14
+samples/s, no stacks, no heap view. (c) QEMU: exact like real valgrind but not the user's board. **Chosen: (a)**, user's
+decision. The probe stays a later option for ARM, where it is fast.
+
+## 4. Architecture
+
+```
+Tauri window (TypeScript UI)  <--HTTP/JSON, localhost + token-->  malgrind sidecar (C++20)  <--UART-->  ESP32 + agent
+        |                                                              |
+   Rust shell: window, menu,                                 serial, build orchestration (pio), symbols (addr2line),
+   folder/save dialogs, spawn sidecar                        aggregation, analyses, run store, replay, export
+```
+
+- **Sidecar** = today's `host/` tool, renamed `malgrind`, gaining a `serve` mode: starts the HTTP API on
+  `127.0.0.1` with a random port and a random token that the shell passes to the UI. Every request must carry
+  the token (other local pages or users must not be able to read the API or start a flash).
+- **UI** polls twice a second for live data, as the page does today. Time series and flamegraph both get their data
+  from the same endpoints for live and for history (a replay is the stored stream fed through the live path).
+- **Agent** = today's `core/` plus the ESP32 port, extended (section 5). It is a PlatformIO library the app ships in its resources.
+- Packaging: the sidecar is bundled as a Tauri external binary; the agent sources as app resources.
+  CMake builds the sidecar; Tauri produces the bundles.
+
+## 5. The agent
+
+**Injection, so the user's code is unchanged.** `New run` runs `pio run -t upload` for the user's project with the
+agent added through PlatformIO environment overrides (extra lib dir, build flags, sdkconfig additions) and a
+separate build directory (`.pio/malgrind/`). The user's normal `.pio/build/` is never overwritten. The agent starts
+itself during system init (no `mulcan_start()` call in user code). *Builder to confirm the exact hook
+(`ESP_SYSTEM_INIT_FN` vs a constructor plus `-u` symbol) in a spike; the requirement is "no user source change".*
+
+**Sleeping.** After boot the agent does nothing but send a tiny **hello beacon** about once a second (arch, cores, CPU
+Hz, agent version, capability bits) and listen on UART RX. When malgrind sends *start* (with rate and which
+analyses), it begins; *stop* puts it back to sleep. The beacon is also how attach detects "already running
+firmware with the agent" without a reset: open the port without toggling DTR/RTS, listen about 2 s, and fall back
+to esptool chip-id only if nothing arrives and the user agrees (esptool resets the board).
+
+**Data it can send** (new frame kinds in the existing envelope `MLC1 | len | body | crc32`; body version bumps to 2
+and gains a kind byte):
+- stack samples (exists today);
+- heap stats: free, minimum free, largest free block (fragmentation), per capability region;
+- FreeRTOS tasks: CPU share, priority, stack high-water mark;
+- allocation events for leak tracking: address, size, call stack on malloc; address on free (via linker `--wrap` of
+  the heap allocation entry points, bounded depth 16, batched);
+- error events: heap corruption (from comprehensive heap poisoning), stack overflow (FreeRTOS stack check), allocation failure.
+
+**Build option.** "Check memory errors" (heap poisoning, stack-overflow check, allocation hooks) is a checkbox at
+New run, off by default, because it changes sdkconfig and costs time and RAM. The beacon's capability bits tell the
+UI which tabs have data. *Builder to measure and show the overhead in the UI.*
+
+**Console sharing.** The agent shares UART0 with the user's `ESP_LOG` text, as today; the host separates frames from text.
+
+## 6. Flows
+
+**Open the app.** Probe for a board (serial list, then beacon listen). Then:
+- no runs and no board running: big **New run**;
+- board running with an agent: card "Your firmware is running" with **Attach live** and New run;
+- runs exist: history list, New run in the top menu. A running board adds the attach card above the list.
+- Theme follows the OS (light/dark).
+
+**New run (4 steps).** Project (folder dialog, remembered) → Board (auto-detected; a list if several) → Build &
+flash (progress and log) → Live. If `pio` is missing, one screen with the install command.
+
+**Attach.** Opens a run on the beacon-detected board, sends *start*, and uses the ELF found for the firmware
+(newest matching, as today; else the user picks one; else raw addresses with a notice). Stopping sends *stop*; the
+board keeps running.
+
+**Remove agent.** Dialog: "Rebuilds your project without malgrind and flashes it. Your code is not touched. Live
+profiling stops." It runs a plain `pio run -t upload` of the user's project (no overrides), which is why it needs
+no extra mechanism. Reachable from the sidebar footer (red) and from the board card on the start screen.
+
+**Live run.** Sidebar layout: Flamegraph | Functions | Memory | Tasks | Memcheck (red badge with the problem
+count), core and window filters in the sidebar, LIVE indicator, pause, and a **time scrubber** under the graph (follows
+"now"; dragging back rewinds; same control in history).
+
+## 7. Analyses
+
+- **Flamegraph:** as today (core filter, window, zoom).
+- **Functions (callgrind-like):** table with self and inclusive time, callers and callees of the selected function,
+  time-series strip, per core.
+- **Memory (massif-like):** heap used / free / minimum / largest free block over time; biggest allocation sites with stacks.
+- **Tasks:** CPU per task, priority, stack high-water mark with a warning near exhaustion.
+- **Memcheck-like:** leaks (allocations without free at stop or at a chosen moment, grouped by allocation stack,
+  with "definitely/possibly" by age), heap corruption events, stack overflow, fragmentation warning. All reported with
+  symbolized stacks.
+
+Honest limit, to be stated in the app: sampling is statistical; memcheck-like detects what heap poisoning,
+allocation hooks and FreeRTOS checks can see.
+
+## 8. History
+
+A run is a directory under `~/.local/share/malgrind/runs/<id>/` (macOS `~/Library/Application Support/malgrind/runs/`):
+`meta.json` (name, notes, board, firmware, start time, duration, agent version), `frames.mlg` (timestamped raw frames),
+`firmware.elf` (copy, so old runs stay symbolizable after a rebuild). Opening a run replays `frames.mlg` through
+the same aggregator.
+- Summary view, scrubbing, name and notes (edit later).
+- **Diff of two runs:** compare by function **name** from each run's own ELF (addresses differ between builds); show
+  functions that grew or shrank, as a diff flamegraph and a table.
+- Export: folded stacks, speedscope JSON, PNG of the current view.
+- Delete a run. *Storage ceiling:* uncompressed frames are roughly tens of KB/s at worst; add compression or a size
+  warning if runs get large (builder's call).
+
+## 9. Rename
+
+`mulcan` → `malgrind` for the binary, namespace, CMake targets, macros (`MALGRIND_ISR`), env vars and docs. The wire
+magic `MLC1` stays (it is a format identifier, not a brand). Repo directory name is unchanged.
+
+## 10. Language split and "C++ is 60%"
+
+C++: wire, agent, ports, store, replay, aggregation, all analyses, symbolization, board and project detection, pio
+orchestration, HTTP API, export. Rust: shell only. TypeScript: rendering and interaction only. At the end count lines
+(`cloc`, excluding generated and vendored code); target at least 60% C++, and say so in the README.
+
+UI tooling (my call): Vite + TypeScript, **Svelte** for components (compiles away, small), d3-flame-graph (already
+used) for the flamegraph, **uPlot** for time series. The builder may swap these if they prove awkward.
+
+## 11. Verification
+
+- `ctest`: core and host unit tests, extended for new frame kinds, the run store, replay and diff.
+- Sidecar integration: feed recorded or `host_runner` streams through a pty; replay golden runs.
+- Real ESP32 on `/dev/ttyUSB0` (the user shares the board: check `fuser -v /dev/ttyUSB0` first, never kill their session):
+  beacon detection without reset, start/stop, remove agent, overhead A/B.
+- `cargo tauri build` yields the `.deb` locally; the `.dmg` is built by the CI macOS job and tested by the user.
+
+## 12. Staging (all before the defense)
+
+1. Rename; sidecar `serve` API with token; run store and replay; Tauri shell; start screen, history, live flamegraph and Functions; New run, attach, remove agent; `.deb`.
+2. Agent v2: beacon, start/stop, heap stats, task stats → Memory and Tasks tabs.
+3. Allocation hooks and error events → Memcheck tab.
+4. Diff, export, polish, macOS CI `.dmg`, README and the C++ share check.
+
+## 13. Calls I made (please check)
+
+- One board at a time; closing the window ends the run; runs stored under the user data directory.
+- Agent injection via PlatformIO overrides and a separate build directory; remove agent = plain reflash.
+- Beacon while sleeping (cheap, makes attach-without-reset possible).
+- "Check memory errors" as a build-time checkbox.
+- Svelte, uPlot, token-protected localhost API.
+- `pio` required for New run; attach works without it.
+
+## 14. Left to the builder
+
+Exact ESP-IDF mechanisms (self-start hook, allocation wrapping, task stats availability, UART RX handling, avoiding
+board reset on port open), frame layouts for the new kinds, storage compression, API endpoint shapes, Svelte versus
+plain TS if Svelte gets in the way.
