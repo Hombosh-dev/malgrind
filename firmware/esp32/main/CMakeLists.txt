@@ -1,7 +1,3 @@
-idf_component_register(
-    SRCS "main.cpp"
-    INCLUDE_DIRS "."
-    REQUIRES mcu_flamegraph_core mcu_flamegraph_platform_esp32
-)
-
-target_compile_features(${COMPONENT_LIB} PUBLIC cxx_std_20)
+idf_component_register(SRCS "main.cpp" INCLUDE_DIRS "." REQUIRES mulcan esp_timer)
+# a call in tail position would replace its caller's frame and hide it from the flamegraph
+target_compile_options(${COMPONENT_LIB} PRIVATE -fno-optimize-sibling-calls)

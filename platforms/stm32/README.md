@@ -1,9 +1,12 @@
-# STM32 Platform HAL (Future Target)
+# STM32 port (not started)
 
-This directory is reserved for the STM32 Cortex-M HAL backend (e.g. STM32F4 / STM32H7):
-- `DWT->CYCCNT` cycle counter implementation
-- ARM Cortex-M SysTick / TIMx periodic sampling timer
-- ARM Cortex-M frame pointer / LR stack unwinding
-- USB-CDC / UART transport
+A Cortex-M port follows the contract in the top-level README ("Adding an MCU"), with `Arch::ArmV7M`:
 
-Implements `mcu_flamegraph::PlatformBackend` concept without changing any code in `core/`.
+- periodic timer (TIMx or SysTick) calling `Profiler::record()`;
+- stack unwinding from the exception frame: the stacked PC is the exact leaf, then walk frames
+  (frame pointers via `-fno-omit-frame-pointer`, or unwind tables);
+- UART (or USB-CDC) transport for `Profiler::flush()`;
+- `DWT->CYCCNT` for `isr_cycles` and the flush cost.
+
+Zero-overhead alternative for the future probe mode: PC sampling through `DWT_PCSR` (no halt) or SWO
+(see orbuculum). It gives a flat profile only.

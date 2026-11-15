@@ -15,3 +15,10 @@ managed_components/
 .idea/
 *.swp
 *~
+
+# PlatformIO / Python
+.pio/
+__pycache__/
+*.egg-info/
+
+sdkconfig.esp32dev*
