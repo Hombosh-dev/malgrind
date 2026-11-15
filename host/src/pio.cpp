@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -22,6 +23,13 @@ std::optional<fs::path> find_in_path(const std::string& name) {
     for (std::string dir; std::getline(dirs, dir, ':');)
         if (std::error_code ec; !dir.empty() && fs::exists(fs::path(dir) / name, ec)) return fs::path(dir) / name;
     return std::nullopt;
+}
+
+// pio runs with `-d <project>`, which changes its directory: every path handed to it must be absolute.
+fs::path absolute_path(const fs::path& path) {
+    auto abs = fs::absolute(path).lexically_normal();
+    if (abs.filename().empty() && abs != abs.root_path()) abs = abs.parent_path(); // "/a/b/" -> "/a/b"
+    return abs;
 }
 
 std::string slurp(const fs::path& file) {
@@ -59,7 +67,8 @@ std::optional<fs::path> find_pio(const fs::path& home) {
     return std::nullopt;
 }
 
-std::optional<ProjectInfo> read_project(const fs::path& dir, std::string& why) {
+std::optional<ProjectInfo> read_project(const fs::path& given, std::string& why) {
+    const fs::path dir = absolute_path(given);
     // espidf.py of PlatformIO: "Detected a whitespace character in project paths" -> stop early with a clear reason
     if (dir.string().find(' ') != std::string::npos) {
         why = "PlatformIO cannot build an ESP-IDF project in a folder whose path contains a space: " + dir.string();
@@ -73,6 +82,7 @@ std::optional<ProjectInfo> read_project(const fs::path& dir, std::string& why) {
     ProjectInfo info{dir, {}, {}};
     std::vector<std::string> default_envs;
     std::string section;
+    std::map<std::string, std::map<std::string, std::string>> settings; // section -> key -> value
     bool in_default_envs = false;
     for (std::string raw; std::getline(in, raw);) {
         const bool indented = !raw.empty() && std::isspace(static_cast<unsigned char>(raw.front()));
@@ -94,6 +104,18 @@ std::optional<ProjectInfo> read_project(const fs::path& dir, std::string& why) {
             add_names(line); // a multi-line value
         } else {
             in_default_envs = false;
+            if (const auto eq = line.find('='); eq != std::string::npos && !indented) settings[section][trim(line.substr(0, eq))] = trim(line.substr(eq + 1));
+        }
+    }
+    for (const auto& env : info.envs) {
+        for (const char* key : {"platform", "framework"}) {
+            auto& target = std::string_view(key) == "platform" ? info.platforms : info.frameworks;
+            for (const auto& section : {"env:" + env, std::string("env")}) {
+                const auto s = settings.find(section);
+                if (s == settings.end() || !s->second.contains(key)) continue;
+                target[env] = s->second.at(key);
+                break;
+            }
         }
     }
     if (info.envs.empty()) {
@@ -130,7 +152,7 @@ std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
 
 Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
                        const fs::path& agent_dir) {
-    const fs::path agent_files = agent_dir / "agent/esp32";
+    const fs::path agent_files = absolute_path(agent_dir) / "agent/esp32";
     const auto agent_keys = slurp(agent_files / "sdkconfig.agent");
     if (agent_keys.empty() || !fs::exists(agent_files / "inject.py"))
         throw std::runtime_error("the agent files are missing from " + agent_files.string());
@@ -142,7 +164,7 @@ Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const st
     if (!fs::exists(sdkconfig)) throw std::runtime_error("cannot write " + sdkconfig.string());
 
     return {{pio.string(), "run", "-d", project.dir.string(), "-e", env, "-t", "upload", "--upload-port", port},
-            {"PLATFORMIO_BUILD_DIR=" + out.string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent_files / "inject.py").string(),
+            {"PLATFORMIO_BUILD_DIR=" + (out / "build").string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent_files / "inject.py").string(),
              "MALGRIND_AGENT_DIR=" + agent_files.string(), "MALGRIND_SDKCONFIG=" + sdkconfig.string()}};
 }
 
@@ -151,7 +173,7 @@ Invocation plain_flash(const fs::path& pio, const ProjectInfo& project, const st
 }
 
 fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
-    return project.dir / ".pio/malgrind" / env / "firmware.elf";
+    return project.dir / ".pio/malgrind/build" / env / "firmware.elf";
 }
 
 std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {

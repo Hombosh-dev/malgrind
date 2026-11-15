@@ -1,4 +1,5 @@
 // PlatformIO integration self-check: project parsing, the sdkconfig merge, the build invocation and process output.
+#include "ops.hpp"
 #include "pio.hpp"
 #include "process.hpp"
 
@@ -55,6 +56,59 @@ void read_envs() {
     fs::remove_all(dir);
 }
 
+// pio runs with `-d <project>` and so changes directory: no path it is given may depend on where we run.
+// The agent is an ESP-IDF component: other frameworks and chips build and flash fine, and then show nothing.
+void unsupported_projects_are_refused() {
+    const auto dir = fresh("malgrind_pio_fw");
+    const auto prepare = [&](const char* ini, const char* env) {
+        write(dir / "platformio.ini", ini);
+        fs::create_directories(dir / "bin");
+        write(dir / "bin/pio", "#!/bin/sh\n");
+        setenv("PATH", (dir / "bin").c_str(), 1);
+        try {
+            (void)prepare_project(dir, dir, env, "/dev/ttyUSB0");
+            return std::string("ok");
+        } catch (const std::exception& e) {
+            return std::string(e.what());
+        }
+    };
+    assert(prepare("[env:a]\nplatform = espressif32\nframework = espidf\n", "a") == "ok");
+    assert(prepare("[env:a]\nplatform = espressif32@6.9.0\nframework = arduino, espidf\n", "a") == "ok"); // IDF with Arduino as a component
+    assert(prepare("[env:a]\nboard = esp32dev\n", "a") == "ok"); // nothing said (extends, a shared section...): let the build decide
+    assert(prepare("[env]\nframework = espidf\n[env:a]\nplatform = espressif32\n", "a") == "ok"); // the shared [env] section counts
+    assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = arduino\n", "a"), "arduino"));
+    assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = arduino\n[env:b]\nframework = espidf\n", "a"), "espidf")); // per env
+    assert(contains(prepare("[env:a]\nplatform = ststm32\nframework = stm32cube\n", "a"), "ESP32"));
+    assert(contains(prepare("[env:a]\nplatform = espressif32\n", "missing"), "no environment"));
+    fs::remove_all(dir);
+}
+
+void relative_paths_become_absolute() {
+    const auto dir = fresh("malgrind_pio_rel");
+    write(dir / "proj/platformio.ini", "[env:esp32dev]\n");
+    write(dir / "agent-copy/agent/esp32/inject.py", "");
+    write(dir / "agent-copy/agent/esp32/sdkconfig.agent", "CONFIG_X=1\n");
+    const auto saved = fs::current_path();
+    fs::current_path(dir);
+
+    std::string why;
+    const auto p = read_project("proj", why);
+    assert(p && p->dir == dir / "proj");
+
+    const auto inv = agent_build("/opt/pio", *p, "esp32dev", "/dev/ttyUSB0", "agent-copy"); // a relative --agent-dir too
+    for (const auto& entry : inv.env) {
+        const auto value = entry.substr(entry.find('=') + 1);
+        assert(value.starts_with("/") || value.starts_with("pre:/")); // every path in the environment is absolute
+    }
+    assert(fs::path(inv.argv[3]).is_absolute());
+
+    fs::current_path(dir / "proj");
+    const auto here = read_project(".", why);
+    assert(here && here->dir == dir / "proj"); // neither "/." nor a trailing "/"
+    fs::current_path(saved);
+    fs::remove_all(dir);
+}
+
 void merge_keeps_user_keys() {
     const auto agent = slurp(fs::path(MALGRIND_SOURCE_DIR) / "agent/esp32/sdkconfig.agent");
     assert(contains(agent, "CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600"));
@@ -80,7 +134,7 @@ void agent_build_leaves_the_project_alone() {
 
     assert(inv.argv == (std::vector<std::string>{"/opt/pio", "run", "-d", dir.string(), "-e", "esp32dev", "-t", "upload",
                                                  "--upload-port", "/dev/ttyUSB0"}));
-    assert(std::ranges::find(inv.env, "PLATFORMIO_BUILD_DIR=" + (dir / ".pio/malgrind").string()) != inv.env.end());
+    assert(std::ranges::find(inv.env, "PLATFORMIO_BUILD_DIR=" + (dir / ".pio/malgrind/build").string()) != inv.env.end());
     assert(std::ranges::find(inv.env, "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent / "agent/esp32/inject.py").string()) != inv.env.end());
     assert(std::ranges::find(inv.env, "MALGRIND_AGENT_DIR=" + (agent / "agent/esp32").string()) != inv.env.end());
     assert(std::ranges::find(inv.env, "MALGRIND_SDKCONFIG=" + (dir / ".pio/malgrind/sdkconfig.esp32dev").string()) != inv.env.end());
@@ -88,7 +142,8 @@ void agent_build_leaves_the_project_alone() {
     const auto merged = slurp(dir / ".pio/malgrind/sdkconfig.esp32dev");
     assert(contains(merged, "CONFIG_A=1") && contains(merged, "BAUDRATE=921600") && !contains(merged, "115200"));
     assert(slurp(dir / "sdkconfig.esp32dev") == before); // the user's own file is untouched
-    assert(agent_elf(project, "esp32dev") == dir / ".pio/malgrind/esp32dev/firmware.elf");
+    assert(fs::exists(dir / ".pio/malgrind/sdkconfig.esp32dev") && !fs::exists(dir / ".pio/malgrind/build")); // the seed is not in the dir pio wipes
+    assert(agent_elf(project, "esp32dev") == dir / ".pio/malgrind/build/esp32dev/firmware.elf");
     fs::remove_all(dir.parent_path());
 }
 
@@ -120,6 +175,8 @@ void run_lines_streams() {
 
 int main() {
     read_envs();
+    unsupported_projects_are_refused();
+    relative_paths_become_absolute();
     merge_keeps_user_keys();
     agent_build_leaves_the_project_alone();
     plain_flash_has_no_agent();

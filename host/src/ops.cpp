@@ -47,6 +47,13 @@ Prepared prepare_project(const std::filesystem::path& home, const std::filesyste
     if (env.empty()) env = project->default_env;
     if (std::ranges::find(project->envs, env) == project->envs.end())
         throw std::runtime_error(std::format("platformio.ini has no environment '{}'", env));
+    // The agent is an ESP-IDF component for ESP32. Anything else would build and flash, and then simply show nothing.
+    const auto platform = project->platforms.find(env);
+    if (platform != project->platforms.end() && !platform->second.starts_with("espressif32"))
+        throw std::runtime_error(std::format("environment '{}' uses platform '{}': malgrind supports ESP32 (platform espressif32) only", env, platform->second));
+    const auto framework = project->frameworks.find(env);
+    if (framework != project->frameworks.end() && framework->second.find("espidf") == std::string::npos)
+        throw std::runtime_error(std::format("environment '{}' uses framework '{}': the malgrind agent needs the ESP-IDF framework (framework = espidf)", env, framework->second));
     return {*pio, std::move(*project), std::move(env), std::move(port)};
 }
 

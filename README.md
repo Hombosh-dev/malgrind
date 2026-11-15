@@ -144,7 +144,7 @@ cd firmware/esp32
 pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0    # plain: no profiler
 # agent build: exactly what the malgrind app runs (see host/src/pio.hpp), with sdkconfig = yours + agent/esp32/sdkconfig.agent
 MALGRIND_AGENT_DIR=$PWD/../../agent/esp32 MALGRIND_SDKCONFIG=$PWD/.pio/malgrind/sdkconfig.esp32dev \
-PLATFORMIO_EXTRA_SCRIPTS=pre:$PWD/../../agent/esp32/inject.py PLATFORMIO_BUILD_DIR=$PWD/.pio/malgrind \
+PLATFORMIO_EXTRA_SCRIPTS=pre:$PWD/../../agent/esp32/inject.py PLATFORMIO_BUILD_DIR=$PWD/.pio/malgrind/build \
   pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0
 ```
 

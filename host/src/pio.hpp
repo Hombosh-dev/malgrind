@@ -6,11 +6,11 @@
 //
 // Agent build, found working on espressif32@6.9.0 / ESP-IDF 5.3.1. The user's project is not modified; all output goes
 // to <project>/.pio/malgrind/. Environment of the `pio run` call:
-//   PLATFORMIO_BUILD_DIR     <project>/.pio/malgrind
+//   PLATFORMIO_BUILD_DIR     <project>/.pio/malgrind/build
 //   PLATFORMIO_EXTRA_SCRIPTS pre:<agent-dir>/agent/esp32/inject.py   (adds the `malgrind` IDF component and points the
 //                                                                      build at MALGRIND_SDKCONFIG)
 //   MALGRIND_AGENT_DIR       <agent-dir>/agent/esp32
-//   MALGRIND_SDKCONFIG       <project>/.pio/malgrind/sdkconfig.<env>   (the user's sdkconfig.<env> with the keys of
+//   MALGRIND_SDKCONFIG       <project>/.pio/malgrind/sdkconfig.<env>   (NOT inside the build dir; the user's sdkconfig.<env> with the keys of
 //                                                                      agent/esp32/sdkconfig.agent replaced, see below)
 // Command: pio run -d <project> -e <env> -t upload --upload-port <port>
 // (`pio run` has no -O option; options reach the IDF builder only through the pre-script.)
@@ -19,12 +19,16 @@
 //  * sdkconfig merge: an agent key replaces BOTH forms of the user's line (`CONFIG_X=..` and `# CONFIG_X is not set`);
 //    sdkconfig.agent lists `# CONFIG_ESP_CONSOLE_UART_DEFAULT is not set` too, because DEFAULT/CUSTOM are one Kconfig
 //    choice and a user's DEFAULT=y would otherwise win. Without it the console stayed at 115200.
-//  * Never delete only part of .pio/malgrind: a stale CMake configuration keeps old link flags.
+//  * PlatformIO deletes its whole build directory when it has no project.checksum (every first build). The seeded
+//    sdkconfig therefore lives next to the build directory, not in it. (A spike that reused an old directory hid this.)
+//  * Paths given to pio must be absolute: `-d <project>` makes pio change directory. A relative project path once
+//    created <project>/<project>/.pio/malgrind and flashed a firmware built from default settings.
 //  * PlatformIO's IDF builder refuses a project path containing a space (espidf.py checks BUILD_DIR).
 //  * IDF's WHOLE_ARCHIVE is unusable under PlatformIO (it sorts link flags, so --whole-archive lands around everything);
 //    the agent object is forced into the link with `-u malgrind_autostart_link` instead.
 
 #include <filesystem>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -39,6 +43,9 @@ struct ProjectInfo {
     std::filesystem::path dir;
     std::vector<std::string> envs; // [env:NAME] sections, in file order
     std::string default_env;       // first of [platformio] default_envs that exists, else the first env
+    // `platform` and `framework` of each env (its own, else the shared [env] section's); an env that says nothing has no entry
+    // (it may inherit through `extends`, which is not followed)
+    std::map<std::string, std::string> platforms, frameworks;
 };
 
 // Reads dir/platformio.ini. On failure `why` says what is wrong (no file, no env, a space in the path).

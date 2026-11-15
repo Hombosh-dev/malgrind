@@ -129,7 +129,7 @@ int main() {
     assert(!find_elf(Arch::RiscV32, root));                                  // nothing built for it
     assert(!elf_machine(root / "firmware/a/platformio.ini"));                // not an ELF
     // an agent build (.pio/malgrind) wins over newer ordinary builds: it is the firmware that sends frames
-    const auto agent_elf = root / "firmware/a/.pio/malgrind/esp32dev/firmware.elf";
+    const auto agent_elf = root / "firmware/a/.pio/malgrind/build/esp32dev/firmware.elf";
     fake_elf(agent_elf, 94);
     fs::last_write_time(agent_elf, fs::file_time_type::clock::now() - 100s);
     assert(find_elf(Arch::Xtensa, root) == agent_elf);

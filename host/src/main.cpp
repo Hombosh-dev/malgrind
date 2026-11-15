@@ -6,14 +6,44 @@
 
 #include <csignal>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string_view>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 namespace {
 
 #ifndef MALGRIND_DEFAULT_AGENT_DIR
 #define MALGRIND_DEFAULT_AGENT_DIR ""
 #endif
+
+std::filesystem::path executable_dir() {
+#ifdef __APPLE__
+    char buf[4096];
+    std::uint32_t size = sizeof buf;
+    if (_NSGetExecutablePath(buf, &size) == 0) return std::filesystem::path(buf).parent_path();
+#else
+    std::error_code ec;
+    if (const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec); !ec) return exe.parent_path();
+#endif
+    return {};
+}
+
+// Where agent/esp32/ is: $MALGRIND_AGENT_DIR, else the app's resources next to this executable (.deb: /usr/lib/malgrind,
+// .app: Contents/Resources), else the repository this binary was built from.
+std::string default_agent_dir() {
+    namespace fs = std::filesystem;
+    if (const char* env = std::getenv("MALGRIND_AGENT_DIR"); env && *env) return env;
+    if (const auto exe = executable_dir(); !exe.empty()) {
+        for (const char* rel : {"agent-src", "../lib/malgrind/agent-src", "../Resources/agent-src"}) {
+            const auto candidate = (exe / rel).lexically_normal();
+            if (std::error_code ec; fs::exists(candidate / "agent/esp32/inject.py", ec)) return candidate.string();
+        }
+    }
+    return MALGRIND_DEFAULT_AGENT_DIR;
+}
 
 constexpr std::string_view kServeUsage = "malgrind-cli serve [--data-dir DIR] [--agent-dir DIR]\n";
 
@@ -28,8 +58,7 @@ int main(int argc, char** argv) {
     }
 
     const char* home = std::getenv("HOME");
-    const char* agent = std::getenv("MALGRIND_AGENT_DIR");
-    ServeOptions options{RunStore::default_root(), agent ? agent : MALGRIND_DEFAULT_AGENT_DIR, home ? home : ""};
+    ServeOptions options{RunStore::default_root(), default_agent_dir(), home ? home : ""};
 
     std::signal(SIGPIPE, SIG_IGN); // a closed browser connection or app must not kill us before the run is saved
     // SIGINT/SIGTERM end the blocking read of `serve` (no SA_RESTART) and make attach/run finish: the live run is closed properly

@@ -64,7 +64,7 @@ std::optional<fs::path> find_elf(Arch arch, const fs::path& base, const fs::path
     std::vector<fs::path> agent_builds, other_builds;
     std::error_code ec;
     for (const auto& dir : dirs) {
-        for (const auto& env : fs::directory_iterator(dir / ".pio/malgrind", ec))
+        for (const auto& env : fs::directory_iterator(dir / ".pio/malgrind/build", ec))
             agent_builds.push_back(env.path() / "firmware.elf");
         for (const auto& env : fs::directory_iterator(dir / ".pio/build", ec))
             other_builds.push_back(env.path() / "firmware.elf");

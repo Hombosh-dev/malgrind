@@ -48,10 +48,10 @@ public:
     int run(std::istream& in) {
         for (std::string line; std::getline(in, line);)
             if (!line.empty()) handle_line(line);
-        // The app is gone: close the live run so it keeps its length.
-        set_session(nullptr);
-        // ponytail: an upload that is still running is waited for; kill its process group if that proves too slow
+        // The app is gone. A build that is still running is waited for first: it may start a run when it finishes,
+        // and that run must be closed too. ponytail: kill pio's process group if waiting proves too slow.
         if (worker_.joinable()) worker_.join();
+        set_session(nullptr); // closes the live run so it keeps its length
         return 0;
     }
 

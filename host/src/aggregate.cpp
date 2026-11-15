@@ -84,19 +84,25 @@ void Aggregator::for_each_stack(std::optional<unsigned> core, Ms window, std::op
     }
 }
 
+Aggregator::StackCounts Aggregator::collect(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
+    StackCounts counts;
+    for_each_stack(core, window, at, [&](const Stack& s, unsigned) { counts[s.pcs] += s.count; });
+    return counts;
+}
+
 std::string Aggregator::snapshot_json(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
     std::scoped_lock lock(mutex_);
     Node root{"all", 0, {}};
-    for_each_stack(core, window, at, [&](const Stack& s, unsigned) {
-        root.value += s.count;
+    for (const auto& [pcs, count] : collect(core, window, at)) {
+        root.value += count;
         Node* node = &root;
-        for (const auto& name : names(s.pcs)) {
+        for (const auto& name : names(pcs)) {
             auto it = std::ranges::find(node->children, name, &Node::name);
             if (it == node->children.end()) it = node->children.insert(it, Node{name, 0, {}});
-            it->value += s.count;
+            it->value += count;
             node = &*it;
         }
-    });
+    }
     std::string out = "{\"tree\":";
     append_tree(out, root);
     out += ",\"stats\":" + stats_json(at.value_or(duration_unlocked())) + "}";
@@ -110,20 +116,20 @@ std::string Aggregator::functions_json(std::optional<unsigned> core, Ms window, 
     std::map<std::string, Counts> functions;
     std::map<std::string, std::uint64_t> callers, callees;
     std::uint64_t total = 0;
-    for_each_stack(core, window, at, [&](const Stack& s, unsigned) {
-        auto n = names(s.pcs);
-        if (n.empty()) return;
-        total += s.count;
-        functions[n.back()].self += s.count;
+    for (const auto& [pcs, count] : collect(core, window, at)) {
+        auto n = names(pcs);
+        if (n.empty()) continue;
+        total += count;
+        functions[n.back()].self += count;
         for (std::size_t i = 0; i < n.size(); ++i) {
             if (n[i] == focus) {
-                if (i > 0) callers[n[i - 1]] += s.count;
-                if (i + 1 < n.size()) callees[n[i + 1]] += s.count;
+                if (i > 0) callers[n[i - 1]] += count;
+                if (i + 1 < n.size()) callees[n[i + 1]] += count;
             }
         }
         std::ranges::sort(n);
-        for (auto it = n.begin(); it != n.end(); it = std::ranges::upper_bound(it, n.end(), *it)) functions[*it].total += s.count;
-    });
+        for (auto it = n.begin(); it != n.end(); it = std::ranges::upper_bound(it, n.end(), *it)) functions[*it].total += count;
+    }
     std::vector<std::pair<std::string, Counts>> sorted(functions.begin(), functions.end());
     std::ranges::stable_sort(sorted, [](const auto& a, const auto& b) {
         return std::tie(b.second.self, b.second.total) < std::tie(a.second.self, a.second.total);

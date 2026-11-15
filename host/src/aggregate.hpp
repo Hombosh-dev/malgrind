@@ -49,6 +49,9 @@ private:
     [[nodiscard]] std::vector<std::string> names(const std::vector<std::uint32_t>& pcs) const;
     // Calls f(stack, core) for every stack of the frames in range. Caller holds mutex_.
     template <class F> void for_each_stack(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const;
+    // Samples per distinct stack in range, so each stack is symbolized once however often it was sampled. Caller holds mutex_.
+    using StackCounts = std::map<std::vector<std::uint32_t>, std::uint64_t>;
+    [[nodiscard]] StackCounts collect(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const;
     [[nodiscard]] Ms duration_unlocked() const; // caller holds mutex_
     [[nodiscard]] std::string stats_json(Ms at) const;
 
