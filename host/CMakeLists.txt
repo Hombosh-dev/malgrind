@@ -1,7 +1,11 @@
+include(FetchContent)
+FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_MakeAvailable(nlohmann_json)
+
 add_library(malgrind_host STATIC
     src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp)
 target_include_directories(malgrind_host PUBLIC src)
-target_link_libraries(malgrind_host PUBLIC malgrind_core)
+target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
 target_compile_options(malgrind_host PUBLIC -Wall -Wextra)
 

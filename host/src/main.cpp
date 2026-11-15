@@ -188,7 +188,7 @@ int attach(const Options& o) {
                 std::cerr << std::format("\nmalgrind: {}, {} core(s) -> {}\n", arch_name(frame.arch), frame.ncores, url);
                 if (o.get("no-open").empty()) open_browser(url);
             }
-            aggregator->add(std::move(frame));
+            aggregator->add(std::move(frame), std::chrono::duration_cast<Aggregator::Ms>(std::chrono::steady_clock::now() - started));
         }
     }
     if (aggregator && !o.get("folded").empty()) std::ofstream(o.get("folded")) << aggregator->folded();
