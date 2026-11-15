@@ -3,7 +3,7 @@ FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases
 FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
@@ -32,3 +32,9 @@ add_executable(test_session tests/test_session.cpp)
 target_link_libraries(test_session PRIVATE malgrind_host)
 target_compile_options(test_session PRIVATE -UNDEBUG)
 add_test(NAME session COMMAND test_session)
+
+add_executable(test_pio tests/test_pio.cpp)
+target_link_libraries(test_pio PRIVATE malgrind_host)
+target_compile_options(test_pio PRIVATE -UNDEBUG)
+target_compile_definitions(test_pio PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME pio COMMAND test_pio)

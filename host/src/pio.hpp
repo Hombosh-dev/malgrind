@@ -1,6 +1,8 @@
 #pragma once
 
-// PlatformIO integration (filled in by the PlatformIO task; this comment records the spike that proved the mechanism).
+// PlatformIO integration: finding pio, reading the project, building with the agent injected, flashing without it.
+//
+// How the agent gets in (found with a spike):
 //
 // Agent build, found working on espressif32@6.9.0 / ESP-IDF 5.3.1. The user's project is not modified; all output goes
 // to <project>/.pio/malgrind/. Environment of the `pio run` call:
@@ -21,3 +23,51 @@
 //  * PlatformIO's IDF builder refuses a project path containing a space (espidf.py checks BUILD_DIR).
 //  * IDF's WHOLE_ARCHIVE is unusable under PlatformIO (it sorts link flags, so --whole-archive lands around everything);
 //    the agent object is forced into the link with `-u malgrind_autostart_link` instead.
+
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace malgrind::host {
+
+// The `pio` executable: PATH first, then PlatformIO's own installs under `home` (a GUI app often lacks the shell's PATH).
+[[nodiscard]] std::optional<std::filesystem::path> find_pio(const std::filesystem::path& home);
+
+struct ProjectInfo {
+    std::filesystem::path dir;
+    std::vector<std::string> envs; // [env:NAME] sections, in file order
+    std::string default_env;       // first of [platformio] default_envs that exists, else the first env
+};
+
+// Reads dir/platformio.ini. On failure `why` says what is wrong (no file, no env, a space in the path).
+[[nodiscard]] std::optional<ProjectInfo> read_project(const std::filesystem::path& dir, std::string& why);
+
+// The user's sdkconfig with the agent's keys applied: every `CONFIG_X=..` or `# CONFIG_X is not set` line whose key the
+// agent sets is dropped, then the agent's key lines are appended. Other user lines stay, in order.
+[[nodiscard]] std::string merge_sdkconfig(std::string_view user, std::string_view agent);
+
+struct Invocation {
+    std::vector<std::string> argv;
+    std::vector<std::string> env; // "NAME=value", added to the environment of the child
+};
+
+// Builds the project with the agent and uploads it. `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
+// Writes <project>/.pio/malgrind/sdkconfig.<env>; nothing else of the project is touched. Throws std::runtime_error
+// if the agent files are missing.
+[[nodiscard]] Invocation agent_build(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
+                                     const std::string& port, const std::filesystem::path& agent_dir);
+
+// The user's own firmware, built and uploaded as PlatformIO would: this is what "remove agent" runs.
+[[nodiscard]] Invocation plain_flash(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
+                                     const std::string& port);
+
+// The ELF agent_build produces (it symbolizes the frames the flashed board sends).
+[[nodiscard]] std::filesystem::path agent_elf(const ProjectInfo& project, const std::string& env);
+
+// "ESP32-D0WD-V3 (revision v3.1)" etc. through esptool, which resets the board. nullopt if esptool cannot be run.
+[[nodiscard]] std::optional<std::string> chip_id(const std::filesystem::path& pio, const std::string& port,
+                                                 const std::filesystem::path& home);
+
+} // namespace malgrind::host
