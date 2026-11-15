@@ -5,6 +5,7 @@
 #include "store.hpp"
 
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>

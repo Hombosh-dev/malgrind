@@ -30,8 +30,9 @@ Download from the repository's **Releases** page:
 
 - **Linux:** `malgrind_<version>_amd64.deb` (Ubuntu 24.04 or newer), then `sudo apt install ./malgrind_<version>_amd64.deb`.
   It installs the app (`malgrind`) and the terminal tool (`malgrind-cli`).
-- **macOS:** `malgrind_<version>_aarch64.dmg` (Apple silicon, macOS 13.3 or newer). It is **not signed**, so the first start needs
-  right-click, Open. Built by CI but not yet tried on a Mac.
+- **macOS:** `malgrind_<version>_aarch64.dmg` (Apple silicon, macOS 13.3 or newer). It is only ad-hoc signed, not notarized, so
+  macOS will warn on the first start: allow it in System Settings, Privacy & Security ("Open Anyway"), or run
+  `xattr -dr com.apple.quarantine /Applications/malgrind.app`. **Built by CI, never yet tried on a Mac.**
 
 `SHA256SUMS` lists the checksums of the files.
 

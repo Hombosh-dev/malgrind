@@ -1,15 +1,28 @@
 <script lang="ts">
+  import { onMount, untrack } from 'svelte';
   import BuildLog from './BuildLog.svelte';
   import ProjectPicker from './ProjectPicker.svelte';
   import type { Sidecar } from '../lib/sidecar';
 
   interface Props {
     sidecar: Sidecar;
-    port: string;
+    port: string; // the board to reflash; empty: choose among the serial ports found
     onDone(): void;
     onCancel(): void;
   }
-  let { sidecar, port, onDone, onCancel }: Props = $props();
+  let { sidecar, port: given, onDone, onCancel }: Props = $props();
+
+  let port = $state(untrack(() => given));
+  let ports = $state<string[]>([]);
+  let portsKnown = $state(false);
+
+  onMount(async () => {
+    if (!port) {
+      ports = await sidecar.call<string[]>('ports');
+      port = ports[0] ?? '';
+    }
+    portsKnown = true;
+  });
 
   let dir = $state('');
   let env = $state('');
@@ -42,12 +55,18 @@
       Rebuilds your project without malgrind and flashes it. The board runs your original firmware again. Your code is not touched.
       Live profiling stops.
     </p>
-    <p class="muted">Port <code>{port}</code></p>
+    {#if ports.length > 1}
+      <label class="muted">Port <select bind:value={port}>{#each ports as p}<option>{p}</option>{/each}</select></label>
+    {:else if port}
+      <p class="muted">Port <code>{port}</code></p>
+    {:else if portsKnown}
+      <p class="error" role="alert">No serial port found. Connect the board first.</p>
+    {/if}
     <ProjectPicker {sidecar} bind:dir bind:env bind:valid />
     {#if started}<BuildLog {lines} busy={working} />{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button class="btn danger" disabled={!valid || working} onclick={remove}>{working ? 'Flashing…' : 'Remove & flash'}</button>
+      <button class="btn danger" disabled={!valid || !port || working} onclick={remove}>{working ? 'Flashing…' : 'Remove & flash'}</button>
       <button class="btn ghost" disabled={working} onclick={onCancel}>Cancel</button>
     </div>
   </div>

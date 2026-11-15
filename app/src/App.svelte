@@ -28,9 +28,14 @@
       sidecar = await startSidecar();
       hello = await sidecar.call<Hello>('hello');
       await installMenu({
-        newRun: () => (screen = 'newrun'),
+        // a run being recorded (or shown) is closed first: the engine refuses a new run while one is live
+        newRun: async () => {
+          if (screen === 'newrun') return;
+          await sidecar?.call('stop').catch(() => {});
+          screen = 'newrun';
+        },
         stop: () => screen === 'run' && sidecar?.call('stop').finally(() => (screen = 'start')),
-        removeAgent: () => (removingPort = ''),
+        removeAgent: () => (removingPort = live && screen === 'run' ? (run?.port ?? '') : ''), // '' = the dialog picks the port
       });
     } catch (e) {
       fatal = String(e instanceof Error ? e.message : e);

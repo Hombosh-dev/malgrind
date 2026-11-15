@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -18,8 +20,12 @@
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <map>
+#include <memory>
 #include <optional>
+#include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace fs = std::filesystem;

@@ -6,11 +6,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
 #include <format>
 #include <iterator>
+#include <tuple>
 
 namespace fs = std::filesystem;
 
