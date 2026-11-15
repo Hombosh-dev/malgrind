@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mulcan</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#6b7280; --line:#d8dce2; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#14171c; --fg:#e6e8eb; --muted:#8b93a1; --line:#2c323b; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui, sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:8px 20px; align-items:baseline; padding:12px 16px; border-bottom:1px solid var(--line); }
+  h1 { font-size:16px; margin:0 8px 0 0; }
+  .stat b { font-variant-numeric:tabular-nums; }
+  .stat span { color:var(--muted); }
+  label { color:var(--muted); }
+  select { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+  #chart { padding:12px 16px; }
+  #msg { padding:12px 16px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>mulcan</h1>
+  <span class="stat" id="target"></span>
+  <span class="stat"><span>samples/s</span> <b id="sps">-</b></span>
+  <span class="stat"><span>dropped</span> <b id="drop">-</b></span>
+  <span class="stat"><span>overhead</span> <b id="ovh">-</b></span>
+  <label>core <select id="core"><option>all</option></select></label>
+  <label>window <select id="win">
+    <option value="5">5 s</option><option value="10" selected>10 s</option>
+    <option value="30">30 s</option><option value="60">60 s</option><option value="0">since start</option></select></label>
+  <label><input type="checkbox" id="pause"> pause</label>
+</header>
+<div id="msg">Waiting for frames from the target...</div>
+<div id="chart"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+// no animation: a transition is still running when the next update (500 ms) arrives, which looks like jitter
+const chart = flamegraph().width(Math.max(320, innerWidth - 32)).cellHeight(18).sort(true).transitionDuration(0);
+let drawn = false, cores = 0, shown = null;
+
+// Samples arrive in bursts and a short window holds only a few dozen workload cycles, so raw shares wobble.
+// Every node value moves a fraction K of the way to the newest snapshot (exponential smoothing). It is linear,
+// so a parent stays the sum of its children. Changing window or core restarts it.
+const K = 0.25;
+function blend(prev, next, floor) {
+  const pv = prev ? prev.value : 0, nv = next ? next.value : 0;
+  const pc = new Map((prev ? prev.children : []).map(c => [c.name, c]));
+  const nc = new Map((next ? next.children : []).map(c => [c.name, c]));
+  const children = [...new Set([...pc.keys(), ...nc.keys()])]
+    .map(n => blend(pc.get(n) || null, nc.get(n) || null, floor)).filter(c => c.value > floor);
+  return { name: (next || prev).name, value: pv + K * (nv - pv), children };
+}
+function resetSmoothing() { shown = null; }
+$('core').addEventListener('change', resetSmoothing);
+$('win').addEventListener('change', resetSmoothing);
+
+function clearChart(text) {
+  d3.select('#chart').selectAll('*').remove();
+  drawn = false; shown = null;
+  $('msg').style.display = ''; $('msg').textContent = text;
+}
+
+async function tick() {
+  try {
+    const r = await fetch(`/data.json?core=${$('core').value}&window=${$('win').value}`);
+    const {tree, stats} = await r.json();
+    if (stats.arch) {
+      $('target').innerHTML = `<b>${stats.arch}</b> <span>${stats.ncores} core(s) @ ${stats.cpu_mhz} MHz, ${stats.rate_hz} Hz</span>`;
+      $('sps').textContent = stats.samples_per_s;
+      $('drop').textContent = stats.dropped;
+      $('ovh').textContent = stats.overhead_pct == null ? '-' : stats.overhead_pct + ' %';
+      if (stats.ncores !== cores) {
+        cores = stats.ncores;
+        const sel = $('core'), cur = sel.value;
+        sel.innerHTML = '<option>all</option>' + [...Array(cores).keys()].map(i => `<option>${i}</option>`).join('');
+        sel.value = cur;
+      }
+    }
+    if ($('pause').checked) return;
+    if (tree.value > 0) {
+      $('msg').style.display = 'none';
+      shown = blend(shown, tree, tree.value * 0.0005);
+      if (!drawn) { d3.select('#chart').datum(shown).call(chart); drawn = true; } else chart.update(shown);
+    } else if (stats.arch) {
+      clearChart('No samples in this window: is the board still sending? (press its reset button, or restart mulcan)');
+    }
+  } catch (e) { clearChart('Viewer disconnected: ' + e); }
+}
+setInterval(tick, 500); tick();
+</script>
+</body>
+</html>

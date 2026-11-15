@@ -1,7 +1,3 @@
-add_library(mcu_flamegraph_platform_host
-    src/host.cpp
-)
-
-target_include_directories(mcu_flamegraph_platform_host PUBLIC include)
-target_link_libraries(mcu_flamegraph_platform_host PUBLIC mcu_flamegraph_core)
-target_compile_features(mcu_flamegraph_platform_host PUBLIC cxx_std_20)
+add_library(mulcan_platform_host src/host.cpp)
+target_include_directories(mulcan_platform_host PUBLIC include)
+target_link_libraries(mulcan_platform_host PUBLIC mulcan_core)
