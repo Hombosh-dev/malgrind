@@ -111,12 +111,15 @@ void flusher_task(void*) {
 } // namespace
 
 extern "C" bool malgrind_start(std::uint16_t rate_hz) {
+    static bool started = false; // the agent starts itself; a second call (from user code) must not start it twice
+    if (started) return true;
+    started = true;
     static Profiler profiler({"ESP32", Arch::Xtensa, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1'000'000u, portNUM_PROCESSORS},
                              rate_hz);
     g_profiler = &profiler;
 
     // Console + frames share UART0 through the interrupt-driven driver; plain stdout would busy-wait.
-    uart_driver_install(kUart, 256, 4096, 0, nullptr, 0);
+    if (!uart_is_driver_installed(kUart)) uart_driver_install(kUart, 256, 4096, 0, nullptr, 0);
     uart_vfs_dev_use_driver(kUart);
 
     static TimerJob jobs[portNUM_PROCESSORS];

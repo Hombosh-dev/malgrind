@@ -136,35 +136,17 @@ Code the ISR runs must be placed in fast memory on some chips: mark it with `MAL
 
 The viewer shows `overhead = (ISR + flusher cost) / CPU`. The ISR part contains `MALGRIND_ESP32_DISPATCH_CYCLES`
 (1400 cycles at 160 MHz) for the interrupt entry/exit that cannot be timed from inside the callback. To recalibrate
-after an IDF or clock change, flash both firmwares and compare the `iterations/s` log line:
+after an IDF or clock change, flash the plain firmware and the agent build (same source, the agent is injected at
+build time by `agent/esp32/inject.py`) and compare the `iterations/s` log line:
 
 ```bash
 cd firmware/esp32
-pio run -e esp32dev          -t upload --upload-port /dev/ttyUSB0    # with profiler
-pio run -e esp32dev_baseline -t upload --upload-port /dev/ttyUSB0    # without (-DDEMO_PROFILER=0)
+pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0    # plain: no profiler
+# agent build: exactly what the malgrind app runs (see host/src/pio.hpp), with sdkconfig = yours + agent/esp32/sdkconfig.agent
+MALGRIND_AGENT_DIR=$PWD/../../agent/esp32 MALGRIND_SDKCONFIG=$PWD/.pio/malgrind/sdkconfig.esp32dev \
+PLATFORMIO_EXTRA_SCRIPTS=pre:$PWD/../../agent/esp32/inject.py PLATFORMIO_BUILD_DIR=$PWD/.pio/malgrind \
+  pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0
 ```
 
-Adjust the constant until the viewer's percentage matches `1 - profiled/baseline`.
-Not included in the figure: the UART driver's own interrupts. Rate test: `PLATFORMIO_BUILD_FLAGS="-DDEMO_RATE_HZ=5000"`.
-
-## Limits
-
-- Overhead is small, not zero; it grows linearly with the rate (about 1.5 % per 1000 Hz per core at 160 MHz).
-- Code inside critical sections, or in interrupts above the timer's priority, is attributed to whatever runs next.
-- Inlined and tail-called functions vanish from stacks; stacks deeper than 16 frames are cut.
-- Each core needs its own timer; one core cannot sample the other.
-- At most 128 distinct stacks per core per flush (250 ms); the rest is counted in `dropped`.
-
-## Layout
-
-```
-core/            freestanding C++20 engine: stack table, double buffer, wire encoder (+ tests/)
-platforms/host   Linux port (SIGALRM + backtrace)      platforms/esp32  ESP-IDF port      platforms/stm32  notes only
-apps/host_runner demo workload that profiles itself
-firmware/esp32   PlatformIO + ESP-IDF demo project (components/malgrind wraps core + port)
-host/            `malgrind` tool: wire decoder, symbolizer, aggregator, HTTP server, web/flame.html (+ tests/)
-```
-
-Prior art studied: [esp32-semihosting-profiler](https://github.com/open-pe/esp32-semihosting-profiler),
-[Zephyr perf](https://docs.zephyrproject.org/latest/services/profiling/perf.html),
-[orbuculum](https://github.com/orbcode/orbuculum).
+Adjust the constant until the viewer's percentage matches `1 - profiled/plain`.
+Not included in the figure: the UART driver's own interrupts. The rate is `MALGRIND_RATE_HZ` (default 997).
