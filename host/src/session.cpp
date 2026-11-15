@@ -132,4 +132,9 @@ std::optional<std::string> Session::functions(std::optional<unsigned> core, Aggr
     return agg ? std::optional(agg->functions_json(core, window, at, focus)) : std::nullopt;
 }
 
+std::optional<std::string> Session::folded() const {
+    const auto* agg = ready_.load();
+    return agg ? std::optional(agg->folded()) : std::nullopt;
+}
+
 } // namespace malgrind::host

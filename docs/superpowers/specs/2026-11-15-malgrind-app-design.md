@@ -22,6 +22,7 @@ No tight deadline; everything below is expected before the defense.
 - Four analyses, all live and all replayable from history: callgrind-like, massif-like, FreeRTOS tasks, memcheck-like.
 - History with summary, time scrubbing, diff of two runs, name and notes, export.
 - Remove the agent from a board again (section 6).
+- A terminal mode in the same package: `malgrind-cli run|attach|detect` with a localhost live page (the old tool), on the same engine and the same run history. The app is `malgrind`, the CLI `malgrind-cli`.
 - Overhead: about 0% while the agent sleeps; about 1.5% per 1 kHz per core while sampling (today's figure).
   Heap checking costs more and the UI says so.
 
@@ -60,7 +61,7 @@ Tauri window (TypeScript UI)  <--HTTP/JSON, localhost + token-->  malgrind sidec
    folder/save dialogs, spawn sidecar                        aggregation, analyses, run store, replay, export
 ```
 
-- **Sidecar** = today's `host/` tool, renamed `malgrind`, gaining a `serve` mode: starts the HTTP API on
+- **Sidecar** = today's `host/` tool, named `malgrind-cli` (the app executable is `malgrind`), gaining a `serve` mode: starts the HTTP API on
   `127.0.0.1` with a random port and a random token that the shell passes to the UI. Every request must carry
   the token (other local pages or users must not be able to read the API or start a flash).
 - **UI** polls twice a second for live data, as the page does today. Time series and flamegraph both get their data

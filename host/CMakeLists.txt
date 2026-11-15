@@ -3,17 +3,28 @@ FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases
 FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/serve.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
 target_compile_options(malgrind_host PUBLIC -Wall -Wextra)
 
-add_executable(malgrind src/main.cpp)
-target_link_libraries(malgrind PRIVATE malgrind_host)
+# The live page of the terminal mode is compiled into the binary as a raw string literal.
+file(READ web/flame.html FLAME_HTML)
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/flame_html.inc "R\"malgrind_html(${FLAME_HTML})malgrind_html\"")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS web/flame.html)
+target_include_directories(malgrind_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
+# Where `malgrind-cli run` finds agent/esp32/ unless told otherwise. A source build uses the repository; packaging sets its own.
+set(MALGRIND_DEFAULT_AGENT_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "directory that contains agent/esp32/")
+
+# Named malgrind-cli: the app's own executable is called malgrind, and both end up in /usr/bin.
+add_executable(malgrind-cli src/main.cpp)
+target_compile_definitions(malgrind-cli PRIVATE MALGRIND_DEFAULT_AGENT_DIR="${MALGRIND_DEFAULT_AGENT_DIR}")
+target_link_libraries(malgrind-cli PRIVATE malgrind_host)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # the packaged sidecar must not need a newer libstdc++ than the user's distribution has
-    target_link_options(malgrind PRIVATE -static-libstdc++ -static-libgcc)
+    target_link_options(malgrind-cli PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
 add_executable(test_host tests/test_host.cpp)
@@ -42,3 +53,8 @@ target_link_libraries(test_serve PRIVATE malgrind_host)
 target_compile_options(test_serve PRIVATE -UNDEBUG)
 target_compile_definitions(test_serve PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME serve COMMAND test_serve)
+
+add_executable(test_cli tests/test_cli.cpp)
+target_link_libraries(test_cli PRIVATE malgrind_host)
+target_compile_options(test_cli PRIVATE -UNDEBUG)
+add_test(NAME cli COMMAND test_cli)

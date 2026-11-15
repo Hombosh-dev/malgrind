@@ -1,7 +1,7 @@
 #include "serve.hpp"
 
+#include "ops.hpp"
 #include "pio.hpp"
-#include "process.hpp"
 #include "session.hpp"
 #include "source.hpp"
 #include "store.hpp"
@@ -31,35 +31,6 @@ using json = nlohmann::json;
 using namespace std::chrono_literals;
 
 constexpr const char* kVersion = "0.1.0";
-constexpr unsigned kBaud = 921600; // what the agent uses
-
-constexpr const char* kNoPio =
-    "PlatformIO (pio) was not found: install it with `pip install platformio` (attaching to a running board works without it)";
-
-std::runtime_error open_error(const std::string& port, int err) {
-    if (err == EBUSY)
-        return std::runtime_error("busy: another program (maybe another malgrind, or a serial monitor) is using " + port);
-    return std::runtime_error(std::format("cannot open {}: {}", port, std::strerror(err)));
-}
-
-Source open_source(const std::string& port) {
-    auto source = Source::open(port, kBaud);
-    if (!source) throw open_error(port, errno);
-    return std::move(*source);
-}
-
-// After an upload the board resets and its USB port can vanish for a moment: keep trying for ~5 s.
-Source open_after_upload(const std::string& port) {
-    for (int attempt = 0;; ++attempt) {
-        auto source = Source::open(port, kBaud);
-        if (source) return std::move(*source);
-        const int err = errno;
-        const bool transient = err == ENOENT || err == ENODEV || err == EIO || err == ENXIO;
-        if (!transient || attempt >= 20) throw open_error(port, err);
-        std::this_thread::sleep_for(250ms);
-    }
-}
-
 std::string str_arg(const json& req, const char* key) {
     if (!req.contains(key) || !req[key].is_string()) throw std::runtime_error(std::string("missing argument: ") + key);
     return req[key].get<std::string>();
@@ -201,23 +172,15 @@ private:
         return result ? *result : R"({"functions":[]})";
     }
 
-    // Listens to the port for up to 2 s for a malgrind frame. Never records, never resets the board.
     json probe(const std::string& port) {
-        auto source = Source::open(port, kBaud);
-        if (!source) {
-            if (errno == EBUSY) return {{"busy", true}, {"agent", false}};
-            throw open_error(port, errno);
+        const auto r = probe_port(port);
+        json result = {{"busy", r.busy}, {"agent", r.agent}};
+        if (r.agent) {
+            result["arch"] = std::string(arch_name(r.arch));
+            result["ncores"] = r.ncores;
+            result["cpu_mhz"] = r.cpu_mhz;
         }
-        FrameReader reader;
-        std::array<std::uint8_t, 4096> buf;
-        for (const auto end = std::chrono::steady_clock::now() + 2s; std::chrono::steady_clock::now() < end;) {
-            const auto n = source->read(buf, 100);
-            if (!n) break;
-            if (const auto frames = reader.feed(std::span(buf).first(*n)).frames; !frames.empty())
-                return {{"busy", false}, {"agent", true}, {"arch", std::string(arch_name(frames[0].arch))},
-                        {"ncores", frames[0].ncores}, {"cpu_mhz", frames[0].cpu_hz / 1e6}};
-        }
-        return {{"busy", false}, {"agent", false}};
+        return result;
     }
 
     json start_live(Source source, RunMeta meta, fs::path elf, fs::path project) {
@@ -251,32 +214,17 @@ private:
         });
     }
 
-    struct Prepared {
-        fs::path pio;
-        ProjectInfo project;
-        std::string env, port;
-    };
     Prepared prepare(const json& req) {
-        const auto pio = find_pio(options_.home);
-        if (!pio) throw std::runtime_error(kNoPio);
-        std::string why;
-        auto project = read_project(str_arg(req, "dir"), why);
-        if (!project) throw std::runtime_error(why);
-        auto env = str_arg(req, "env");
-        if (std::ranges::find(project->envs, env) == project->envs.end())
-            throw std::runtime_error(std::format("platformio.ini has no environment '{}'", env));
-        return {*pio, std::move(*project), std::move(env), str_arg(req, "port")};
+        return prepare_project(options_.home, str_arg(req, "dir"), str_arg(req, "env"), str_arg(req, "port"));
     }
-
-    void run_pio(const Invocation& inv) {
-        const int code = run_lines(inv.argv, inv.env, [this](std::string_view line) { send({{"event", "build"}, {"line", std::string(line)}}); });
-        if (code != 0) throw std::runtime_error(code < 0 ? "cannot start pio" : std::format("build or upload failed (pio exit code {})", code));
+    void run_pio_events(const Invocation& inv) {
+        run_pio(inv, [this](std::string_view line) { send({{"event", "build"}, {"line", std::string(line)}}); });
     }
 
     json new_run(const json& req) {
         const auto p = prepare(req);
         if (live()) throw std::runtime_error("stop the live run first");
-        run_pio(agent_build(p.pio, p.project, p.env, p.port, options_.agent_dir));
+        run_pio_events(agent_build(p.pio, p.project, p.env, p.port, options_.agent_dir));
         auto source = open_after_upload(p.port);
         return start_live(std::move(source), {.name = str_arg(req, "name"), .project = p.project.dir.string(), .env = p.env, .port = p.port},
                           agent_elf(p.project, p.env), p.project.dir);
@@ -285,7 +233,7 @@ private:
     json remove_agent(const json& req) {
         const auto p = prepare(req);
         set_session(nullptr); // the port must be free for the upload
-        run_pio(plain_flash(p.pio, p.project, p.env, p.port));
+        run_pio_events(plain_flash(p.pio, p.project, p.env, p.port));
         return json::object();
     }
 

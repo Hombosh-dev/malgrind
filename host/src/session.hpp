@@ -47,6 +47,9 @@ public:
     [[nodiscard]] std::optional<std::string> functions(std::optional<unsigned> core, Aggregator::Ms window,
                                                        std::optional<Aggregator::Ms> at, std::string_view focus) const;
 
+    // Folded stacks ("core0;main;f;g 12" per line), the input of flamegraph.pl and speedscope. nullopt before the first frame.
+    [[nodiscard]] std::optional<std::string> folded() const;
+
 private:
     Session(Emit emit, std::filesystem::path elf, std::filesystem::path project, bool search_elf);
     void on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t); // decode, then aggregate

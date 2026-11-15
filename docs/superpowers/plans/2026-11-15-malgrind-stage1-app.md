@@ -15,7 +15,8 @@
 ## Deviations from the spec (approve with this plan)
 
 - **Transport: stdin/stdout JSON lines instead of localhost HTTP + token.** Same "sidecar computes, UI renders" split, but no port, no token, no CORS, nothing reachable by other local programs. `http.{hpp,cpp}` and the browser page are deleted.
-- **The old CLI (`run/attach/detect` + browser viewer) is removed** at Task 8. Its logic moves into `serve` commands. `README` documents the app.
+- **The terminal mode stays (user request, 2026-11-15): one package, two entry points.** The app is `malgrind`; the C++ engine ships next to it as `malgrind-cli`. `malgrind-cli serve` is what the app spawns; `malgrind-cli run|attach|detect` is the old terminal tool with its localhost server and live page (`host/web/flame.html`, kept), now on the same `Session` and the same run history. Task 7b.
+- **Run arguments are named `run`, not `id`** (`open {run}`, `update {run,...}`, `delete {run}`): `id` is the request id of the envelope, and the two collided.
 - **The Rust shell is ~15 lines** (plugin registration). The UI spawns the sidecar and builds the menu through the Tauri JS APIs.
 - **Stage 1 agent is always on** (samples from boot). Sleep/start/stop and the beacon are stage 2. So in stage 1, "board running with agent" means frames arrive within the probe time.
 
@@ -294,9 +295,9 @@ Highest-risk task: the spec's "no user source change" rests on it. If injection 
   | `stop` | – | `{}` (ends the live session) |
   | `remove_agent` | `dir, env, port` | `{}`; ends a live session on that port first; streams `build` events |
   | `runs` | – | `[RunMeta…]` plus `"live":true` on the current live run |
-  | `open` | `id` | `{"run":RunMeta}`; error `"stop the live run first"` while live |
-  | `update` | `id, name?, notes?` | `RunMeta` |
-  | `delete` | `id` | `{}`; error if it is the current session |
+  | `open` | `run` | `{"run":RunMeta}`; error `"stop the live run first"` while live |
+  | `update` | `run, name?, notes?` | `RunMeta` |
+  | `delete` | `run` | `{}`; error if it is the current session |
   | `snapshot` | `core?, window_s, at_ms?` | the Session's snapshot JSON, or `{"tree":null}` |
   | `functions` | `core?, window_s, at_ms?, focus?` | the Session's function-table JSON, or `{"functions":[]}` |
 
@@ -313,6 +314,21 @@ Highest-risk task: the spec's "no user source change" rests on it. If injection 
 - [ ] **Step 3:** Implement `serve.cpp` and the new `main.cpp`. Delete the old CLI code paths and files.
 - [ ] **Step 4:** Run the full suite `ctest --test-dir build --output-on-failure`. Expected: all pass. Also run `printf '{"id":1,"cmd":"hello"}\n' | ./build/host/malgrind serve`. Expected: one `ok:true` line.
 - [ ] **Step 5:** Commit `feat(host): malgrind serve JSON-lines protocol, drop browser CLI`.
+
+### Task 7b: Terminal mode (`malgrind-cli run|attach|detect`)
+
+Done in the same pass as Task 7, because the user asked for the CLI to stay (see Deviations).
+
+**Files:**
+- Create: `host/src/ops.{hpp,cpp}` (steps shared with `serve`: `open_source`, `open_after_upload`, `prepare_project`, `run_pio`, `probe_port`), `host/src/cli.{hpp,cpp}`, `host/tests/test_cli.cpp`
+- Restore from git history: `host/src/http.{hpp,cpp}`, `host/web/flame.html` (the page is compiled into the binary as before)
+- Modify: `host/src/serve.cpp` (uses ops), `host/src/session.{hpp,cpp}` (`folded()`), `host/src/main.cpp` (dispatch `serve|run|attach|detect`), `host/CMakeLists.txt` (executable renamed **`malgrind-cli`**; cache var `MALGRIND_DEFAULT_AGENT_DIR`, default the repository, so a source build finds `agent/esp32/`)
+
+**Interfaces:**
+- Produces: `int run_cli(const std::vector<std::string>& args, const ServeOptions& defaults);` `void cli_request_stop() noexcept;` (Ctrl-C). Options as before: `--port --elf --project --env --name --http-port --no-open --folded --data-dir --agent-dir`.
+- Behavior: the viewer starts before the first frame (the page says "waiting"); `attach` without `--project` looks for the ELF in `.` and `firmware/*`, as the old tool did; every run is recorded into the shared history.
+
+- [x] Tests (`test_cli`): `attach_shows_the_live_page_and_records` (page and `/data.json` over a real socket, folded file, run in the store), `exit_codes` (usage 2, busy port 1).
 
 ### Task 8: Tauri app shell and sidecar client
 
@@ -331,11 +347,11 @@ Highest-risk task: the spec's "no user source change" rests on it. If injection 
     on(event: string, cb: (e: any) => void): () => void;                          // returns an unsubscribe function
   }
   export async function startSidecar(): Promise<Sidecar>;
-    // Command.sidecar('binaries/malgrind', ['serve', '--agent-dir', await resolveResource('agent-src')]).spawn();
+    // Command.sidecar('binaries/malgrind-cli', ['serve', '--agent-dir', await resolveResource('agent-src')]).spawn();
     // each stdout event is split on '\n', empty pieces skipped, each piece parsed as JSON
   ```
-  `tauri.conf.json`: `productName` "malgrind", `identifier` "dev.malgrind.app", `bundle.externalBin` `["binaries/malgrind"]`, `bundle.resources` maps `../../core/` → `agent-src/core/`, `../../platforms/esp32/` → `agent-src/platforms/esp32/`, `../../agent/` → `agent-src/agent/`; `bundle.targets` `["deb"]`; `beforeDevCommand` / `beforeBuildCommand` run `node scripts/build-sidecar.mjs && pnpm vite …`.
-  `capabilities/default.json`: `core:default`, `dialog:allow-open`, `shell:allow-spawn` (`{"name":"binaries/malgrind","sidecar":true,"args":true}`), `shell:allow-stdin-write`, `shell:allow-kill`.
+  `tauri.conf.json`: `productName` "malgrind", `identifier` "dev.malgrind.app", `bundle.externalBin` `["binaries/malgrind-cli"]`, `bundle.resources` maps `../../core/` → `agent-src/core/`, `../../platforms/esp32/` → `agent-src/platforms/esp32/`, `../../agent/` → `agent-src/agent/`; `bundle.targets` `["deb"]`; `beforeDevCommand` / `beforeBuildCommand` run `node scripts/build-sidecar.mjs && pnpm vite …`.
+  `capabilities/default.json`: `core:default`, `dialog:allow-open`, `shell:allow-spawn` (`{"name":"binaries/malgrind-cli","sidecar":true,"args":true}`), `shell:allow-stdin-write`, `shell:allow-kill`.
   `main.rs`: `tauri::Builder::default().plugin(tauri_plugin_shell::init()).plugin(tauri_plugin_dialog::init()).run(tauri::generate_context!())`.
   `build-sidecar.mjs`: `cmake -B ../build -DCMAKE_BUILD_TYPE=Release && cmake --build ../build --target malgrind`, then copies `../build/host/malgrind` to `src-tauri/binaries/malgrind-<rustc --print host-tuple>`.
   `theme.css`: color tokens from the approved mockups (bg `#14161c`/fg `#e8e6e3` dark; bg `#f6f4f0`/fg `#23211e` light; accent `#ff7a2f`; live `#37d67a`; danger `#ff5a5a`), dark under `@media (prefers-color-scheme: dark)`.
@@ -399,10 +415,10 @@ Highest-risk task: the spec's "no user source change" rests on it. If injection 
 ### Task 12: Package, document, verify end to end
 
 **Files:**
-- Modify: `README.md` (app-first: install the .deb, New run, attach, remove agent, history; architecture diagram with the sidecar; build-from-source commands; the deviations above), `.github/workflows/ci.yml` (add `pnpm -C app install && pnpm -C app vitest run` on ubuntu; ctest stays on both OSes)
+- Modify: `README.md` (app-first: install the .deb, New run, attach, remove agent, history; then the terminal mode `malgrind-cli run|attach|detect`; architecture diagram with the sidecar; build-from-source commands; the deviations above), `.github/workflows/ci.yml` (add `pnpm -C app install && pnpm -C app vitest run` on ubuntu; ctest stays on both OSes)
 - Memory: update `mulcan-project-context.md` (renamed product, app architecture, stdio protocol) and `mulcan-user-workflow.md` (app replaces CLI).
 
-- [ ] **Step 1:** Run `pnpm -C app tauri build --bundles deb`. Expected: `app/src-tauri/target/release/bundle/deb/malgrind_0.1.0_amd64.deb`. Check that `dpkg -c` lists `usr/bin/malgrind`, the sidecar and `agent-src/agent/esp32/sdkconfig.agent`.
+- [ ] **Step 1:** Run `pnpm -C app tauri build --bundles deb`. Expected: `app/src-tauri/target/release/bundle/deb/malgrind_0.1.0_amd64.deb`. Check that `dpkg -c` lists the app `usr/bin/malgrind`, the CLI `usr/bin/malgrind-cli` (so `malgrind-cli attach` works from a terminal after installing) and `agent-src/agent/esp32/sdkconfig.agent`.
 - [ ] **Step 2:** Extract the .deb into the scratchpad (`dpkg -x`) and run the binary from there. Expected: the start screen appears and `hello` reports the pio path. (Installing system-wide is the user's call.)
 - [ ] **Step 3 (hardware, `fuser` first), from the extracted build:**
   1. New run on `firmware/esp32` → live; `git status --porcelain firmware/esp32` empty.
