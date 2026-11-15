@@ -8,7 +8,7 @@
 
 namespace fs = std::filesystem;
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 
@@ -79,4 +79,4 @@ std::optional<fs::path> find_elf(Arch arch, const fs::path& base, const fs::path
     return best;
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

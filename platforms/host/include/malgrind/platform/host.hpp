@@ -1,8 +1,8 @@
 #pragma once
 
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
 
-namespace mulcan::platform {
+namespace malgrind::platform {
 
 // Linux port: SIGALRM (hrtimer) + glibc backtrace(). Single thread, "cycles" are nanoseconds.
 struct HostPort {
@@ -11,4 +11,4 @@ struct HostPort {
     static void start(Profiler& profiler, std::uint16_t rate_hz) noexcept;
 };
 
-} // namespace mulcan::platform
+} // namespace malgrind::platform

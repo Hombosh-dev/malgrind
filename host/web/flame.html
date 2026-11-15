@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>mulcan</title>
+<title>malgrind</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/d3-flame-graph@4.1.3/dist/d3-flamegraph.css">
 <style>
   :root { --bg:#fff; --fg:#1b1f24; --muted:#6b7280; --line:#d8dce2; }
@@ -21,7 +21,7 @@
 </head>
 <body>
 <header>
-  <h1>mulcan</h1>
+  <h1>malgrind</h1>
   <span class="stat" id="target"></span>
   <span class="stat"><span>samples/s</span> <b id="sps">-</b></span>
   <span class="stat"><span>dropped</span> <b id="drop">-</b></span>
@@ -86,7 +86,7 @@ async function tick() {
       shown = blend(shown, tree, tree.value * 0.0005);
       if (!drawn) { d3.select('#chart').datum(shown).call(chart); drawn = true; } else chart.update(shown);
     } else if (stats.arch) {
-      clearChart('No samples in this window: is the board still sending? (press its reset button, or restart mulcan)');
+      clearChart('No samples in this window: is the board still sending? (press its reset button, or restart malgrind)');
     }
   } catch (e) { clearChart('Viewer disconnected: ' + e); }
 }

@@ -2,14 +2,14 @@
 
 // Finding the project and the firmware ELF without being told.
 
-#include "mulcan/target_info.hpp"
+#include "malgrind/target_info.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 // PlatformIO project to build: `base` itself, else the only base/firmware/*/platformio.ini.
 // On failure `why` explains (none found / several found).
@@ -24,4 +24,4 @@ namespace mulcan::host {
 // e_machine of an ELF file, nullopt if it is not an ELF.
 [[nodiscard]] std::optional<std::uint16_t> elf_machine(const std::filesystem::path& file);
 
-} // namespace mulcan::host
+} // namespace malgrind::host

@@ -5,7 +5,7 @@
 #include <ranges>
 #include <utility>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 
@@ -117,4 +117,4 @@ std::string Aggregator::folded() const {
     return out;
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

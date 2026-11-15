@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace mulcan {
+namespace malgrind {
 
 // Values are part of the wire format (see docs in profiler.hpp). Never renumber.
 enum class Arch : std::uint8_t { Host = 0, Xtensa = 1, ArmV7M = 2, RiscV32 = 3 };
@@ -14,4 +14,4 @@ struct TargetInfo {
     std::uint8_t num_cores;
 };
 
-} // namespace mulcan
+} // namespace malgrind

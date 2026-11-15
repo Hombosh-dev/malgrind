@@ -1,6 +1,6 @@
 #pragma once
 
-// mulcan core: freestanding C++20. No heap, exceptions, iostream, RTOS or vendor SDK.
+// malgrind core: freestanding C++20. No heap, exceptions, iostream, RTOS or vendor SDK.
 //
 // A port (platforms/<mcu>/) does three things:
 //   1. start a periodic timer per core; in its ISR unwind the stack (innermost frame first)
@@ -15,7 +15,7 @@
 //          n_entries u16 | { count u16, depth u8, pc u32[depth] } * n_entries
 // pc[0] is the innermost (interrupted) frame.
 
-#include "mulcan/target_info.hpp"
+#include "malgrind/target_info.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -23,15 +23,15 @@
 
 // Code that runs in the sampling ISR. On ESP32 it must live in IRAM; COMDAT copies of inline functions
 // cannot (their literal pools end up in flash), so it is force-inlined into the port's IRAM callback.
-#ifndef MULCAN_ISR
+#ifndef MALGRIND_ISR
 #if defined(ESP_PLATFORM)
-#define MULCAN_ISR __attribute__((always_inline))
+#define MALGRIND_ISR __attribute__((always_inline))
 #else
-#define MULCAN_ISR
+#define MALGRIND_ISR
 #endif
 #endif
 
-namespace mulcan {
+namespace malgrind {
 
 inline constexpr unsigned kMaxCores = 2;
 inline constexpr unsigned kMaxDepth = 16;
@@ -58,7 +58,7 @@ struct StackTable {
     std::uint64_t isr_sum;  // sum of ISR cycles over samples + dropped
     std::uint32_t isr_max;
 
-    MULCAN_ISR void record(const std::uint32_t* pcs, unsigned n, std::uint32_t isr_cycles) noexcept {
+    MALGRIND_ISR void record(const std::uint32_t* pcs, unsigned n, std::uint32_t isr_cycles) noexcept {
         isr_sum += isr_cycles;
         if (isr_cycles > isr_max) isr_max = isr_cycles;
         if (n > kMaxDepth) n = kMaxDepth;
@@ -102,7 +102,7 @@ public:
     [[nodiscard]] const TargetInfo& info() const noexcept { return info_; }
 
     // ISR: called on `core` with the unwound stack, innermost frame first.
-    MULCAN_ISR void record(unsigned core, const std::uint32_t* pcs, unsigned n,
+    MALGRIND_ISR void record(unsigned core, const std::uint32_t* pcs, unsigned n,
                            std::uint32_t isr_cycles) noexcept {
         tables_[core][active_[core].load(std::memory_order_acquire)].record(pcs, n, isr_cycles);
     }
@@ -134,4 +134,4 @@ private:
     std::uint8_t buf_[kMaxFrameSize];
 };
 
-} // namespace mulcan
+} // namespace malgrind

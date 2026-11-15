@@ -1,12 +1,12 @@
 // Self-check for the core: stack merging, table overflow, frame encoding, CRC.
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
 
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <vector>
 
-using namespace mulcan;
+using namespace malgrind;
 
 static std::uint32_t rd(const std::uint8_t* p, int n) {
     std::uint32_t v = 0;

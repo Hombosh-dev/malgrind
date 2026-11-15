@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 class Aggregator {
 public:
@@ -48,4 +48,4 @@ private:
     std::optional<Frame> last_;
 };
 
-} // namespace mulcan::host
+} // namespace malgrind::host

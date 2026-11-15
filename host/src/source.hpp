@@ -8,7 +8,7 @@
 #include <vector>
 #include <utility>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 // USB serial adapters and native USB CDC ports (ttyUSB*, ttyACM*) in dev_dir, sorted.
 [[nodiscard]] std::vector<std::string> find_serial_ports(const std::filesystem::path& dev_dir = "/dev");
@@ -31,4 +31,4 @@ private:
     bool owns_;
 };
 
-} // namespace mulcan::host
+} // namespace malgrind::host

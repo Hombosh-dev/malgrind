@@ -16,7 +16,7 @@
 #define DEMO_RATE_HZ 997 // prime: no aliasing with the RTOS tick
 #endif
 #if DEMO_PROFILER
-#include "mulcan/platform/esp32.hpp"
+#include "malgrind/platform/esp32.hpp"
 #endif
 
 namespace {
@@ -101,7 +101,7 @@ void radio_task(void*) {
 
 extern "C" void app_main() {
 #if DEMO_PROFILER
-    if (!mulcan_start(DEMO_RATE_HZ)) ESP_LOGE(kTag, "mulcan_start failed");
+    if (!malgrind_start(DEMO_RATE_HZ)) ESP_LOGE(kTag, "malgrind_start failed");
 #endif
     xTaskCreatePinnedToCore(app_task, "app", 4096, nullptr, 5, nullptr, 0);
     xTaskCreatePinnedToCore(radio_task, "radio", 4096, nullptr, 5, nullptr, 1);

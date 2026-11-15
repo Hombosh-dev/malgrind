@@ -1,4 +1,4 @@
-// mulcan: detect | run | attach
+// malgrind: detect | run | attach
 #include "aggregate.hpp"
 #include "discover.hpp"
 #include "http.hpp"
@@ -25,7 +25,7 @@
 #include <string>
 
 namespace fs = std::filesystem;
-using namespace mulcan::host;
+using namespace malgrind::host;
 
 namespace {
 
@@ -35,11 +35,11 @@ constexpr std::string_view kPage =
 
 volatile std::sig_atomic_t g_stop = 0;
 
-constexpr std::string_view kUsage = R"(mulcan: live flamegraph profiler for microcontrollers
+constexpr std::string_view kUsage = R"(malgrind: live flamegraph profiler for microcontrollers
 
-  mulcan run      build + flash the firmware, then show the live flamegraph
-  mulcan attach   the firmware already runs libmulcan: just show the live flamegraph
-  mulcan detect   identify the connected chip (this resets the board)
+  malgrind run      build + flash the firmware, then show the live flamegraph
+  malgrind attach   the firmware already runs libmalgrind: just show the live flamegraph
+  malgrind detect   identify the connected chip (this resets the board)
 
 Everything is detected automatically. Override only when needed:
   --port P        serial port (default: the only /dev/ttyUSB* or /dev/ttyACM*; "-" reads stdin)
@@ -142,7 +142,7 @@ int attach(const Options& o) {
     auto source = Source::open(port, o.get_uint("baud", 921600));
     if (!source) {
         std::cerr << "cannot open " << port << ": " << std::strerror(errno) << "\n";
-        if (errno == EBUSY) std::cerr << "another program (maybe another mulcan, or a serial monitor) is using it\n";
+        if (errno == EBUSY) std::cerr << "another program (maybe another malgrind, or a serial monitor) is using it\n";
         return 1;
     }
 
@@ -162,7 +162,7 @@ int attach(const Options& o) {
         if (!text.empty()) std::cout << text << std::flush;
         if (!aggregator && !hinted && std::chrono::steady_clock::now() - started > std::chrono::seconds(5)) {
             hinted = true;
-            std::cerr << "no mulcan frames yet: is libmulcan running on the board, and is the baud rate right (--baud)?\n";
+            std::cerr << "no malgrind frames yet: is libmalgrind running on the board, and is the baud rate right (--baud)?\n";
         }
         for (auto& frame : frames) {
             if (!aggregator) {
@@ -185,7 +185,7 @@ int attach(const Options& o) {
                 unsigned used = 0;
                 start_server(http, *aggregator, o.get_uint("http-port", 8000), !o.get("http-port").empty(), used);
                 const auto url = std::format("http://127.0.0.1:{}", used);
-                std::cerr << std::format("\nmulcan: {}, {} core(s) -> {}\n", arch_name(frame.arch), frame.ncores, url);
+                std::cerr << std::format("\nmalgrind: {}, {} core(s) -> {}\n", arch_name(frame.arch), frame.ncores, url);
                 if (o.get("no-open").empty()) open_browser(url);
             }
             aggregator->add(std::move(frame));
@@ -220,7 +220,7 @@ int detect(const Options& o) {
             return 0;
         }
     }
-    std::cout << "esptool could not identify the chip; listening for a mulcan frame...\n";
+    std::cout << "esptool could not identify the chip; listening for a malgrind frame...\n";
     auto source = Source::open(port, o.get_uint("baud", 921600));
     if (!source) return 1;
     FrameReader reader;
@@ -229,7 +229,7 @@ int detect(const Options& o) {
         const auto n = source->read(buf);
         if (!n) break;
         if (auto [frames, text] = reader.feed(std::span(buf).first(*n)); !frames.empty()) {
-            std::cout << std::format("mulcan frame: arch={} cores={} cpu={:g} MHz\n", arch_name(frames[0].arch),
+            std::cout << std::format("malgrind frame: arch={} cores={} cpu={:g} MHz\n", arch_name(frames[0].arch),
                                      frames[0].ncores, frames[0].cpu_hz / 1e6);
             return 0;
         }

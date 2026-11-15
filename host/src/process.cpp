@@ -8,13 +8,13 @@
 
 #ifdef __APPLE__
 #include <crt_externs.h>
-#define MULCAN_ENVIRON (*_NSGetEnviron())
+#define MALGRIND_ENVIRON (*_NSGetEnviron())
 #else
 extern char** environ;
-#define MULCAN_ENVIRON environ
+#define MALGRIND_ENVIRON environ
 #endif
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 // Spawns argv with the given file actions; returns the pid or -1.
@@ -23,7 +23,7 @@ pid_t spawn(const std::vector<std::string>& argv, posix_spawn_file_actions_t* ac
     for (const auto& a : argv) args.push_back(const_cast<char*>(a.c_str()));
     args.push_back(nullptr);
     pid_t pid = -1;
-    return posix_spawnp(&pid, args[0], actions, nullptr, args.data(), MULCAN_ENVIRON) == 0 ? pid : -1;
+    return posix_spawnp(&pid, args[0], actions, nullptr, args.data(), MALGRIND_ENVIRON) == 0 ? pid : -1;
 }
 
 int wait_for(pid_t pid) {
@@ -61,4 +61,4 @@ int run(const std::vector<std::string>& argv) {
     return pid > 0 ? wait_for(pid) : -1;
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

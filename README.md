@@ -1,6 +1,6 @@
-# mulcan
+# malgrind
 
-*Micro Vulcan.* A sampling profiler for microcontrollers with a **live flamegraph**.
+*valgrind for microcontrollers.* A sampling profiler for microcontrollers with a **live flamegraph**.
 A timer interrupt on the MCU records where the CPU is (full call stack), counts identical stacks on the
 device, and sends small frames over UART. The PC tool decodes them, resolves addresses to function names
 with the toolchain's `addr2line`, and serves a live flamegraph in the browser.
@@ -10,7 +10,7 @@ All logic is C++20: the on-device engine (`core/`), the per-chip ports (`platfor
 
 ```
 MCU:  timer ISR -> unwind stack -> hash table of stacks -> UART frame ("MLC1")
-PC:   mulcan  -> decode + CRC resync -> addr2line (by arch) -> aggregate -> http://127.0.0.1:8000
+PC:   malgrind  -> decode + CRC resync -> addr2line (by arch) -> aggregate -> http://127.0.0.1:8000
 ```
 
 ![live flamegraph of the ESP32 demo](docs/flamegraph-esp32.png)
@@ -20,7 +20,7 @@ PC:   mulcan  -> decode + CRC resync -> addr2line (by arch) -> aggregate -> http
 
 ## Where to see it
 
-Start `mulcan run` (or `attach`): the browser opens by itself, or open **http://127.0.0.1:8000** (the exact address is printed). The page refreshes twice a second.
+Start `malgrind run` (or `attach`): the browser opens by itself, or open **http://127.0.0.1:8000** (the exact address is printed). The page refreshes twice a second.
 Hover a block for its name and share, click it to zoom, use the selectors for one core and for the time window
 (5, 10, 30, 60 s or everything since start), and a pause box to freeze the picture while you read it.
 The header shows samples/s, dropped samples and the overhead. Block widths are smoothed over time and a short
@@ -33,9 +33,9 @@ If the board stops sending, the page says so instead of keeping the last picture
 |---|---|
 | Host (Linux) port, demo and tool | done, tested |
 | ESP32 (Xtensa, ESP-IDF 5.3) port | done, verified on an ESP32-D0WD-V3 board |
-| `mulcan run` (build + flash + view), `attach`, `detect` | done (ESP32 via PlatformIO + esptool) |
+| `malgrind run` (build + flash + view), `attach`, `detect` | done (ESP32 via PlatformIO + esptool) |
 | STM32 / RP2040 / RISC-V ports | not started, see `platforms/stm32/README.md` |
-| Probe-based attach (firmware without libmulcan) | not started, see "Modes" |
+| Probe-based attach (firmware without libmalgrind) | not started, see "Modes" |
 
 Measured on the ESP32 (160 MHz, 2 cores, demo firmware):
 
@@ -50,14 +50,14 @@ Measured on the ESP32 (160 MHz, 2 cores, demo firmware):
 
 | | Linux | macOS | Windows |
 |---|---|---|---|
-| `mulcan` tool (run / attach / detect, viewer) | yes, tested (GCC 15, clang 21) | written for it, **not yet run on a Mac** | no |
+| `malgrind` tool (run / attach / detect, viewer) | yes, tested (GCC 15, clang 21) | written for it, **not yet run on a Mac** | no |
 | ESP32 firmware (PlatformIO) | yes, tested on hardware | PlatformIO supports it | via PlatformIO, but the tool does not run |
 | `host_runner` demo (profiles itself) | yes | no (needs a static non-PIE ELF and 32-bit addresses) | no |
 
 Requirements for the tool: GCC >= 13, or Apple Clang 15+ (Xcode 15) / LLVM 17+ on macOS 13.3 or newer. CMake stops early
 with a message if `<format>` is missing. macOS differences already handled: serial ports `/dev/cu.usb*` (not `tty.*`),
 `select()` instead of `poll()` on devices, no `B921600` constants, `open` instead of `xdg-open`, no `MSG_NOSIGNAL`,
-`std::thread` instead of `std::jthread`. The serial port is opened exclusively on both systems, so a second mulcan
+`std::thread` instead of `std::jthread`. The serial port is opened exclusively on both systems, so a second malgrind
 reports "busy" instead of stealing bytes. A GitHub Actions workflow (`.github/workflows/ci.yml`) builds and tests on
 Ubuntu and macOS on every push, which is the quickest way to find out whether the Mac build works.
 
@@ -73,14 +73,14 @@ cmake -B build && cmake --build build && ctest --test-dir build
 
 # 1. no board: a Linux process that profiles itself
 ./build/apps/host_runner/host_runner 60 | \
-  ./build/host/mulcan attach --port - --elf ./build/apps/host_runner/host_runner
+  ./build/host/malgrind attach --port - --elf ./build/apps/host_runner/host_runner
 # open http://127.0.0.1:8000   (expected: busy_a 60 %, busy_b 30 %, idle 10 %)
 
 # 2. ESP32: needs PlatformIO (`pio`), which downloads ESP-IDF and the toolchain by itself
 cd ~/CLionProjects/mcu-flamegraph
-./build/host/mulcan run        # builds + flashes firmware/esp32, opens the live flamegraph in the browser
-./build/host/mulcan attach     # firmware already runs: just show it
-./build/host/mulcan detect     # which chip is connected?
+./build/host/malgrind run        # builds + flashes firmware/esp32, opens the live flamegraph in the browser
+./build/host/malgrind attach     # firmware already runs: just show it
+./build/host/malgrind detect     # which chip is connected?
 ```
 
 Those three words are the whole interface: everything else is detected, and each guess is printed so you can see it.
@@ -95,15 +95,15 @@ Those three words are the whole interface: everything else is detected, and each
 | viewer port | 8000, or the next free one | `--http-port` |
 | browser | opened automatically when a display exists | `--no-open` |
 
-Not detected: the baud rate (921600, what libmulcan uses; `--baud`). If no frames arrive in 5 s the tool hints at it.
-`mulcan run --flash-cmd "..."` replaces the PlatformIO step with any build+flash command (other chips).
+Not detected: the baud rate (921600, what libmalgrind uses; `--baud`). If no frames arrive in 5 s the tool hints at it.
+`malgrind run --flash-cmd "..."` replaces the PlatformIO step with any build+flash command (other chips).
 `--folded out.txt` writes folded stacks for `flamegraph.pl` / speedscope when the tool exits.
 
 ## Modes
 
-1. **`run`** builds and flashes *your* firmware (linked with libmulcan, one `mulcan_start()` call), then shows it live.
-2. **`attach`** (2a): the firmware already runs libmulcan; just listen. Works on every chip, no reset needed.
-3. **Probe attach** (2b, future): firmware that knows nothing about mulcan, a debug probe reads the program counter
+1. **`run`** builds and flashes *your* firmware (linked with libmalgrind, one `malgrind_start()` call), then shows it live.
+2. **`attach`** (2a): the firmware already runs libmalgrind; just listen. Works on every chip, no reset needed.
+3. **Probe attach** (2b, future): firmware that knows nothing about malgrind, a debug probe reads the program counter
    (ARM Cortex-M `DWT_PCSR` without halting, or SWO PC sampling). Flat profile, zero overhead. The viewer only
    consumes decoded `Frame`s (`host/src/wire.hpp`), so a probe reader can feed it depth-1 frames later without
    touching the rest. On ESP32 a probe reads ~14 samples/s, so this mode only makes sense for ARM.
@@ -118,8 +118,8 @@ The core knows nothing about chips. A port (`platforms/<mcu>/`, ~150 lines) does
    (UART), `settle()` waits at least one sample period so an in-flight ISR finishes;
 3. fill `TargetInfo` (name, `Arch`, CPU Hz, cores). The host picks `addr2line` from `Arch`.
 
-Code the ISR runs must be placed in fast memory on some chips: mark it with `MULCAN_ISR`
-(on ESP32 it is force-inlined into the IRAM callback). Wire format: `core/include/mulcan/profiler.hpp`.
+Code the ISR runs must be placed in fast memory on some chips: mark it with `MALGRIND_ISR`
+(on ESP32 it is force-inlined into the IRAM callback). Wire format: `core/include/malgrind/profiler.hpp`.
 
 ## ESP32 notes
 
@@ -128,13 +128,13 @@ Code the ISR runs must be placed in fast memory on some chips: mark it with `MUL
 - UART0 uses the interrupt-driven driver with a TX ring buffer; plain stdout busy-waits and would dominate the
   profile. `ESP_LOG` text on the same UART still reaches your terminal (the tool separates it from frames).
 - The two innermost frames of every raw stack are the sampler itself (`_xt_lowint1`, `gptimer_default_isr`).
-  `MULCAN_ESP32_SKIP=2` removes them; if an IDF update changes the interrupt path, extra frames show up at the
+  `MALGRIND_ESP32_SKIP=2` removes them; if an IDF update changes the interrupt path, extra frames show up at the
   leaves, adjust the value.
 - ROM functions (`0x4000xxxx`) show as raw addresses (needs Espressif's ROM ELF, not done).
 
 ## Measuring overhead
 
-The viewer shows `overhead = (ISR + flusher cost) / CPU`. The ISR part contains `MULCAN_ESP32_DISPATCH_CYCLES`
+The viewer shows `overhead = (ISR + flusher cost) / CPU`. The ISR part contains `MALGRIND_ESP32_DISPATCH_CYCLES`
 (1400 cycles at 160 MHz) for the interrupt entry/exit that cannot be timed from inside the callback. To recalibrate
 after an IDF or clock change, flash both firmwares and compare the `iterations/s` log line:
 
@@ -161,8 +161,8 @@ Not included in the figure: the UART driver's own interrupts. Rate test: `PLATFO
 core/            freestanding C++20 engine: stack table, double buffer, wire encoder (+ tests/)
 platforms/host   Linux port (SIGALRM + backtrace)      platforms/esp32  ESP-IDF port      platforms/stm32  notes only
 apps/host_runner demo workload that profiles itself
-firmware/esp32   PlatformIO + ESP-IDF demo project (components/mulcan wraps core + port)
-host/            `mulcan` tool: wire decoder, symbolizer, aggregator, HTTP server, web/flame.html (+ tests/)
+firmware/esp32   PlatformIO + ESP-IDF demo project (components/malgrind wraps core + port)
+host/            `malgrind` tool: wire decoder, symbolizer, aggregator, HTTP server, web/flame.html (+ tests/)
 ```
 
 Prior art studied: [esp32-semihosting-profiler](https://github.com/open-pe/esp32-semihosting-profiler),

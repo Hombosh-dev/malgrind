@@ -4,7 +4,7 @@
 #include "source.hpp"
 #include "wire.hpp"
 
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
 
 #include <cassert>
 #include <chrono>
@@ -14,8 +14,8 @@
 #include <string>
 #include <vector>
 
-using namespace mulcan;
-using namespace mulcan::host;
+using namespace malgrind;
+using namespace malgrind::host;
 using namespace std::chrono_literals;
 
 // n frames of a 2-core target, produced by the real encoder in core/
@@ -79,7 +79,7 @@ int main() {
     assert(contains(folded, "core1;0x400d2fff;0x400d1fff;0x400d17ff") == false); // a core-1 leaf is not call-adjusted twice
 
     // serial port discovery: only USB serial adapters count, result is sorted
-    const auto dev = std::filesystem::temp_directory_path() / "mulcan_test_dev";
+    const auto dev = std::filesystem::temp_directory_path() / "malgrind_test_dev";
     std::filesystem::remove_all(dev);
     std::filesystem::create_directories(dev);
     for (const char* name : {"ttyUSB1", "ttyACM0", "ttyS0", "tty0", "null", "cu.usbserial-0001", "cu.Bluetooth-Incoming-Port",
@@ -93,7 +93,7 @@ int main() {
 
     // project and ELF discovery in a throw-away tree
     namespace fs = std::filesystem;
-    const auto root = fs::temp_directory_path() / "mulcan_test_tree";
+    const auto root = fs::temp_directory_path() / "malgrind_test_tree";
     fs::remove_all(root);
     auto fake_elf = [](const fs::path& file, unsigned char machine) {
         fs::create_directories(file.parent_path());
