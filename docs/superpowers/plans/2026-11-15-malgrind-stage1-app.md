@@ -20,6 +20,20 @@
 - **The Rust shell is ~15 lines** (plugin registration). The UI spawns the sidecar and builds the menu through the Tauri JS APIs.
 - **Stage 1 agent is always on** (samples from boot). Sleep/start/stop and the beacon are stage 2. So in stage 1, "board running with agent" means frames arrive within the probe time.
 
+## Execution notes (as built, 2026-11-15)
+
+Stage 1 is implemented and was verified on the real ESP32 through the real app. What differs from the plan above:
+
+- **Hardware found three bugs the unit tests could not**, all fixed with regression tests: a relative `--project` made pio build into `<project>/<project>/.pio`; PlatformIO wipes its build directory on the first build, which deleted the seeded sdkconfig (so the seed now lives in `.pio/malgrind/`, the build in `.pio/malgrind/build/`); and the agent's Kconfig choice sibling `ESP_CONSOLE_UART_DEFAULT` had to be overridden too. The reasons are written down in `host/src/pio.hpp`.
+- **Opening the serial port does not reset this board** (uptime ran on across repeated attaches and probe-then-attach), so the start screen can probe on launch.
+- **Projects are refused up front** when the environment is not ESP-IDF on espressif32, or the path contains a space (PlatformIO's own limit): `prepare_project` in `host/src/ops.cpp`.
+- **Stdout framing**: the TypeScript client does its own framing (whole lines, raw pieces, or a line without its newline), so it does not depend on how the shell plugin delivers a large reply.
+- **Agent directory** is resolved at run time next to the executable (`agent-src`, `../lib/malgrind/agent-src`, `../Resources/agent-src`), then `$MALGRIND_AGENT_DIR`, then the repository a source build came from. The app also passes `--agent-dir` explicitly.
+- **TypeScript is pinned to 5.9**: `svelte-check` does not run on TypeScript 7.
+- **Function table and snapshots** sum samples per distinct stack before symbolizing (one name lookup per distinct stack, not per sample).
+- Not in the plan, added: `Session` survives a failing disk (recording stops with a notice, the live view continues); `malgrind-cli` terminal mode (Task 7b).
+- The test count: 7 C++ suites (`core host store session pio serve cli`) and 15 UI tests; both also run under ThreadSanitizer for the threaded ones.
+
 ## Global Constraints
 
 - C++20, not C++23: no `string_view::contains`, no `views::enumerate/zip`. GCC ≥ 13 or Clang/libc++ ≥ 17.
