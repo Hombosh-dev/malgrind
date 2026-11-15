@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the malgrind window may do: run its sidecar, ask for a folder, build its menu.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "shell:allow-stdin-write",
+    "shell:allow-kill",
+    { "identifier": "shell:allow-spawn", "allow": [{ "name": "binaries/malgrind-cli", "sidecar": true, "args": true }] }
+  ]
+}

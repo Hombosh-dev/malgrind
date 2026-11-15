@@ -23,3 +23,9 @@ __pycache__/
 
 sdkconfig.esp32dev*
 .superpowers/
+build-app/
+app/node_modules/
+app/dist/
+app/src-tauri/target/
+app/src-tauri/binaries/
+app/src-tauri/gen/
