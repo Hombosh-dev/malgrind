@@ -60,23 +60,30 @@ std::optional<fs::path> find_elf(Arch arch, const fs::path& base, const fs::path
     std::vector<fs::path> dirs = search_dirs(base);
     if (!project.empty()) dirs.push_back(project);
 
-    std::vector<fs::path> candidates;
+    // Builds made by malgrind itself come first: firmware that sends frames carries the agent, and only those builds do.
+    std::vector<fs::path> agent_builds, other_builds;
     std::error_code ec;
     for (const auto& dir : dirs) {
+        for (const auto& env : fs::directory_iterator(dir / ".pio/malgrind", ec))
+            agent_builds.push_back(env.path() / "firmware.elf");
         for (const auto& env : fs::directory_iterator(dir / ".pio/build", ec))
-            candidates.push_back(env.path() / "firmware.elf");
+            other_builds.push_back(env.path() / "firmware.elf");
         for (const auto& file : fs::directory_iterator(dir / "build", ec))
-            if (file.path().extension() == ".elf") candidates.push_back(file.path());
+            if (file.path().extension() == ".elf") other_builds.push_back(file.path());
     }
-    std::optional<fs::path> best;
-    fs::file_time_type best_time;
-    for (const auto& c : candidates) {
-        const auto machine = elf_machine(c);
-        if (!machine || !machine_matches(arch, *machine)) continue;
-        const auto time = fs::last_write_time(c, ec);
-        if (!best || time > best_time) best = c, best_time = time;
-    }
-    return best;
+    auto newest = [&](const std::vector<fs::path>& candidates) {
+        std::optional<fs::path> best;
+        fs::file_time_type best_time;
+        for (const auto& c : candidates) {
+            const auto machine = elf_machine(c);
+            if (!machine || !machine_matches(arch, *machine)) continue;
+            const auto time = fs::last_write_time(c, ec);
+            if (!best || time > best_time) best = c, best_time = time;
+        }
+        return best;
+    };
+    if (const auto agent = newest(agent_builds)) return agent;
+    return newest(other_builds);
 }
 
 } // namespace malgrind::host

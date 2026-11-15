@@ -16,7 +16,8 @@ namespace malgrind::host {
 [[nodiscard]] std::optional<std::filesystem::path> find_project(const std::filesystem::path& base, std::string& why);
 
 // Newest firmware ELF built for `arch`, looked up in `project` (if given), `base` and base/firmware/*:
-// PlatformIO's .pio/build/*/firmware.elf and ESP-IDF's build/*.elf. The ELF header's machine type must
+// malgrind's own agent builds (.pio/malgrind/*/firmware.elf) first, then PlatformIO's .pio/build/*/firmware.elf and
+// ESP-IDF's build/*.elf. The ELF header's machine type must
 // match the architecture the target reports, so a stale or foreign ELF is never picked silently.
 [[nodiscard]] std::optional<std::filesystem::path> find_elf(Arch arch, const std::filesystem::path& base,
                                                             const std::filesystem::path& project = {});

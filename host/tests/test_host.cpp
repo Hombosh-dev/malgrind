@@ -2,6 +2,7 @@
 #include "aggregate.hpp"
 #include "discover.hpp"
 #include "source.hpp"
+#include "stream.hpp"
 #include "wire.hpp"
 
 #include "malgrind/profiler.hpp"
@@ -19,20 +20,6 @@
 using namespace malgrind;
 using namespace malgrind::host;
 using namespace std::chrono_literals;
-
-// n frames of a 2-core target, produced by the real encoder in core/
-static std::vector<std::uint8_t> make_stream(unsigned flushes) {
-    Profiler p({"test", Arch::Xtensa, 240'000'000, 2}, 997);
-    const std::uint32_t leaf_a[] = {0x400d1000, 0x400d2000, 0x400d3000}; // a <- b <- main
-    const std::uint32_t leaf_c[] = {0x400d1800, 0x400d2000, 0x400d3000};
-    std::vector<std::uint8_t> stream;
-    for (unsigned i = 0; i < flushes; ++i) {
-        for (int k = 0; k < 3; ++k) p.record(0, leaf_a, 3, 100);
-        p.record(1, leaf_c, 3, 100);
-        p.flush([&](const std::uint8_t* d, std::size_t n) { stream.insert(stream.end(), d, d + n); }, [] {}, 5000);
-    }
-    return stream;
-}
 
 int main() {
     const auto stream = make_stream(3); // 6 frames: core 0 and core 1 per flush
@@ -141,6 +128,12 @@ int main() {
     assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     assert(!find_elf(Arch::RiscV32, root));                                  // nothing built for it
     assert(!elf_machine(root / "firmware/a/platformio.ini"));                // not an ELF
+    // an agent build (.pio/malgrind) wins over newer ordinary builds: it is the firmware that sends frames
+    const auto agent_elf = root / "firmware/a/.pio/malgrind/esp32dev/firmware.elf";
+    fake_elf(agent_elf, 94);
+    fs::last_write_time(agent_elf, fs::file_time_type::clock::now() - 100s);
+    assert(find_elf(Arch::Xtensa, root) == agent_elf);
+    assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     fs::remove_all(root);
 
     std::puts("host ok");
