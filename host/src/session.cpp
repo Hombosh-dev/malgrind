@@ -95,8 +95,10 @@ void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
 
 void Session::setup(const Frame& first) {
     fs::path elf = elf_;
-    if (elf.empty() && search_elf_) {
-        if (const auto found = find_elf(first.arch, project_.empty() ? fs::path(".") : project_, project_)) elf = *found;
+    // Only inside a project the caller named: the working directory of a GUI app is arbitrary, and an ELF of another
+    // firmware would label every address with a wrong function.
+    if (elf.empty() && search_elf_ && !project_.empty()) {
+        if (const auto found = find_elf(first.arch, project_, project_)) elf = *found;
     }
     if (elf.empty()) {
         notice(std::format("no {} firmware ELF found: functions show as raw addresses", arch_name(first.arch)));

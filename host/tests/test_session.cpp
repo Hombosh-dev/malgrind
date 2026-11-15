@@ -1,4 +1,5 @@
 // Session self-check: a live run on a pty (what a serial port looks like), its recording and its replay.
+#include "pty.hpp"
 #include "session.hpp"
 #include "store.hpp"
 #include "stream.hpp"
@@ -23,20 +24,6 @@ using json = nlohmann::json;
 
 namespace {
 
-// The "board": the master side of a pty. Session reads from the slave side exactly as from /dev/ttyUSB0.
-struct Pty {
-    int master = posix_openpt(O_RDWR | O_NOCTTY);
-    std::string slave;
-    Pty() {
-        assert(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
-        slave = ptsname(master);
-    }
-    ~Pty() { hang_up(); }
-    void send(const std::vector<std::uint8_t>& bytes) const { assert(write(master, bytes.data(), bytes.size()) == static_cast<ssize_t>(bytes.size())); }
-    void send(const std::string& text) const { send(std::vector<std::uint8_t>(text.begin(), text.end())); }
-    void hang_up() { if (master >= 0) close(master), master = -1; }
-};
-
 struct Events {
     std::mutex mutex;
     std::vector<json> list;
@@ -53,12 +40,6 @@ struct Events {
         return all;
     }
 };
-
-template <class Pred> bool wait_for(Pred pred, std::chrono::milliseconds limit = 3000ms) {
-    for (const auto end = std::chrono::steady_clock::now() + limit; std::chrono::steady_clock::now() < end; std::this_thread::sleep_for(10ms))
-        if (pred()) return true;
-    return false;
-}
 
 bool contains(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
 

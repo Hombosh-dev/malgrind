@@ -28,7 +28,7 @@ using Emit = std::function<void(const nlohmann::json& event)>;
 class Session {
 public:
     // Reads `source` on a thread of its own until it ends or the session is destroyed. `elf` empty: look for the
-    // firmware ELF under `project` (or the current directory) when the first frame names the architecture.
+    // firmware ELF under `project` when the first frame names the architecture; with no project, names stay raw addresses.
     [[nodiscard]] static std::unique_ptr<Session> live(Source source, RunWriter writer, std::filesystem::path elf,
                                                        std::filesystem::path project, Emit emit);
     // A stored run, fully loaded before this returns. nullptr if there is no such run.
