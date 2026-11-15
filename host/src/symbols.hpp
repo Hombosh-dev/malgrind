@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 // addr2line for the target's architecture: PATH first, then the toolchains PlatformIO installs.
 [[nodiscard]] std::filesystem::path find_addr2line(Arch arch);
@@ -32,4 +32,4 @@ private:
     std::unordered_map<std::uint32_t, std::vector<std::string>> cache_;
 };
 
-} // namespace mulcan::host
+} // namespace malgrind::host

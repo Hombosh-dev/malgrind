@@ -1,6 +1,6 @@
-#include "mulcan/platform/esp32.hpp"
+#include "malgrind/platform/esp32.hpp"
 
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
 
 #include "driver/gptimer.h"
 #include "driver/uart.h"
@@ -15,25 +15,25 @@
 
 namespace {
 
-using namespace mulcan;
+using namespace malgrind;
 
-constexpr const char* kTag = "mulcan";
+constexpr const char* kTag = "malgrind";
 constexpr uart_port_t kUart = UART_NUM_0;
 constexpr std::uint32_t kFlushMs = 250;
 // Innermost frames that belong to the sampler, not to the program: gptimer_default_isr and
 // _xt_lowint1 (seen in raw stacks on ESP-IDF 5.3.1). If an IDF update changes the interrupt path,
-// the viewer shows the extra frames at the leaves; adjust with -DMULCAN_ESP32_SKIP=n.
-#ifndef MULCAN_ESP32_SKIP
-#define MULCAN_ESP32_SKIP 2
+// the viewer shows the extra frames at the leaves; adjust with -DMALGRIND_ESP32_SKIP=n.
+#ifndef MALGRIND_ESP32_SKIP
+#define MALGRIND_ESP32_SKIP 2
 #endif
-constexpr unsigned kSkip = MULCAN_ESP32_SKIP;
+constexpr unsigned kSkip = MALGRIND_ESP32_SKIP;
 
 // Interrupt entry/exit (_xt_lowint1 context save, gptimer_default_isr, return) runs outside the
 // callback and cannot be timed from inside it. Calibration: ~1400 cycles at 160 MHz, found by A/B
 // against the baseline firmware (see README, "measuring overhead"). Recalibrate if IDF or the
 // CPU clock changes.
-#ifndef MULCAN_ESP32_DISPATCH_CYCLES
-#define MULCAN_ESP32_DISPATCH_CYCLES 1400
+#ifndef MALGRIND_ESP32_DISPATCH_CYCLES
+#define MALGRIND_ESP32_DISPATCH_CYCLES 1400
 #endif
 
 Profiler* g_profiler;
@@ -53,7 +53,7 @@ bool IRAM_ATTR on_alarm(gptimer_handle_t, const gptimer_alarm_event_data_t*, voi
         if (seen++ >= kSkip) pcs[n++] = esp_cpu_process_stack_pc(frame.pc);
         if (frame.next_pc == 0 || !esp_backtrace_get_next_frame(&frame)) break;
     }
-    g_profiler->record(xPortGetCoreID(), pcs, n, esp_cpu_get_cycle_count() - t0 + MULCAN_ESP32_DISPATCH_CYCLES);
+    g_profiler->record(xPortGetCoreID(), pcs, n, esp_cpu_get_cycle_count() - t0 + MALGRIND_ESP32_DISPATCH_CYCLES);
     return false;
 }
 
@@ -110,22 +110,25 @@ void flusher_task(void*) {
 
 } // namespace
 
-extern "C" bool mulcan_start(std::uint16_t rate_hz) {
+extern "C" bool malgrind_start(std::uint16_t rate_hz) {
+    static bool started = false; // the agent starts itself; a second call (from user code) must not start it twice
+    if (started) return true;
+    started = true;
     static Profiler profiler({"ESP32", Arch::Xtensa, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ * 1'000'000u, portNUM_PROCESSORS},
                              rate_hz);
     g_profiler = &profiler;
 
     // Console + frames share UART0 through the interrupt-driven driver; plain stdout would busy-wait.
-    uart_driver_install(kUart, 256, 4096, 0, nullptr, 0);
+    if (!uart_is_driver_installed(kUart)) uart_driver_install(kUart, 256, 4096, 0, nullptr, 0);
     uart_vfs_dev_use_driver(kUart);
 
     static TimerJob jobs[portNUM_PROCESSORS];
     for (unsigned core = 0; core < portNUM_PROCESSORS; ++core) {
         jobs[core] = {core, rate_hz};
-        if (xTaskCreatePinnedToCore(timer_task, "mulcan_tmr", 3072, &jobs[core], configMAX_PRIORITIES - 1, nullptr,
+        if (xTaskCreatePinnedToCore(timer_task, "malgrind_tmr", 3072, &jobs[core], configMAX_PRIORITIES - 1, nullptr,
                                     core) != pdPASS)
             return false;
     }
     while (g_timers_ready < portNUM_PROCESSORS) vTaskDelay(1);
-    return xTaskCreatePinnedToCore(flusher_task, "mulcan_flush", 4096, nullptr, 1, nullptr, 0) == pdPASS;
+    return xTaskCreatePinnedToCore(flusher_task, "malgrind_flush", 4096, nullptr, 1, nullptr, 0) == pdPASS;
 }

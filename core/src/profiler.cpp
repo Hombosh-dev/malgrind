@@ -1,6 +1,6 @@
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
 
-namespace mulcan {
+namespace malgrind {
 
 std::uint32_t crc32(const std::uint8_t* data, std::size_t n) noexcept {
     std::uint32_t crc = 0xFFFFFFFFu;
@@ -59,4 +59,4 @@ std::size_t Profiler::encode(unsigned core, const StackTable& t, std::uint32_t f
     return static_cast<std::size_t>(o.p - buf_);
 }
 
-} // namespace mulcan
+} // namespace malgrind

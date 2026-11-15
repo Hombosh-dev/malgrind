@@ -1,11 +1,11 @@
-#include "mulcan/platform/host.hpp"
+#include "malgrind/platform/host.hpp"
 
 #include <csignal>
 #include <ctime>
 #include <execinfo.h>
 #include <sys/time.h>
 
-namespace mulcan::platform {
+namespace malgrind::platform {
 
 namespace {
 Profiler* g_profiler;
@@ -45,4 +45,4 @@ void HostPort::start(Profiler& profiler, std::uint16_t rate_hz) noexcept {
     setitimer(ITIMER_REAL, &it, nullptr);
 }
 
-} // namespace mulcan::platform
+} // namespace malgrind::platform

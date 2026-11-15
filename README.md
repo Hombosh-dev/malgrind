@@ -1,151 +1,166 @@
-# mulcan
+# malgrind
 
-*Micro Vulcan.* A sampling profiler for microcontrollers with a **live flamegraph**.
-A timer interrupt on the MCU records where the CPU is (full call stack), counts identical stacks on the
-device, and sends small frames over UART. The PC tool decodes them, resolves addresses to function names
-with the toolchain's `addr2line`, and serves a live flamegraph in the browser.
+*valgrind for microcontrollers.* A desktop app that profiles the firmware running on your board **live**: a flamegraph,
+a function table, and a history of runs you can reopen, rewind and rename. Today it supports the **ESP32** (ESP-IDF),
+on Linux (`.deb`); macOS is written for but not yet tried on a Mac.
 
-All logic is C++20: the on-device engine (`core/`), the per-chip ports (`platforms/`) and the PC tool
-(`host/`). The only non-C++ part is the web page (`host/web/flame.html`, JS + d3-flame-graph).
+![live flamegraph of the ESP32 demo](docs/app-flamegraph.png)
+
+*A live run of the demo firmware (`firmware/esp32`): both cores, wide = more CPU time, stacked = call chain.*
+
+## How it works
 
 ```
-MCU:  timer ISR -> unwind stack -> hash table of stacks -> UART frame ("MLC1")
-PC:   mulcan  -> decode + CRC resync -> addr2line (by arch) -> aggregate -> http://127.0.0.1:8000
+ your ESP32 + agent                         malgrind-cli (C++20 engine)                       malgrind (app)
+ timer ISR -> unwind stack ->    UART       decode frames + CRC resync -> addr2line ->        Tauri window,
+ count identical stacks on    -------->     aggregate -> run store (history)           ---->  TypeScript UI:
+ the chip, send small frames  (921600)      builds/flashes through PlatformIO       JSON lines  flamegraph, functions,
+                                                                                    on stdio    time scrubber, history
 ```
 
-![live flamegraph of the ESP32 demo](docs/flamegraph-esp32.png)
+- The **agent** is a small piece of C++ in your firmware. malgrind adds it **at build time**; your source files are never
+  touched. It samples where the CPU is about 1000 times a second per core, costing about 1.5 % CPU.
+- **`malgrind-cli`** is the engine: serial port, build and flash, symbols, analysis and history. The app spawns it as
+  `malgrind-cli serve`; in a terminal it is a tool of its own (see below).
+- The **app** (Tauri: a thin Rust shell and a TypeScript UI) only draws what the engine computes.
 
-*Live view of `firmware/esp32/main/main.cpp` on a real ESP32: both cores, wide = more CPU time, stacked = call chain
-(`app_task` on core 0 with `fft -> butterfly -> twiddle -> spin`, `radio_task` on core 1, the idle task in the middle).*
+## Install
 
-## Where to see it
+Download from the repository's **Releases** page:
 
-Start `mulcan run` (or `attach`): the browser opens by itself, or open **http://127.0.0.1:8000** (the exact address is printed). The page refreshes twice a second.
-Hover a block for its name and share, click it to zoom, use the selectors for one core and for the time window
-(5, 10, 30, 60 s or everything since start), and a pause box to freeze the picture while you read it.
-The header shows samples/s, dropped samples and the overhead. Block widths are smoothed over time and a short
-window holds few workload cycles, so use 30 s or more for a calm picture, 5 s to see changes quickly.
-If the board stops sending, the page says so instead of keeping the last picture.
+- **Linux:** `malgrind_<version>_amd64.deb` (Ubuntu 24.04 or newer), then `sudo apt install ./malgrind_<version>_amd64.deb`.
+  It installs the app (`malgrind`) and the terminal tool (`malgrind-cli`).
+- **macOS:** `malgrind_<version>_aarch64.dmg` (Apple silicon, macOS 13.3 or newer). It is only ad-hoc signed, not notarized, so
+  macOS will warn on the first start: allow it in System Settings, Privacy & Security ("Open Anyway"), or run
+  `xattr -dr com.apple.quarantine /Applications/malgrind.app`. **Built by CI, never yet tried on a Mac.**
+
+`SHA256SUMS` lists the checksums of the files.
+
+## Using the app
+
+![start screen with a running board](docs/app-start.png)
+
+- **First start, no runs yet:** a big **New run** button. It asks for your PlatformIO project, finds the board, builds the
+  project *with the agent*, flashes it and shows the live flamegraph.
+- **A board that already runs the agent** (say, your simulator) shows "Your firmware is running". **Attach live** watches it
+  without interrupting or resetting it. Choose your project folder first if you want function names.
+- **Runs that exist** are listed with their length; click one to reopen it, ✎ to rename, 🗑 to delete. Everything a run
+  shows live can be replayed, and the slider at the bottom moves through time.
+- **Remove agent…** (bottom left of a run, or on the start screen) rebuilds your project *without* the agent and flashes it,
+  so the board runs your original firmware again.
+
+Views: **Flamegraph** (core and time-window filters, smoothed so it does not flicker) and **Functions** (self and inclusive
+time per function; click one to see who calls it and what it calls).
+
+Needs [PlatformIO](https://platformio.org) (`pip install platformio`) for *New run* and *Remove agent*; attaching to a board
+that already runs the agent works without it. Projects must use the ESP-IDF framework (`framework = espidf`) and a
+path without spaces (PlatformIO's own limit).
+
+## Terminal mode: `malgrind-cli`
+
+The same package installs `malgrind-cli`, the engine with a localhost live page, for terminals and servers:
+
+```bash
+malgrind-cli run      # builds your project with the agent, flashes it, opens the live flamegraph in the browser
+malgrind-cli attach   # the board already runs the agent: just show it
+malgrind-cli detect   # which chip is connected?
+```
+
+Everything is detected, each guess is printed. Runs go into the same history the app shows.
+
+| detected | how | override |
+|---|---|---|
+| serial port | the only `/dev/ttyUSB*` / `/dev/ttyACM*` (none or several: it says so and lists them) | `--port` |
+| PlatformIO project | `.` or the only `firmware/*/platformio.ini` | `--project` |
+| environment | the project's `default_envs` | `--env` |
+| firmware ELF (function names) | the agent build, else the newest `.pio/build/*/firmware.elf` or `build/*.elf` whose machine type matches the chip | `--elf` |
+| viewer port | 8000, or the next free one | `--http-port` |
+
+Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` / speedscope), `--data-dir`, `--agent-dir`.
 
 ## Status
 
 | | |
 |---|---|
-| Host (Linux) port, demo and tool | done, tested |
-| ESP32 (Xtensa, ESP-IDF 5.3) port | done, verified on an ESP32-D0WD-V3 board |
-| `mulcan run` (build + flash + view), `attach`, `detect` | done (ESP32 via PlatformIO + esptool) |
-| STM32 / RP2040 / RISC-V ports | not started, see `platforms/stm32/README.md` |
-| Probe-based attach (firmware without libmulcan) | not started, see "Modes" |
+| Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
+| Flamegraph and function table, live and replayed, time scrubber | done |
+| `malgrind-cli run / attach / detect` | done |
+| macOS `.dmg` | not yet (the code is portable; CI builds and tests on macOS) |
+| Heap, FreeRTOS tasks, memory-error views (massif / memcheck-like) | planned: needs an agent that reports them, see the design |
+| Diff of two runs, export | planned |
+| STM32 / RP2040 / RISC-V ports, probe-based attach | not started, see `platforms/stm32/README.md` |
 
-Measured on the ESP32 (160 MHz, 2 cores, demo firmware):
+Measured on the ESP32 (160 MHz, 2 cores, demo firmware): 997 Hz per core = 2000 samples/s, 0 dropped, about 1.5 % overhead.
+The design is in `docs/superpowers/specs/`, the implementation plan in `docs/superpowers/plans/`.
 
-| rate per core | samples/s | dropped | overhead reported | overhead measured (A/B) |
-|---|---|---|---|---|
-| 997 Hz | 2000 | 0 | 1.47 % | ~1.5 % |
-| 5000 Hz | 9997 | 0 | 7.09 % | ~6.5 % |
+## Releasing
 
-"A/B" = iterations/s of a busy loop with and without the profiler, see "Measuring overhead".
-
-## Platforms
-
-| | Linux | macOS | Windows |
-|---|---|---|---|
-| `mulcan` tool (run / attach / detect, viewer) | yes, tested (GCC 15, clang 21) | written for it, **not yet run on a Mac** | no |
-| ESP32 firmware (PlatformIO) | yes, tested on hardware | PlatformIO supports it | via PlatformIO, but the tool does not run |
-| `host_runner` demo (profiles itself) | yes | no (needs a static non-PIE ELF and 32-bit addresses) | no |
-
-Requirements for the tool: GCC >= 13, or Apple Clang 15+ (Xcode 15) / LLVM 17+ on macOS 13.3 or newer. CMake stops early
-with a message if `<format>` is missing. macOS differences already handled: serial ports `/dev/cu.usb*` (not `tty.*`),
-`select()` instead of `poll()` on devices, no `B921600` constants, `open` instead of `xdg-open`, no `MSG_NOSIGNAL`,
-`std::thread` instead of `std::jthread`. The serial port is opened exclusively on both systems, so a second mulcan
-reports "busy" instead of stealing bytes. A GitHub Actions workflow (`.github/workflows/ci.yml`) builds and tests on
-Ubuntu and macOS on every push, which is the quickest way to find out whether the Mac build works.
-
-Windows would need its own serial, process and socket code (Win32 instead of termios, `posix_spawn` and BSD sockets);
-under WSL the Linux build works if the USB device is attached with `usbipd`.
-
-## Build and run
-
-Needs CMake >= 3.20 and a C++20 standard library with `<format>` (see Platforms).
+One version for everything: the `VERSION` file. `scripts/version.mjs` writes it into the app, the Rust shell and the lock file
+(the C++ engine reads `VERSION` when it is built), and CI checks that they agree.
 
 ```bash
-cmake -B build && cmake --build build && ctest --test-dir build
-
-# 1. no board: a Linux process that profiles itself
-./build/apps/host_runner/host_runner 60 | \
-  ./build/host/mulcan attach --port - --elf ./build/apps/host_runner/host_runner
-# open http://127.0.0.1:8000   (expected: busy_a 60 %, busy_b 30 %, idle 10 %)
-
-# 2. ESP32: needs PlatformIO (`pio`), which downloads ESP-IDF and the toolchain by itself
-cd ~/CLionProjects/mcu-flamegraph
-./build/host/mulcan run        # builds + flashes firmware/esp32, opens the live flamegraph in the browser
-./build/host/mulcan attach     # firmware already runs: just show it
-./build/host/mulcan detect     # which chip is connected?
+node scripts/version.mjs set 0.2.0          # or 0.2.0-rc.1 for a pre-release
+git commit -am "release 0.2.0"
+git tag v0.2.0 && git push --follow-tags
 ```
 
-Those three words are the whole interface: everything else is detected, and each guess is printed so you can see it.
+Pushing the tag starts `.github/workflows/release.yml`: it checks that the tag is `v` + `VERSION`, builds the `.deb` (Ubuntu 24.04)
+and the `.dmg` (macOS, Apple silicon) in parallel, smoke-tests each package (version, engine starts, agent sources inside) and
+publishes both, with checksums, as a GitHub Release. A tag with a dash is marked a pre-release; re-running the workflow replaces the files.
 
-| detected | how | override |
-|---|---|---|
-| serial port | the only `/dev/ttyUSB*` / `/dev/ttyACM*` (none or several: it says so and lists them) | `--port` (`-` = stdin) |
-| PlatformIO project | `.` or the only `firmware/*/platformio.ini` | `--project` |
-| environment | the project's `default_envs` | `--env` |
-| firmware ELF (function names) | newest `.pio/build/*/firmware.elf` or `build/*.elf` in `.` or `firmware/*` whose ELF machine type matches the chip that sends the frames, so a stale or foreign ELF is never used | `--elf` |
-| `addr2line` | from the chip architecture: PATH, then PlatformIO's toolchains | `--addr2line` |
-| viewer port | 8000, or the next free one | `--http-port` |
-| browser | opened automatically when a display exists | `--no-open` |
+## Build from source
 
-Not detected: the baud rate (921600, what libmulcan uses; `--baud`). If no frames arrive in 5 s the tool hints at it.
-`mulcan run --flash-cmd "..."` replaces the PlatformIO step with any build+flash command (other chips).
-`--folded out.txt` writes folded stacks for `flamegraph.pl` / speedscope when the tool exits.
+Needs CMake >= 3.20 and a C++20 standard library with `<format>` (GCC >= 13, or Apple Clang 15+ / LLVM 17+ on macOS 13.3+).
+The app also needs Node with pnpm, a Rust toolchain, and (Linux) `libwebkit2gtk-4.1-dev`, `librsvg2-dev`,
+`libayatana-appindicator3-dev`.
 
-## Modes
+```bash
+# the engine and its tests (no board needed)
+cmake -B build && cmake --build build && ctest --test-dir build
 
-1. **`run`** builds and flashes *your* firmware (linked with libmulcan, one `mulcan_start()` call), then shows it live.
-2. **`attach`** (2a): the firmware already runs libmulcan; just listen. Works on every chip, no reset needed.
-3. **Probe attach** (2b, future): firmware that knows nothing about mulcan, a debug probe reads the program counter
-   (ARM Cortex-M `DWT_PCSR` without halting, or SWO PC sampling). Flat profile, zero overhead. The viewer only
-   consumes decoded `Frame`s (`host/src/wire.hpp`), so a probe reader can feed it depth-1 frames later without
-   touching the rest. On ESP32 a probe reads ~14 samples/s, so this mode only makes sense for ARM.
+# the app
+cd app && pnpm install
+pnpm test                                    # UI tests
+pnpm tauri dev                               # run the app (builds the engine first)
+pnpm tauri build --bundles deb               # app/src-tauri/target/release/bundle/deb/malgrind_<version>_amd64.deb
 
-## Adding an MCU
+# no board? a Linux process that profiles itself
+./build/apps/host_runner/host_runner 60 | ./build/host/malgrind-cli attach --port - --elf ./build/apps/host_runner/host_runner
+```
 
-The core knows nothing about chips. A port (`platforms/<mcu>/`, ~150 lines) does:
+`malgrind-cli` finds the agent sources next to itself (the app's resources) or in `$MALGRIND_AGENT_DIR`; a source build
+falls back to this repository.
 
-1. start a periodic timer on every core; in its ISR unwind the stack (innermost frame first) and call
-   `Profiler::record(core, pcs, n, isr_cycles)`;
-2. periodically call `Profiler::flush(write, settle, last_flush_cycles)`: `write(ptr, len)` sends bytes
-   (UART), `settle()` waits at least one sample period so an in-flight ISR finishes;
-3. fill `TargetInfo` (name, `Arch`, CPU Hz, cores). The host picks `addr2line` from `Arch`.
+## The agent on the ESP32
 
-Code the ISR runs must be placed in fast memory on some chips: mark it with `MULCAN_ISR`
-(on ESP32 it is force-inlined into the IRAM callback). Wire format: `core/include/mulcan/profiler.hpp`.
-
-## ESP32 notes
-
-- Sampling uses one `gptimer` per core (997 Hz by default; prime, so it never aliases with the RTOS tick)
-  and ESP-IDF's own `esp_backtrace_*` unwinder. The ISR is IRAM-safe (`CONFIG_GPTIMER_ISR_IRAM_SAFE`).
-- UART0 uses the interrupt-driven driver with a TX ring buffer; plain stdout busy-waits and would dominate the
-  profile. `ESP_LOG` text on the same UART still reaches your terminal (the tool separates it from frames).
-- The two innermost frames of every raw stack are the sampler itself (`_xt_lowint1`, `gptimer_default_isr`).
-  `MULCAN_ESP32_SKIP=2` removes them; if an IDF update changes the interrupt path, extra frames show up at the
-  leaves, adjust the value.
+- Sampling uses one `gptimer` per core (997 Hz by default; prime, so it never aliases with the RTOS tick) and ESP-IDF's own
+  `esp_backtrace_*` unwinder. The ISR is IRAM-safe (`CONFIG_GPTIMER_ISR_IRAM_SAFE`).
+- It starts itself from a constructor, so your firmware needs no call. malgrind builds with `agent/esp32/inject.py` (a PlatformIO
+  pre-script), your `sdkconfig` plus `agent/esp32/sdkconfig.agent` (console at 921600), all inside `<project>/.pio/malgrind/`.
+  The notes in `host/src/pio.hpp` explain what that took.
+- UART0 uses the interrupt-driven driver with a TX ring buffer; plain stdout busy-waits and would dominate the profile.
+  `ESP_LOG` text on the same UART still arrives (the engine separates it from frames).
+- The two innermost frames of every raw stack are the sampler itself. `MALGRIND_ESP32_SKIP=2` removes them; if an IDF update
+  changes the interrupt path, extra frames show up at the leaves, adjust the value.
 - ROM functions (`0x4000xxxx`) show as raw addresses (needs Espressif's ROM ELF, not done).
 
-## Measuring overhead
+### Measuring overhead
 
-The viewer shows `overhead = (ISR + flusher cost) / CPU`. The ISR part contains `MULCAN_ESP32_DISPATCH_CYCLES`
-(1400 cycles at 160 MHz) for the interrupt entry/exit that cannot be timed from inside the callback. To recalibrate
-after an IDF or clock change, flash both firmwares and compare the `iterations/s` log line:
+The header shows `overhead = (ISR + flusher cost) / CPU`. The ISR part contains `MALGRIND_ESP32_DISPATCH_CYCLES`
+(1400 cycles at 160 MHz) for the interrupt entry and exit that cannot be timed from inside the callback. To recalibrate after an
+IDF or clock change, flash the plain firmware and the agent build (same source) and compare the `iterations/s` log line:
 
 ```bash
 cd firmware/esp32
-pio run -e esp32dev          -t upload --upload-port /dev/ttyUSB0    # with profiler
-pio run -e esp32dev_baseline -t upload --upload-port /dev/ttyUSB0    # without (-DDEMO_PROFILER=0)
+pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0    # plain: no profiler
+# agent build: what the app runs (see host/src/pio.hpp), sdkconfig = yours + agent/esp32/sdkconfig.agent
+MALGRIND_AGENT_DIR=$PWD/../../agent/esp32 MALGRIND_SDKCONFIG=$PWD/.pio/malgrind/sdkconfig.esp32dev \
+PLATFORMIO_EXTRA_SCRIPTS=pre:$PWD/../../agent/esp32/inject.py PLATFORMIO_BUILD_DIR=$PWD/.pio/malgrind/build \
+  pio run -e esp32dev -t upload --upload-port /dev/ttyUSB0
 ```
 
-Adjust the constant until the viewer's percentage matches `1 - profiled/baseline`.
-Not included in the figure: the UART driver's own interrupts. Rate test: `PLATFORMIO_BUILD_FLAGS="-DDEMO_RATE_HZ=5000"`.
+Adjust the constant until the header's percentage matches `1 - profiled/plain`. Not included: the UART driver's own
+interrupts. The rate is `MALGRIND_RATE_HZ` (default 997).
 
 ## Limits
 
@@ -154,16 +169,35 @@ Not included in the figure: the UART driver's own interrupts. Rate test: `PLATFO
 - Inlined and tail-called functions vanish from stacks; stacks deeper than 16 frames are cut.
 - Each core needs its own timer; one core cannot sample the other.
 - At most 128 distinct stacks per core per flush (250 ms); the rest is counted in `dropped`.
+- Sampling is statistical: a short window holds few workload cycles, so use 30 s or more for a calm picture.
+
+## Adding an MCU
+
+The core knows nothing about chips. A port (`platforms/<mcu>/`, about 150 lines) does:
+
+1. start a periodic timer on every core; in its ISR unwind the stack (innermost frame first) and call
+   `Profiler::record(core, pcs, n, isr_cycles)`;
+2. periodically call `Profiler::flush(write, settle, last_flush_cycles)`: `write(ptr, len)` sends bytes (UART),
+   `settle()` waits at least one sample period so an in-flight ISR finishes;
+3. fill `TargetInfo` (name, `Arch`, CPU Hz, cores). The engine picks `addr2line` from `Arch`.
+
+Code the ISR runs must be placed in fast memory on some chips: mark it with `MALGRIND_ISR` (on ESP32 it is force-inlined into
+the IRAM callback). Wire format: `core/include/malgrind/profiler.hpp`.
 
 ## Layout
 
 ```
-core/            freestanding C++20 engine: stack table, double buffer, wire encoder (+ tests/)
-platforms/host   Linux port (SIGALRM + backtrace)      platforms/esp32  ESP-IDF port      platforms/stm32  notes only
+core/            freestanding C++20 agent engine: stack table, double buffer, wire encoder (+ tests/)
+platforms/host   Linux port (SIGALRM + backtrace)    platforms/esp32  ESP-IDF port    platforms/stm32  notes only
+agent/esp32      the agent as an ESP-IDF component + the PlatformIO pre-script and sdkconfig that inject it
 apps/host_runner demo workload that profiles itself
-firmware/esp32   PlatformIO + ESP-IDF demo project (components/mulcan wraps core + port)
-host/            `mulcan` tool: wire decoder, symbolizer, aggregator, HTTP server, web/flame.html (+ tests/)
+firmware/esp32   PlatformIO + ESP-IDF demo project (knows nothing about malgrind)
+host/            malgrind-cli: wire decoder, symbolizer, aggregator, run store, sessions, PlatformIO, `serve` protocol,
+                 terminal mode and its live page (+ tests/)
+app/             the desktop app: Tauri shell (src-tauri/) and the TypeScript UI (src/)
 ```
+
+About 70 % of the code is C++ (the agent, the ports and the whole engine); the app's TypeScript only draws.
 
 Prior art studied: [esp32-semihosting-profiler](https://github.com/open-pe/esp32-semihosting-profiler),
 [Zephyr perf](https://docs.zephyrproject.org/latest/services/profiling/perf.html),

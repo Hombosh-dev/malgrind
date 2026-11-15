@@ -1,0 +1,39 @@
+/* Colors from the approved mockups. Light and dark follow the OS. */
+:root {
+  color-scheme: light dark;
+  --bg: #f6f4f0;
+  --panel: #ffffff;
+  --fg: #23211e;
+  --muted: #6b665f;
+  --line: #dcd8d0;
+  --accent: #ff7a2f;
+  --accent-fg: #1a1208;
+  --live: #1f9d55;
+  --danger: #d93a3a;
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161c;
+    --panel: #1b1e26;
+    --fg: #e8e6e3;
+    --muted: #8d939f;
+    --line: #2a2d36;
+    --live: #37d67a;
+    --danger: #ff5a5a;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #app { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--font); }
+button { font: inherit; color: inherit; cursor: pointer; }
+.btn {
+  background: linear-gradient(135deg, #ff9a3c, #ff5a1f); color: #fff; border: 0; border-radius: 8px;
+  padding: 10px 22px; font-weight: 600; box-shadow: 0 4px 18px #ff5a1f40;
+}
+.btn.small { padding: 5px 12px; font-size: 12px; box-shadow: none; }
+.btn.ghost { background: none; border: 1px solid var(--accent); color: var(--accent); box-shadow: none; }
+.btn.danger { background: none; border: 1px solid var(--danger); color: var(--danger); box-shadow: none; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.muted { color: var(--muted); }

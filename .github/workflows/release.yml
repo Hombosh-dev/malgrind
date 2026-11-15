@@ -1,0 +1,110 @@
+# Push a tag v<VERSION> and this builds the Linux .deb and the macOS .dmg side by side, then publishes both as a GitHub Release.
+#   node scripts/version.mjs set 0.2.0 && git commit -am "release 0.2.0" && git tag v0.2.0 && git push --follow-tags
+# A tag with a dash (v0.2.0-rc.1) becomes a pre-release.
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # the tag, VERSION and the copies in the app must all say the same
+      - run: node scripts/version.mjs check --tag "$GITHUB_REF_NAME"
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false # one platform failing must not hide the other's result
+      matrix:
+        include:
+          # 24.04: the engine needs GCC >= 13 (<format>), so the .deb needs Ubuntu 24.04 or newer
+          - { os: ubuntu-24.04, bundle: deb }
+          - { os: macos-latest, bundle: dmg } # Apple silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - run: pnpm install --frozen-lockfile
+        working-directory: app
+      - run: pnpm test
+        working-directory: app
+      # builds the C++ engine (beforeBuildCommand), the UI, the Rust shell and the package
+      - run: pnpm tauri build --bundles ${{ matrix.bundle }}
+        working-directory: app
+
+      - name: Smoke test the package (version, engine runs, agent sources are inside)
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(cat VERSION)
+          bundle_dir=app/src-tauri/target/release/bundle/${{ matrix.bundle }}
+          if [ "${{ matrix.bundle }}" = deb ]; then
+            deb=$(ls "$bundle_dir"/*.deb)
+            dpkg-deb -I "$deb" | grep -q "Version: $version"
+            dpkg-deb -x "$deb" /tmp/pkg
+            /tmp/pkg/usr/bin/malgrind-cli --version | grep -q "$version"
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/esp32/inject.py
+          else
+            dmg=$(ls "$bundle_dir"/*.dmg)
+            hdiutil attach -nobrowse -readonly -mountpoint /tmp/dmg "$dmg"
+            app=/tmp/dmg/malgrind.app
+            "$app/Contents/MacOS/malgrind-cli" --version | grep -q "$version"
+            test -f "$app/Contents/Resources/agent-src/agent/esp32/inject.py"
+            hdiutil detach /tmp/dmg
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: malgrind-${{ matrix.bundle }}
+          path: app/src-tauri/target/release/bundle/${{ matrix.bundle }}/*.${{ matrix.bundle }}
+          if-no-files-found: error
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and attach the files
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: malgrind-*
+          merge-multiple: true
+          path: dist
+      - name: Publish
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum * > SHA256SUMS)
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber   # a re-run replaces the files
+          else
+            case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac
+            gh release create "$GITHUB_REF_NAME" dist/* --title "malgrind ${GITHUB_REF_NAME#v}" --generate-notes --verify-tag $pre
+          fi

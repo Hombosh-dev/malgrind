@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(mulcan LANGUAGES CXX)
+project(malgrind LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,15 +9,15 @@ enable_testing()
 
 # The PC tool uses C++20 <format>: GCC >= 13, or Clang/libc++ >= 17 (Xcode 15, macOS 13.3+ deployment target).
 include(CheckCXXSourceCompiles)
-check_cxx_source_compiles("#include <format>\nint main() { return std::format(\"{}\", 1).size() == 1 ? 0 : 1; }" MULCAN_HAS_FORMAT)
-if(NOT MULCAN_HAS_FORMAT)
-    message(FATAL_ERROR "mulcan needs a C++20 standard library with <format> (GCC >= 13, or Xcode 15 / LLVM 17+ on macOS 13.3+)")
+check_cxx_source_compiles("#include <format>\nint main() { return std::format(\"{}\", 1).size() == 1 ? 0 : 1; }" MALGRIND_HAS_FORMAT)
+if(NOT MALGRIND_HAS_FORMAT)
+    message(FATAL_ERROR "malgrind needs a C++20 standard library with <format> (GCC >= 13, or Xcode 15 / LLVM 17+ on macOS 13.3+)")
 endif()
 
 # Platform-agnostic core (no SDK, no heap)
 add_subdirectory(core)
 
-# Host tool: `mulcan` command line (frame decoder, symbolizer, live flamegraph server). Linux and macOS.
+# Host tool: `malgrind` command line (frame decoder, symbolizer, live flamegraph server). Linux and macOS.
 add_subdirectory(host)
 
 # Host port + demo: a Linux process that profiles itself, to try the pipeline without a board.
@@ -26,5 +26,5 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_subdirectory(platforms/host)
     add_subdirectory(apps/host_runner)
 else()
-    message(STATUS "host_runner demo skipped (Linux only); use a board with `mulcan run`")
+    message(STATUS "host_runner demo skipped (Linux only); use a board with `malgrind run`")
 endif()

@@ -7,7 +7,7 @@
 #include <string_view>
 #include <thread>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 // Minimal one-connection-at-a-time HTTP/1.1 GET server on 127.0.0.1, enough for the viewer page.
 class HttpServer {
@@ -32,4 +32,4 @@ private:
     std::thread thread_; // std::jthread is still experimental in Apple's libc++
 };
 
-} // namespace mulcan::host
+} // namespace malgrind::host

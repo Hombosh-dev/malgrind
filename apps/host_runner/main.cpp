@@ -1,14 +1,14 @@
-// Demo workload that profiles itself and streams mulcan frames to stdout:
-//   ./host_runner [seconds] | mulcan attach --port - --elf ./host_runner
+// Demo workload that profiles itself and streams malgrind frames to stdout:
+//   ./host_runner [seconds] | malgrind attach --port - --elf ./host_runner
 // Expected shares: busy_a 60%, busy_b 30%, idle 10%.
-#include "mulcan/platform/host.hpp"
+#include "malgrind/platform/host.hpp"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
 
-using mulcan::platform::HostPort;
+using malgrind::platform::HostPort;
 
 static constexpr std::uint16_t kRateHz = 997;
 
@@ -32,7 +32,7 @@ static double now_ms() {
 
 int main(int argc, char** argv) {
     const double run_ms = (argc > 1 ? std::atof(argv[1]) : 1e9) * 1e3;
-    static mulcan::Profiler profiler(HostPort::info(), kRateHz);
+    static malgrind::Profiler profiler(HostPort::info(), kRateHz);
     HostPort::start(profiler, kRateHz);
 
     volatile unsigned sink = 0;

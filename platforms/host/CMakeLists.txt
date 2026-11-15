@@ -1,3 +1,3 @@
-add_library(mulcan_platform_host src/host.cpp)
-target_include_directories(mulcan_platform_host PUBLIC include)
-target_link_libraries(mulcan_platform_host PUBLIC mulcan_core)
+add_library(malgrind_platform_host src/host.cpp)
+target_include_directories(malgrind_platform_host PUBLIC include)
+target_link_libraries(malgrind_platform_host PUBLIC malgrind_core)

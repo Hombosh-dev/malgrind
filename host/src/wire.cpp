@@ -1,12 +1,12 @@
 #include "wire.hpp"
 
-#include "mulcan/profiler.hpp" // crc32
+#include "malgrind/profiler.hpp" // crc32
 
 #include <algorithm>
 #include <array>
 #include <optional>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 
@@ -94,7 +94,7 @@ FrameReader::Result FrameReader::feed(std::span<const std::uint8_t> data) {
         const std::size_t total = 6 + len + 4;
         if (r.size() < total) break;
         const std::uint32_t crc = r[6 + len] | (r[7 + len] << 8) | (r[8 + len] << 16) | (std::uint32_t{r[9 + len]} << 24);
-        if (mulcan::crc32(r.data() + 4, len + 2) != crc) { to_text(1); continue; } // corrupted: resync
+        if (malgrind::crc32(r.data() + 4, len + 2) != crc) { to_text(1); continue; } // corrupted: resync
         if (auto frame = decode(r.subspan(6, len))) {
             result.frames.push_back(std::move(*frame));
             pos += total;
@@ -106,4 +106,4 @@ FrameReader::Result FrameReader::feed(std::span<const std::uint8_t> data) {
     return result;
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

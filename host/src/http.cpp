@@ -11,7 +11,7 @@
 #define MSG_NOSIGNAL 0 // macOS has none; main() ignores SIGPIPE instead
 #endif
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 void send_all(int fd, std::string_view data) {
@@ -80,4 +80,4 @@ void HttpServer::serve() {
     }
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

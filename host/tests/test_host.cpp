@@ -2,9 +2,12 @@
 #include "aggregate.hpp"
 #include "discover.hpp"
 #include "source.hpp"
+#include "stream.hpp"
 #include "wire.hpp"
 
-#include "mulcan/profiler.hpp"
+#include "malgrind/profiler.hpp"
+
+#include <nlohmann/json.hpp>
 
 #include <cassert>
 #include <chrono>
@@ -14,23 +17,9 @@
 #include <string>
 #include <vector>
 
-using namespace mulcan;
-using namespace mulcan::host;
+using namespace malgrind;
+using namespace malgrind::host;
 using namespace std::chrono_literals;
-
-// n frames of a 2-core target, produced by the real encoder in core/
-static std::vector<std::uint8_t> make_stream(unsigned flushes) {
-    Profiler p({"test", Arch::Xtensa, 240'000'000, 2}, 997);
-    const std::uint32_t leaf_a[] = {0x400d1000, 0x400d2000, 0x400d3000}; // a <- b <- main
-    const std::uint32_t leaf_c[] = {0x400d1800, 0x400d2000, 0x400d3000};
-    std::vector<std::uint8_t> stream;
-    for (unsigned i = 0; i < flushes; ++i) {
-        for (int k = 0; k < 3; ++k) p.record(0, leaf_a, 3, 100);
-        p.record(1, leaf_c, 3, 100);
-        p.flush([&](const std::uint8_t* d, std::size_t n) { stream.insert(stream.end(), d, d + n); }, [] {}, 5000);
-    }
-    return stream;
-}
 
 int main() {
     const auto stream = make_stream(3); // 6 frames: core 0 and core 1 per flush
@@ -59,27 +48,47 @@ int main() {
     // aggregation: no ELF, so names are the raw (call-adjusted) addresses
     Symbolizer symbols({}, {});
     Aggregator agg(symbols);
-    const auto t0 = Aggregator::Clock::now();
-    agg.add(whole.frames[0], t0 - 30s);  // core 0, old
-    agg.add(whole.frames[1], t0 - 30s);  // core 1, old
-    agg.add(whole.frames[2], t0 - 1s);   // core 0, recent
+    agg.add(whole.frames[0], 0ms);      // core 0, early
+    agg.add(whole.frames[1], 0ms);      // core 1, early
+    agg.add(whole.frames[2], 29000ms);  // core 0, late
     auto contains = [](const std::string& s, const char* part) { return s.find(part) != std::string::npos; };
 
-    const auto recent = agg.snapshot_json(std::nullopt, 10s, t0);
-    assert(contains(recent, R"("name":"all","value":3)"));               // only the recent frame
-    const auto all_time = agg.snapshot_json(std::nullopt, 0s, t0);
-    assert(contains(all_time, R"("name":"all","value":7)"));             // 3 + 1 + 3
-    const auto core1 = agg.snapshot_json(1u, 0s, t0);
-    assert(contains(core1, R"("name":"all","value":1)"));
+    assert(agg.duration() == 29000ms);
+    assert(contains(agg.snapshot_json(std::nullopt, 10s), R"("name":"all","value":3)"));        // window ends at the last frame
+    assert(contains(agg.snapshot_json(std::nullopt, 0s), R"("name":"all","value":7)"));        // 3 + 1 + 3
+    assert(contains(agg.snapshot_json(std::nullopt, 5s, 1000ms), R"("name":"all","value":4)")); // scrubbed back: 3 + 1
+    assert(contains(agg.snapshot_json(1u, 0s), R"("name":"all","value":1)"));
+    assert(contains(agg.snapshot_json(std::nullopt, 0s), R"("duration_ms":29000)"));
     // main (0x400d3000-1) is the root of every stack and carries all of them
-    assert(contains(all_time, R"("name":"0x400d2fff","value":7)"));
+    assert(contains(agg.snapshot_json(std::nullopt, 0s), R"("name":"0x400d2fff","value":7)"));
 
     const auto folded = agg.folded();
     assert(contains(folded, "core0;0x400d2fff;0x400d1fff;0x400d1000 6\n"));
     assert(contains(folded, "core1;0x400d2fff;0x400d1fff;0x400d17ff") == false); // a core-1 leaf is not call-adjusted twice
 
+    // function table: b = 0x400d1fff is called by main and calls a (6 samples) and c (1)
+    const auto fn = nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d1fff"));
+    assert(fn["total"] == 7);
+    assert(fn["functions"][0]["name"] == "0x400d1000" && fn["functions"][0]["self"] == 6 && fn["functions"][0]["total"] == 6);
+    assert(fn["callers"].size() == 1 && fn["callers"][0]["name"] == "0x400d2fff" && fn["callers"][0]["count"] == 7);
+    assert(fn["callees"].size() == 2);
+    assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, ""))["callers"].empty());
+    assert(nlohmann::json::parse(agg.functions_json(1u, 0s, std::nullopt, ""))["total"] == 1); // core filter
+
+    // recursion: names {main, r, r, leaf}: r counts once in `total`, and calls itself
+    Frame rec;
+    rec.arch = Arch::Xtensa, rec.ncores = 1, rec.core = 0, rec.cpu_hz = 1, rec.stacks = {{5, {0x400d5000, 0x400d1000, 0x400d1000, 0x400d3000}}};
+    Symbolizer rec_symbols({}, {});
+    Aggregator rec_agg(rec_symbols);
+    rec_agg.add(rec, 0ms);
+    const auto rfn = nlohmann::json::parse(rec_agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d0fff"));
+    assert(rfn["total"] == 5);
+    for (const auto& f : rfn["functions"])
+        if (f["name"] == "0x400d0fff") assert(f["total"] == 5 && f["self"] == 0);   // 5, not 10
+    assert(rfn["callees"].size() == 2); // itself and the leaf
+
     // serial port discovery: only USB serial adapters count, result is sorted
-    const auto dev = std::filesystem::temp_directory_path() / "mulcan_test_dev";
+    const auto dev = std::filesystem::temp_directory_path() / "malgrind_test_dev";
     std::filesystem::remove_all(dev);
     std::filesystem::create_directories(dev);
     for (const char* name : {"ttyUSB1", "ttyACM0", "ttyS0", "tty0", "null", "cu.usbserial-0001", "cu.Bluetooth-Incoming-Port",
@@ -93,7 +102,7 @@ int main() {
 
     // project and ELF discovery in a throw-away tree
     namespace fs = std::filesystem;
-    const auto root = fs::temp_directory_path() / "mulcan_test_tree";
+    const auto root = fs::temp_directory_path() / "malgrind_test_tree";
     fs::remove_all(root);
     auto fake_elf = [](const fs::path& file, unsigned char machine) {
         fs::create_directories(file.parent_path());
@@ -119,6 +128,12 @@ int main() {
     assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     assert(!find_elf(Arch::RiscV32, root));                                  // nothing built for it
     assert(!elf_machine(root / "firmware/a/platformio.ini"));                // not an ELF
+    // an agent build (.pio/malgrind) wins over newer ordinary builds: it is the firmware that sends frames
+    const auto agent_elf = root / "firmware/a/.pio/malgrind/build/esp32dev/firmware.elf";
+    fake_elf(agent_elf, 94);
+    fs::last_write_time(agent_elf, fs::file_time_type::clock::now() - 100s);
+    assert(find_elf(Arch::Xtensa, root) == agent_elf);
+    assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     fs::remove_all(root);
 
     std::puts("host ok");

@@ -9,7 +9,7 @@
 
 namespace fs = std::filesystem;
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 namespace {
 
@@ -108,4 +108,4 @@ std::vector<std::string> Symbolizer::frames(std::size_t index, std::uint32_t pc)
     return it != cache_.end() ? it->second : std::vector<std::string>{std::format("0x{:x}", pc)};
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

@@ -9,7 +9,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 std::vector<std::string> find_serial_ports(const std::filesystem::path& dev_dir) {
     auto lower = [](std::string s) {
@@ -85,4 +85,4 @@ std::optional<std::size_t> Source::read(std::span<std::uint8_t> out, int timeout
     return std::nullopt; // EOF or device gone
 }
 
-} // namespace mulcan::host
+} // namespace malgrind::host

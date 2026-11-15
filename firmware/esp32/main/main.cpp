@@ -1,23 +1,14 @@
 // Demo firmware: a fake "sensor node" with nested calls, so the flamegraph has some depth.
 //   core 0 "app":   read_sensors -> process_signal (fir_filter, fft -> butterfly -> twiddle) -> compress, then sleeps
 //   core 1 "radio": handle_packet -> parse_packet -> crc_check, build_reply -> encrypt, then sleeps
-// Build the "baseline" env (-DDEMO_PROFILER=0) and compare the iterations/s log line for real overhead.
+// Knows nothing about malgrind: the app injects the agent at build time. Compare the iterations/s log line of a
+// plain build and an agent build for the real overhead.
 #include <cstdint>
 
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-#ifndef DEMO_PROFILER
-#define DEMO_PROFILER 1
-#endif
-#ifndef DEMO_RATE_HZ
-#define DEMO_RATE_HZ 997 // prime: no aliasing with the RTOS tick
-#endif
-#if DEMO_PROFILER
-#include "mulcan/platform/esp32.hpp"
-#endif
 
 namespace {
 
@@ -100,9 +91,6 @@ void radio_task(void*) {
 } // namespace
 
 extern "C" void app_main() {
-#if DEMO_PROFILER
-    if (!mulcan_start(DEMO_RATE_HZ)) ESP_LOGE(kTag, "mulcan_start failed");
-#endif
     xTaskCreatePinnedToCore(app_task, "app", 4096, nullptr, 5, nullptr, 0);
     xTaskCreatePinnedToCore(radio_task, "radio", 4096, nullptr, 5, nullptr, 1);
 

@@ -1,8 +1,8 @@
 #pragma once
 
-// Decoder for the mulcan wire frame (layout documented in core/include/mulcan/profiler.hpp).
+// Decoder for the malgrind wire frame (layout documented in core/include/malgrind/profiler.hpp).
 
-#include "mulcan/target_info.hpp"
+#include "malgrind/target_info.hpp"
 
 #include <cstdint>
 #include <span>
@@ -10,7 +10,7 @@
 #include <string_view>
 #include <vector>
 
-namespace mulcan::host {
+namespace malgrind::host {
 
 struct Stack {
     std::uint16_t count;
@@ -43,4 +43,4 @@ private:
     std::vector<std::uint8_t> buf_;
 };
 
-} // namespace mulcan::host
+} // namespace malgrind::host
