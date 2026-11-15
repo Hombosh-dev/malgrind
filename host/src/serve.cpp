@@ -30,7 +30,7 @@ namespace {
 using json = nlohmann::json;
 using namespace std::chrono_literals;
 
-constexpr const char* kVersion = "0.1.0";
+constexpr const char* kVersion = MALGRIND_VERSION; // from the VERSION file, see host/CMakeLists.txt
 std::string str_arg(const json& req, const char* key) {
     if (!req.contains(key) || !req[key].is_string()) throw std::runtime_error(std::string("missing argument: ") + key);
     return req[key].get<std::string>();

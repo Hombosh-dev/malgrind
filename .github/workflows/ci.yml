@@ -30,3 +30,6 @@ jobs:
         working-directory: app
       - run: pnpm check
         working-directory: app
+      # one version everywhere: VERSION, the app and the Rust shell
+      - run: node scripts/version.mjs check
+      - run: node --test scripts/version.test.mjs

@@ -52,6 +52,10 @@ constexpr std::string_view kServeUsage = "malgrind-cli serve [--data-dir DIR] [-
 int main(int argc, char** argv) {
     using namespace malgrind::host;
     const std::vector<std::string> args(argv + 1, argv + argc);
+    if (args.size() == 1 && (args[0] == "--version" || args[0] == "version")) {
+        std::cout << "malgrind-cli " << MALGRIND_VERSION << "\n";
+        return 0;
+    }
     if (args.empty() || (args[0] != "serve" && args[0] != "run" && args[0] != "attach" && args[0] != "detect")) {
         std::cerr << kCliUsage;
         return 2;

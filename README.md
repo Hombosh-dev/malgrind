@@ -24,6 +24,17 @@ on Linux (`.deb`); macOS is written for but not yet tried on a Mac.
   `malgrind-cli serve`; in a terminal it is a tool of its own (see below).
 - The **app** (Tauri: a thin Rust shell and a TypeScript UI) only draws what the engine computes.
 
+## Install
+
+Download from the repository's **Releases** page:
+
+- **Linux:** `malgrind_<version>_amd64.deb` (Ubuntu 24.04 or newer), then `sudo apt install ./malgrind_<version>_amd64.deb`.
+  It installs the app (`malgrind`) and the terminal tool (`malgrind-cli`).
+- **macOS:** `malgrind_<version>_aarch64.dmg` (Apple silicon, macOS 13.3 or newer). It is **not signed**, so the first start needs
+  right-click, Open. Built by CI but not yet tried on a Mac.
+
+`SHA256SUMS` lists the checksums of the files.
+
 ## Using the app
 
 ![start screen with a running board](docs/app-start.png)
@@ -80,6 +91,21 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 
 Measured on the ESP32 (160 MHz, 2 cores, demo firmware): 997 Hz per core = 2000 samples/s, 0 dropped, about 1.5 % overhead.
 The design is in `docs/superpowers/specs/`, the implementation plan in `docs/superpowers/plans/`.
+
+## Releasing
+
+One version for everything: the `VERSION` file. `scripts/version.mjs` writes it into the app, the Rust shell and the lock file
+(the C++ engine reads `VERSION` when it is built), and CI checks that they agree.
+
+```bash
+node scripts/version.mjs set 0.2.0          # or 0.2.0-rc.1 for a pre-release
+git commit -am "release 0.2.0"
+git tag v0.2.0 && git push --follow-tags
+```
+
+Pushing the tag starts `.github/workflows/release.yml`: it checks that the tag is `v` + `VERSION`, builds the `.deb` (Ubuntu 24.04)
+and the `.dmg` (macOS, Apple silicon) in parallel, smoke-tests each package (version, engine starts, agent sources inside) and
+publishes both, with checksums, as a GitHub Release. A tag with a dash is marked a pre-release; re-running the workflow replaces the files.
 
 ## Build from source
 

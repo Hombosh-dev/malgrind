@@ -77,7 +77,7 @@ bool contains(const std::string& s, const char* part) { return s.find(part) != s
 void hello_and_runs() {
     Harness h("malgrind_serve_a");
     const auto hello = h.call({{"cmd", "hello"}});
-    assert(hello["ok"] && hello["result"]["version"] == "0.1.0" && hello["result"]["data_dir"] == (h.root / "runs").string());
+    assert(hello["ok"] && hello["result"]["version"] == MALGRIND_VERSION && hello["result"]["data_dir"] == (h.root / "runs").string());
     assert(hello["result"].contains("pio")); // a path or null
     assert(h.runs() == json::array());
     assert(h.call({{"cmd", "ports"}})["result"].is_array());

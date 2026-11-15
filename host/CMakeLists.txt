@@ -2,11 +2,16 @@ include(FetchContent)
 FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
+# The version lives in the VERSION file at the repository root (scripts/version.mjs keeps the app's copies in step).
+file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
+
 add_library(malgrind_host STATIC
     src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
+target_compile_definitions(malgrind_host PUBLIC MALGRIND_VERSION="${MALGRIND_VERSION}")
 target_compile_options(malgrind_host PUBLIC -Wall -Wextra)
 
 # The live page of the terminal mode is compiled into the binary as a raw string literal.
