@@ -1,9 +1,9 @@
 include(FetchContent)
-FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 FetchContent_MakeAvailable(nlohmann_json)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
@@ -22,3 +22,8 @@ add_executable(test_host tests/test_host.cpp)
 target_link_libraries(test_host PRIVATE malgrind_host)
 target_compile_options(test_host PRIVATE -UNDEBUG)
 add_test(NAME host COMMAND test_host)
+
+add_executable(test_store tests/test_store.cpp)
+target_link_libraries(test_store PRIVATE malgrind_host)
+target_compile_options(test_store PRIVATE -UNDEBUG)
+add_test(NAME store COMMAND test_store)
