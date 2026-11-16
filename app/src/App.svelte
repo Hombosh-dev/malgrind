@@ -2,26 +2,31 @@
   import { onMount } from 'svelte';
   import { startSidecar, type Sidecar } from './lib/sidecar';
   import { installMenu } from './lib/menu';
-  import type { Hello, RunMeta } from './lib/types';
+  import type { Hello, ProjectMeta, RunMeta } from './lib/types';
   import RemoveAgent from './components/RemoveAgent.svelte';
-  import NewRun from './screens/NewRun.svelte';
+  import NewProject from './screens/NewProject.svelte';
+  import Profile from './screens/Profile.svelte';
+  import Project from './screens/Project.svelte';
   import Run from './screens/Run.svelte';
   import Start from './screens/Start.svelte';
+
+  // Where the user is. A run remembers the project it was opened from, so "close" goes back to it.
+  type Route =
+    | { name: 'start' }
+    | { name: 'newproject' }
+    | { name: 'project'; id: string }
+    | { name: 'profile'; project: ProjectMeta }
+    | { name: 'run'; run: RunMeta; live: boolean };
 
   let sidecar = $state<Sidecar | null>(null);
   let hello = $state<Hello | null>(null);
   let fatal = $state('');
-  let screen = $state<'start' | 'newrun' | 'run'>('start');
-  let run = $state<RunMeta | null>(null);
-  let live = $state(false); // the run on screen is being recorded
+  let route = $state<Route>({ name: 'start' });
   let removingPort = $state<string | null>(null);
 
   // `recording`: attached or built just now; otherwise opened from the history
-  function show(r: RunMeta, recording: boolean) {
-    run = r;
-    live = recording;
-    screen = 'run';
-  }
+  const show = (run: RunMeta, recording: boolean) => (route = { name: 'run', run, live: recording });
+  const home = (run?: RunMeta): Route => (run?.project_id ? { name: 'project', id: run.project_id } : { name: 'start' });
 
   onMount(async () => {
     try {
@@ -29,13 +34,17 @@
       hello = await sidecar.call<Hello>('hello');
       await installMenu({
         // a run being recorded (or shown) is closed first: the engine refuses a new run while one is live
-        newRun: async () => {
-          if (screen === 'newrun') return;
+        newProject: async () => {
+          if (route.name === 'newproject') return;
           await sidecar?.call('stop').catch(() => {});
-          screen = 'newrun';
+          route = { name: 'newproject' };
         },
-        stop: () => screen === 'run' && sidecar?.call('stop').finally(() => (screen = 'start')),
-        removeAgent: () => (removingPort = live && screen === 'run' ? (run?.port ?? '') : ''), // '' = the dialog picks the port
+        stop: () => {
+          if (route.name !== 'run') return;
+          const back = home(route.run);
+          sidecar?.call('stop').finally(() => (route = back));
+        },
+        removeAgent: () => (removingPort = route.name === 'run' && route.live ? (route.run.port ?? '') : ''), // '' = the dialog picks the port
       });
     } catch (e) {
       fatal = String(e instanceof Error ? e.message : e);
@@ -50,19 +59,26 @@
   </main>
 {:else if !sidecar || !hello}
   <main class="fatal"><p class="muted">Starting…</p></main>
-{:else if screen === 'start'}
-  <Start
-    {sidecar}
-    {hello}
-    onNewRun={() => (screen = 'newrun')}
-    onRun={show}
-    onRemoveAgent={(port) => (removingPort = port)}
-  />
-{:else if screen === 'newrun'}
-  <NewRun {sidecar} {hello} onCancel={() => (screen = 'start')} onRun={show} />
+{:else if route.name === 'start'}
+  <Start {sidecar} onNewProject={() => (route = { name: 'newproject' })} onProject={(id) => (route = { name: 'project', id })} onRun={(run) => show(run, false)} />
+{:else if route.name === 'newproject'}
+  <NewProject {sidecar} onCancel={() => (route = { name: 'start' })} onCreated={(project) => (route = { name: 'project', id: project.id })} />
+{:else if route.name === 'project'}
+  {#key route.id}
+    <Project {sidecar} id={route.id} onBack={() => (route = { name: 'start' })} onProfile={(project) => (route = { name: 'profile', project })} onRun={(run) => show(run, false)} />
+  {/key}
+{:else if route.name === 'profile'}
+  {@const project = route.project}
+  <Profile {sidecar} {project} onBack={() => (route = { name: 'project', id: project.id })} onRun={show} />
 {:else}
-  {#key run?.id}
-    <Run {sidecar} run={run!} {live} onClose={() => (screen = 'start')} onRemoveAgent={(port) => (removingPort = port)} />
+  {#key route.run.id}
+    <Run
+      {sidecar}
+      run={route.run}
+      live={route.live}
+      onClose={() => (route = home(route.name === 'run' ? route.run : undefined))}
+      onRemoveAgent={(port) => (removingPort = port)}
+    />
   {/key}
 {/if}
 
@@ -71,7 +87,7 @@
     {sidecar}
     port={removingPort}
     onCancel={() => (removingPort = null)}
-    onDone={() => ((removingPort = null), (screen = 'start'))}
+    onDone={() => ((removingPort = null), (route = { name: 'start' }))}
   />
 {/if}
 

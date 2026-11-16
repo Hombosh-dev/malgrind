@@ -139,23 +139,36 @@ encryption; fragile), and profiling a board that has neither source nor a probe.
 
 ## 6. Flows
 
-**Open the app.** Probe for a board (serial list, then beacon listen). Then:
-- no runs and no board running: big **New run**;
-- board running with an agent: card "Your firmware is running" with **Attach live** and New run;
-- runs exist: history list, New run in the top menu. A running board adds the attach card above the list.
-- Theme follows the OS (light/dark).
+(Reworked 2026-11-16 after the user's own sketch. Vocabulary: a **project** is a container, its source code is optional.)
 
-**New run (4 steps).** Project (folder dialog, remembered) → Board (auto-detected; a list if several) → Build &
-flash (progress and log) → Live. If `pio` is missing, one screen with the install command.
+**Open the app.** First time (no projects, no runs): a big **New project** in the middle. Otherwise a wide "New project" card
+sits on top and under it two tabs: **Projects** (name, where it came from, run count, last run; rename, delete) and **Runs**
+(the flat history, which also holds runs made before projects existed). Theme follows the OS (light/dark).
 
-**Attach.** Opens a run on the beacon-detected board, sends *start*, and uses the ELF found for the firmware
-(newest matching, as today; else the user picks one; else raw addresses with a notice). Stopping sends *stop*; the
-board keeps running.
+**New project.** One panel with four ways in: drop a project folder (or a firmware `.elf`) on the window or press *Choose
+folder*; paste a **GitHub link** (`https://github.com/owner/repo`, public, shallow clone into malgrind's own folder); or
+**no code, just a board** (optionally with the board's `.elf`, which only gives function names). The folder of a user's own
+project is used in place and never changed. A project from GitHub is **not trusted** until the user presses *Trust*, because
+building runs the repository's `platformio.ini` scripts; attaching builds nothing and needs no trust.
+
+**Project page.** Name, origin, environment, trust banner, its runs, and a big **Profile**.
+
+**Profile, three steps.**
+1. **Board**: one large tile per plugged-in serial port (USB adapter name, port, "agent running · 2 cores · 160 MHz" after a
+   2 s read-only listen, an *Identify chip* button that says it resets the board) and greyed tiles for any USB debug probe
+   found ("in development"). A tile never names a chip it cannot know.
+2. **How** (the methods of section 5a, as cards): *Attach*, *Build & flash* (the board is backed up first), *Debug probe*
+   (greyed, "in development"). An unavailable card says what is missing, for example "this project has no source code".
+   The mode comes after the board because what is possible depends on board and project together.
+3. **Run**: backup, build, flash with a log, then the live view.
+
+**Attach** records a board that already runs the agent, with the project's ELF (else the newest matching one in its folder, else raw
+addresses and a notice). Stopping leaves the board running.
 
 **Remove agent.** Dialog: "Restores the firmware that was on the board before malgrind last flashed the agent (a backup
 taken then). Live profiling stops." **Restore & flash** writes the backup of this board (section 5a), so the original comes
 back byte for byte even if its source is unknown. **Rebuild my project instead** runs a plain `pio run -t upload` of the
-user's project (no overrides). Reachable from the sidebar footer (red) and from the board card on the start screen.
+user's project (no overrides). Reachable from the sidebar footer (red) and from the Board menu.
 
 **Live run.** Sidebar layout: Flamegraph | Functions | Memory | Tasks | Memcheck (red badge with the problem
 count), core and window filters in the sidebar, LIVE indicator, pause, and a **time scrubber** under the graph (follows

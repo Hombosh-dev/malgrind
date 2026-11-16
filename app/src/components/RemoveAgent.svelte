@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import BuildLog from './BuildLog.svelte';
-  import ProjectPicker from './ProjectPicker.svelte';
   import type { Sidecar } from '../lib/sidecar';
+  import type { ProjectMeta } from '../lib/types';
 
   interface Props {
     sidecar: Sidecar;
@@ -17,6 +17,8 @@
   let portsKnown = $state(false);
 
   onMount(async () => {
+    buildable = (await sidecar.call<ProjectMeta[]>('projects')).filter((p) => p.has_source && p.trusted && !p.problem);
+    project = buildable[0]?.id ?? '';
     if (!port) {
       ports = await sidecar.call<string[]>('ports');
       port = ports[0] ?? '';
@@ -25,9 +27,8 @@
   });
 
   let rebuild = $state(false); // false: write back the backup taken before the agent went on; true: build the user's project
-  let dir = $state('');
-  let env = $state('');
-  let valid = $state(false);
+  let buildable = $state<ProjectMeta[]>([]); // projects with source that may be built, for "rebuild my project instead"
+  let project = $state('');
   let working = $state(false);
   let started = $state(false);
   let lines = $state<string[]>([]);
@@ -40,7 +41,7 @@
     error = '';
     lines = [];
     try {
-      await sidecar.call('remove_agent', rebuild ? { how: 'rebuild', dir, env, port } : { how: 'restore', port });
+      await sidecar.call('remove_agent', rebuild ? { how: 'rebuild', project, port } : { how: 'restore', port });
       onDone();
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -67,14 +68,20 @@
     {:else if portsKnown}
       <p class="error" role="alert">No serial port found. Connect the board first.</p>
     {/if}
-    {#if rebuild}<ProjectPicker {sidecar} bind:dir bind:env bind:valid />{/if}
+    {#if rebuild}
+      {#if buildable.length === 0}
+        <p class="error">No project with source code. Add one first (New project), or restore the backup.</p>
+      {:else}
+        <label class="muted">Project <select bind:value={project}>{#each buildable as p}<option value={p.id}>{p.name}</option>{/each}</select></label>
+      {/if}
+    {/if}
     {#if !started}
       <button class="link" onclick={() => (rebuild = !rebuild)}>{rebuild ? 'Restore the backup instead' : 'Rebuild my project instead'}</button>
     {/if}
     {#if started}<BuildLog {lines} busy={working} />{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button class="btn danger" disabled={(rebuild && !valid) || !port || working} onclick={remove}>
+      <button class="btn danger" disabled={(rebuild && !project) || !port || working} onclick={remove}>
         {working ? 'Flashing…' : rebuild ? 'Rebuild & flash' : 'Restore & flash'}
       </button>
       <button class="btn ghost" disabled={working} onclick={onCancel}>Cancel</button>

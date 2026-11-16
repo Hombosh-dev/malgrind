@@ -6,6 +6,7 @@ export interface RunMeta {
   project: string;
   env: string;
   port: string;
+  project_id: string; // the malgrind project this run belongs to; empty for runs made without one
   started: string; // ISO-8601 UTC
   arch: string | null;
   ncores: number;
@@ -41,4 +42,34 @@ export interface ProjectInfo {
   dir: string;
   envs: string[];
   default_env: string;
+}
+
+// A project is a container: its source code is optional (a board whose firmware nobody has can still be profiled).
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  source: 'folder' | 'git' | 'none';
+  dir: string;
+  url: string;
+  env: string;
+  created: string;
+  elf: string;
+  trusted: boolean; // building runs the project's scripts: a GitHub project must be trusted first
+  has_source: boolean;
+  envs: string[];
+  problem: string; // why the folder cannot be used now (moved, deleted); empty if fine
+  run_count?: number; // only in the `projects` list
+  last_run?: string | null;
+}
+
+export interface BoardPort {
+  port: string;
+  adapter: string; // the USB adapter (not the chip); empty if unknown
+  vid: string;
+  pid: string;
+}
+
+export interface BoardsInfo {
+  ports: BoardPort[];
+  probes: { name: string; vid: string; pid: string }[]; // USB debug probes that are plugged in
 }
