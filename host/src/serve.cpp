@@ -450,9 +450,15 @@ private:
         return req.contains("settings") && req["settings"].is_object() ? req["settings"].get<RunSettings>() : RunSettings{};
     }
 
-    // What a run used is offered again before the next one (the panel is shown every time, pre-filled with it).
-    void remember_settings(const std::string& project_id, const RunSettings& settings) {
-        if (!project_id.empty()) projects_.update(project_id, {.last_settings = settings});
+    // What a run used is offered again before the next one (the panel is shown every time, pre-filled with it). The two typed
+    // command lines and the ELF are not: they belong to that board and that build. A remembered upload line carries the old
+    // --upload-port, so on another board the header would name one board while the line flashed the other; a remembered ELF
+    // would label a fresh build with the old one's functions. The run itself keeps all of its settings.
+    void remember_settings(const std::string& project_id, RunSettings settings) {
+        settings.build_command.clear();
+        settings.upload_command.clear();
+        settings.elf.clear();
+        if (!project_id.empty()) projects_.update(project_id, {.last_settings = std::move(settings)});
     }
 
     // What the settings panel needs: the detected values, what the project used last, and the exact commands for the settings
@@ -478,9 +484,14 @@ private:
         result["elf_hint"] = agent_elf(p.project, p.env).string(); // where the build puts it; used when no ELF is chosen
         const auto detected_plan = make_plan(p, options_.agent_dir, {});
         result["detected_commands"] = {{"build", detected_plan.build_text}, {"upload", detected_plan.upload_text}};
+        result["warning"] = "";
         try {
-            const auto plan = make_plan(p, options_.agent_dir, settings_arg(req));
+            const auto settings = settings_arg(req);
+            const auto plan = make_plan(p, options_.agent_dir, settings);
             result["commands"] = {{"build", plan.build_text}, {"upload", plan.upload_text}, {"env", plan.build.env}};
+            // a typed upload line replaces the one that names the chosen board: say so when it names no board at all
+            if (!settings.upload_command.empty() && plan.upload_text.find(p.port) == std::string::npos)
+                result["warning"] = "the upload command does not mention " + p.port + ", the board you chose: make sure it flashes that one";
         } catch (const std::exception& e) {
             result["error"] = e.what();
         }

@@ -34,6 +34,7 @@
   let autoUpload = $state('');
   let envVars = $state<string[]>([]);
   let engineError = $state('');
+  let warning = $state('');
   let asked = 0;
 
   const detectedRate = $derived(plan?.detected.rate_hz || defaultRate);
@@ -80,6 +81,7 @@
         const answer = await sidecar.call<RunPlan>('run_plan', { project: project.id, port, mode, settings: sent });
         if (mine !== asked) return; // an older answer
         engineError = answer.error;
+        warning = answer.warning ?? '';
         envVars = answer.commands?.env ?? [];
         if (answer.commands) {
           if (!sent.build_command) autoBuild = answer.commands.build;
@@ -165,6 +167,7 @@
     {/if}
 
     {#if engineError}<p class="error" role="alert">{engineError}</p>{/if}
+    {#if warning}<p class="warning" role="status">{warning}</p>{/if}
     {#if changed.length > 0}<p class="hint">Changed from detected: {changed.join(', ')}.</p>{/if}
     {#if mode === 'new_run'}<p class="hint">The firmware on the board is saved first and can be restored.</p>{/if}
 
@@ -193,6 +196,7 @@
   textarea.custom { border-color: var(--accent); }
   .hint { font: 12px var(--font); color: var(--muted); }
   .hint.bad, .error { color: var(--danger); }
+  .warning { margin: 10px 0 0; color: var(--accent); font-size: 13px; }
   .advanced { margin-top: 14px; }
   .advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   .advanced label { margin-top: 10px; }

@@ -18,6 +18,7 @@ export interface RunPlan {
   detected_commands?: { build: string; upload: string };
   commands: { build: string; upload: string; env: string[] } | null; // for the settings that were sent; null when `error` is set
   error: string; // the field that does not hold up, in words
+  warning?: string; // allowed, but probably not meant (a typed upload line that names no port)
 }
 
 // Shapes of what the sidecar returns (host/src/serve.hpp, host/src/store.hpp).

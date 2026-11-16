@@ -416,13 +416,25 @@ void a_run_keeps_its_settings_and_the_project_offers_them_again() {
     const auto missing = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "a"}, {"project", id}, {"settings", {{"elf", "/no/such.elf"}}}});
     assert(missing["ok"] == false && contains(missing["error"], "ELF does not exist") && h.runs().empty());
 
-    const auto run = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "a"}, {"project", id}, {"settings", {{"rate_hz", 700}, {"extra_args", "-v"}}}});
+    const json used = {{"rate_hz", 700}, {"extra_args", "-v"}, {"upload_command", "/bin/echo upload --port /dev/ttyUSB7"}, {"build_command", "/bin/echo build -e zzz"}, {"elf", "/bin/sh"}};
+    const auto run = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "a"}, {"project", id}, {"settings", used}});
     assert(run["ok"] && run["result"]["run"]["settings"]["rate_hz"] == 700);
     h.call({{"cmd", "stop"}});
-    assert(h.runs()[0]["settings"]["extra_args"] == "-v");                                          // stored with the run
-    const auto plan = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"}})["result"];
-    assert(plan["last"]["rate_hz"] == 700 && plan["last"]["extra_args"] == "-v");                  // offered again before the next one
+    assert(h.runs()[0]["settings"]["extra_args"] == "-v" && h.runs()[0]["settings"]["upload_command"] == used["upload_command"]); // the run keeps ALL of it
+    // ...but only the board-independent part is offered again: a remembered upload line would flash the board it was typed for
+    // (its --upload-port), a remembered build line its environment, a remembered ELF would label a new build with the old functions
+    const auto plan = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/ttyUSB9"}})["result"];
+    assert(plan["last"]["rate_hz"] == 700 && plan["last"]["extra_args"] == "-v");
+    assert(plan["last"]["upload_command"] == "" && plan["last"]["build_command"] == "" && plan["last"]["elf"] == "");
+    assert(contains(plan["commands"]["upload"], "--upload-port /dev/ttyUSB9")); // on another board the line names that board
     assert(h.call({{"cmd", "projects"}})["result"][0]["last_settings"]["rate_hz"] == 700);
+
+    // a typed upload line that names no port is allowed, with a warning; one that names the chosen port is not warned about
+    const auto typed = [&](const char* line) {
+        return h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/ttyUSB9"}, {"settings", {{"upload_command", line}}}})["result"];
+    };
+    assert(contains(typed("/bin/echo upload")["warning"], "/dev/ttyUSB9") && typed("/bin/echo upload")["error"] == "");
+    assert(typed("/bin/echo upload --port /dev/ttyUSB9")["warning"] == "" && plan["warning"] == "");
 }
 
 void open_while_live_refused() {
