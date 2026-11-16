@@ -3,6 +3,7 @@
 #include "discover.hpp"
 #include "http.hpp"
 #include "ops.hpp"
+#include "plan.hpp"
 #include "process.hpp"
 #include "session.hpp"
 #include "source.hpp"
@@ -199,7 +200,9 @@ int run_command(const Options& o, const ServeOptions& defaults) {
     }
     const fs::path agent_dir = o.get("agent-dir").empty() ? defaults.agent_dir : fs::path(o.get("agent-dir"));
     const auto p = prepare_project(defaults.home, dir, o.get("env"), *port);
-    flash_agent(p, defaults.home, agent_dir, defaults.backup_dir, [](std::string_view line) { std::cerr << line << "\n"; });
+    const auto plan = make_plan(p, agent_dir, {}); // the detected commands: the terminal has no settings panel
+    write_plan_files(p, agent_dir, plan);
+    flash_agent(p, defaults.home, defaults.backup_dir, plan.build, plan.upload, [](std::string_view line) { std::cerr << line << "\n"; });
     Options with = o;
     with.values["port"] = *port;
     with.values["env"] = p.env;

@@ -1,0 +1,12 @@
+menu "malgrind agent"
+
+    config MALGRIND_RATE_HZ
+        int "Samples per second per core"
+        range 10 5000
+        default 997
+        help
+            How often the agent samples where the CPU is, per core. The default is prime so that it never aliases with the
+            RTOS tick. The cost is about 1.5 % of one core per 1000 Hz. malgrind sets this from its run settings; changing it
+            changes the sdkconfig, which makes ESP-IDF rebuild the agent.
+
+endmenu

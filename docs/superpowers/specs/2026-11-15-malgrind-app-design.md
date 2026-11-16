@@ -162,6 +162,16 @@ building runs the repository's `platformio.ini` scripts; attaching builds nothin
    The mode comes after the board because what is possible depends on board and project together.
 3. **Run**: backup, build, flash with a log, then the live view.
 
+**Run settings (0.4.0).** Choosing a card in step 2 opens a panel under the cards, before *every* run: project name, run name,
+environment, sampling rate, firmware ELF, extra pio arguments, extra build flags, and under *Advanced* the exact build and upload
+commands. Everything shows the detected value and can be changed; the panel starts from the project's last-used settings and has
+*Reset to detected*; each run stores what it was made with. One function (`make_plan`) turns settings into commands for both the
+preview and the real run, so what is shown is what runs. A typed command replaces the detected line but keeps the agent's environment
+variables, and no shell is involved (the line is split into words). Settings are checked before the board is touched. The rate reaches
+the agent as an sdkconfig key (`CONFIG_MALGRIND_RATE_HZ`), not as an environment variable, because ESP-IDF rebuilds the agent when the
+sdkconfig changes but keeps a stale object when only the environment does; a build directory made with other agent files than the
+current ones is deleted once, because PlatformIO configures CMake only once.
+
 **Attach** records a board that already runs the agent, with the project's ELF (else the newest matching one in its folder, else raw
 addresses and a notice). Stopping leaves the board running.
 

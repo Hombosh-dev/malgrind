@@ -18,8 +18,21 @@
   let project = $state<ProjectMeta | null>(null);
   let runs = $state<RunMeta[]>([]);
   let error = $state('');
+  let renaming = $state(false);
+  let draft = $state('');
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
+
+  async function commitRename() {
+    const name = draft.trim();
+    renaming = false;
+    if (name && project && name !== project.name) await change({ name });
+  }
+
+  function focusAndSelect(input: HTMLInputElement) {
+    input.focus();
+    input.select();
+  }
 
   onMount(async () => {
     try {
@@ -57,7 +70,13 @@
     <section>
       <div class="head">
         <div>
-          <h1>{project.name}</h1>
+          {#if renaming}
+            <input class="rename" bind:value={draft} use:focusAndSelect aria-label="Project name"
+              onkeydown={(e) => (e.key === 'Enter' ? commitRename() : e.key === 'Escape' ? (renaming = false) : null)}
+              onblur={commitRename} />
+          {:else}
+            <h1>{project.name} <button class="icon" title="Rename the project" aria-label="Rename the project" onclick={() => ((renaming = true), (draft = project!.name))}>✎</button></h1>
+          {/if}
           <p class="muted">
             <span class="tag">{sourceLabel(project)}</span>
             {#if project.source === 'git'}{project.url}{:else if project.dir}<code>{project.dir}</code>{:else}firmware: not provided{project.elf ? ' (ELF added)' : ''}{/if}
@@ -106,6 +125,9 @@
   section { max-width: 820px; margin: 0 auto; padding: 24px; }
   .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
   h1 { margin: 0 0 4px; font-size: 24px; }
+  .icon { background: none; border: 0; padding: 2px 6px; font-size: 15px; color: var(--muted); vertical-align: middle; }
+  .icon:hover { color: var(--fg); }
+  .rename { width: 100%; margin: 0 0 6px; padding: 6px 10px; font: 600 22px var(--font); color: var(--fg); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; }
   h2 { margin: 28px 0 8px; font-size: 15px; }
   .btn.big { padding: 14px 32px; font-size: 16px; }
   .trust { margin: 16px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }

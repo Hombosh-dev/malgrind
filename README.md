@@ -54,6 +54,12 @@ A **project** is what you profile. Its source code is optional, so a board whose
   - **Build & flash**: builds your project with the agent and flashes it, then shows the live flamegraph.
   - **Debug probe**: profile without touching the firmware; greyed, *in development*.
   A card that is not possible says what is missing (for example "this project has no source code").
+- **Run settings, before every run.** Choosing Attach or Build & flash opens a panel with what malgrind detected, all of it editable:
+  the **project name** and **run name**, the PlatformIO **environment**, the **sampling rate** (default 997 Hz per core), the
+  **firmware ELF** (function names), **extra pio arguments** and **extra build flags** (`-D…`). Under *Advanced* are the two exact
+  commands (build, then upload after the backup); typing in one replaces the detected line (no shell is used: the line is split into
+  words and run as it is, with the agent's environment kept). The panel starts from what the project used last time, *Reset to
+  detected* brings the detected values back, and each run keeps the settings it was made with (the **Settings** button of a run).
 
   ![board tile and method cards](docs/app-profile.png)
 - **Safe flash.** The first time the agent goes onto a board, malgrind reads the board's whole flash into

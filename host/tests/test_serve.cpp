@@ -362,6 +362,69 @@ void a_port_without_permission_is_reported_not_opened() {
     assert(attach["ok"] == false && contains(attach["error"], "no permission") && contains(attach["error"], "Grant access"));
 }
 
+// A buildable project for the settings tests: a folder with two environments (the harness's agent files are the repository's).
+std::string settings_project(Harness& h) {
+    fake_pio(h);
+    const auto dir = h.root / "settings-proj";
+    fs::create_directories(dir);
+    std::ofstream(dir / "platformio.ini") << "[env:a]\n[env:b]\n";
+    const auto added = add_project(h, {{"source", "folder"}, {"dir", dir.string()}});
+    assert(added["ok"]);
+    return added["result"]["id"];
+}
+
+void run_plan_shows_what_was_detected_and_what_would_run() {
+    Harness h("malgrind_serve_x");
+    const auto id = settings_project(h);
+    const auto plan = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"}, {"mode", "new_run"}})["result"];
+    assert(plan["detected"]["env"] == "a" && plan["detected"]["rate_hz"] == 997 && plan["envs"] == json::array({"a", "b"}));
+    assert(plan["last"].is_null() && plan["error"] == "" && contains(plan["elf_hint"], ".pio/malgrind/build/a/firmware.elf"));
+    const std::string build = plan["commands"]["build"], upload = plan["commands"]["upload"];
+    assert(json(build) == plan["detected_commands"]["build"] && json(upload) == plan["detected_commands"]["upload"]); // no settings: the detected commands
+    assert(contains(build, " run -d ") && !contains(build, "upload") && contains(upload, "-t upload --upload-port /dev/null"));
+    assert(plan["commands"]["env"].is_array() && !plan["commands"]["env"].empty()); // the agent's environment is shown too
+
+    // the panel's current fields change the preview, from the same function the run uses
+    const auto edited = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"},
+                                {"settings", {{"env", "b"}, {"extra_args", "--verbose"}, {"rate_hz", 500}}}})["result"];
+    assert(contains(edited["commands"]["build"], " -e b --verbose") && contains(edited["commands"]["upload"], "--verbose"));
+
+    // a field that does not hold up is reported next to the commands, so the panel can show it while it is being edited
+    const auto bad = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"}, {"settings", {{"rate_hz", 9}}}});
+    assert(bad["ok"] && contains(bad["result"]["error"], "between 10 and 5000") && bad["result"]["commands"].is_null());
+    assert(!fs::exists(h.root / "settings-proj/.pio")); // a preview writes nothing into the project
+
+    // attach only needs the ELF
+    const auto attach = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"}, {"mode", "attach"}})["result"];
+    assert(attach["commands"].is_null() && attach["detected"].contains("elf"));
+}
+
+void new_run_checks_every_setting_before_the_board_is_touched() {
+    Harness h("malgrind_serve_y");
+    const auto id = settings_project(h);
+    for (const json& bad : {json{{"rate_hz", 9}}, json{{"env", "zzz"}}, json{{"build_command", "no-such-program-xyz"}}, json{{"elf", "/no/such.elf"}}}) {
+        const auto r = h.call({{"cmd", "new_run"}, {"project", id}, {"port", "/dev/null"}, {"name", "x"}, {"settings", bad}});
+        assert(r["ok"] == false);
+    }
+    assert(h.runs().empty() && !fs::exists(h.root / "settings-proj/.pio")); // nothing started, nothing written
+}
+
+void a_run_keeps_its_settings_and_the_project_offers_them_again() {
+    Harness h("malgrind_serve_z");
+    Pty pty;
+    const auto id = settings_project(h);
+    const auto missing = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "a"}, {"project", id}, {"settings", {{"elf", "/no/such.elf"}}}});
+    assert(missing["ok"] == false && contains(missing["error"], "ELF does not exist") && h.runs().empty());
+
+    const auto run = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "a"}, {"project", id}, {"settings", {{"rate_hz", 700}, {"extra_args", "-v"}}}});
+    assert(run["ok"] && run["result"]["run"]["settings"]["rate_hz"] == 700);
+    h.call({{"cmd", "stop"}});
+    assert(h.runs()[0]["settings"]["extra_args"] == "-v");                                          // stored with the run
+    const auto plan = h.call({{"cmd", "run_plan"}, {"project", id}, {"port", "/dev/null"}})["result"];
+    assert(plan["last"]["rate_hz"] == 700 && plan["last"]["extra_args"] == "-v");                  // offered again before the next one
+    assert(h.call({{"cmd", "projects"}})["result"][0]["last_settings"]["rate_hz"] == 700);
+}
+
 void open_while_live_refused() {
     Harness h("malgrind_serve_f");
     Pty pty;
@@ -402,6 +465,9 @@ int main() {
     boards_lists_ports_and_probes();
     setup_reports_the_machine();
     install_pio_refuses_what_it_cannot_do();
+    run_plan_shows_what_was_detected_and_what_would_run();
+    new_run_checks_every_setting_before_the_board_is_touched();
+    a_run_keeps_its_settings_and_the_project_offers_them_again();
     boards_tell_access_and_identity();
     a_port_without_permission_is_reported_not_opened();
     remove_agent_restores_or_says_why_not();

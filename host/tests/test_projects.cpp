@@ -47,9 +47,12 @@ void update_persists() {
         const auto after = store.update(id, {.name = "renamed", .trusted = true, .dir = "/clone/firmware/esp32"});
         assert(after && after->name == "renamed" && after->trusted && after->url == "https://github.com/o/r.git");
         assert(!store.update("missing", {.name = "y"}));
+        assert(!store.get(id)->last_settings); // nothing remembered before the first run
+        store.update(id, {.last_settings = RunSettings{.env = "b", .rate_hz = 700, .build_command = "pio run"}});
     }
     ProjectStore again(root / "p"); // a new store sees the same data
     assert(again.get(id)->name == "renamed" && again.get(id)->trusted && again.get(id)->dir == "/clone/firmware/esp32");
+    assert(again.get(id)->last_settings && again.get(id)->last_settings->rate_hz == 700 && again.get(id)->last_settings->build_command == "pio run");
     fs::remove_all(root);
 }
 

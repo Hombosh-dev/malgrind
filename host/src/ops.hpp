@@ -60,11 +60,12 @@ using LineFn = std::function<void(std::string_view line)>;
 // fails at once). On any failure `dest` is removed again and this throws.
 [[nodiscard]] std::filesystem::path clone_project(const GithubRepo& repo, const std::filesystem::path& dest, const LineFn& on_line);
 
-// Builds the project with the agent and flashes it, after backing up what is on the board (see backup.hpp): nothing is
-// flashed unless the backup succeeded. A board that already runs the agent is not backed up again (its flash holds our
-// own build). `agent_dir` holds agent/esp32/; progress and the path of the backup arrive through on_line. Throws.
-void flash_agent(const Prepared& prepared, const std::filesystem::path& home, const std::filesystem::path& agent_dir,
-                 const std::filesystem::path& backup_dir, const LineFn& on_line);
+// Builds the project with the agent (`build`), backs up what is on the board (see backup.hpp), then flashes (`upload`): nothing
+// is flashed unless the backup succeeded. A board that already runs the agent is not backed up again (its flash holds our
+// own build). The two commands come from make_plan (plan.hpp) or from agent_command; the agent's sdkconfig must have been
+// written before. Progress and the path of the backup arrive through on_line. Throws.
+void flash_agent(const Prepared& prepared, const std::filesystem::path& home, const std::filesystem::path& backup_dir,
+                 const Invocation& build, const Invocation& upload, const LineFn& on_line);
 
 // Writes the newest backup of the board on `port` back, byte for byte (esptool verifies it). Throws, naming the board,
 // if there is no backup of it.

@@ -7,6 +7,8 @@
 //   <root>/<id>/firmware.elf     the ELF of a project without source code, if the user gave one
 // A project of Origin::Folder only points at the user's own folder, which is never modified or deleted.
 
+#include "settings.hpp"
+
 #include <nlohmann/json_fwd.hpp>
 
 #include <filesystem>
@@ -29,6 +31,7 @@ struct ProjectMeta {
     std::string created{};       // ISO-8601 UTC
     std::filesystem::path elf{}; // Origin::None: firmware.elf inside the project directory, or empty
     bool trusted = false;        // building runs the project's scripts: a Git project must be trusted first
+    std::optional<RunSettings> last_settings{}; // what the last run used: offered again, before the next one
 };
 
 void to_json(nlohmann::json& j, const ProjectMeta& p); // adds "has_source"
@@ -37,6 +40,7 @@ struct ProjectUpdate {
     std::optional<std::string> name, env;
     std::optional<bool> trusted;
     std::optional<std::filesystem::path> dir;
+    std::optional<RunSettings> last_settings;
 };
 
 class ProjectStore {

@@ -63,10 +63,19 @@ struct Invocation {
     std::vector<std::string> env; // "NAME=value", added to the environment of the child
 };
 
-// Builds the project with the agent and uploads it (`upload` false: only builds; a second call with true then uploads
-// without compiling again). `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
-// Writes <project>/.pio/malgrind/sdkconfig.<env>; nothing else of the project is touched. Throws std::runtime_error
-// if the agent files are missing.
+// Writes <project>/.pio/malgrind/sdkconfig.<env> (the user's sdkconfig with the agent's keys); nothing else of the project is
+// touched, and an unchanged file is not rewritten. `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
+// Throws std::runtime_error if the agent files are missing.
+// `rate_hz` (0: the agent's default) becomes CONFIG_MALGRIND_RATE_HZ in it.
+void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const std::filesystem::path& agent_dir, unsigned rate_hz = 0);
+
+// The command and environment that build the project with the agent (`upload` true: and flash it). Writes nothing: a
+// preview of a run can be made with it. Throws if the agent files are missing.
+[[nodiscard]] Invocation agent_command(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
+                                       const std::string& port, const std::filesystem::path& agent_dir, bool upload = true);
+
+// write_agent_sdkconfig + agent_command (`upload` false: only builds; a second call with true then uploads without
+// compiling again).
 [[nodiscard]] Invocation agent_build(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
                                      const std::string& port, const std::filesystem::path& agent_dir, bool upload = true);
 

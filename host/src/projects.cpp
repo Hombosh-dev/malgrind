@@ -44,6 +44,7 @@ std::optional<ProjectMeta> read_project_file(const fs::path& dir) {
     p.created = j.value("created", "");
     p.elf = j.value("elf", "");
     p.trusted = j.value("trusted", false);
+    if (j.contains("last_settings") && j["last_settings"].is_object()) p.last_settings = j["last_settings"].get<RunSettings>();
     return p;
 }
 
@@ -57,6 +58,7 @@ void to_json(nlohmann::json& j, const ProjectMeta& p) {
     j = {{"id", p.id},           {"name", p.name},         {"source", origin_name(p.origin)}, {"dir", p.dir.string()},
          {"url", p.url},         {"env", p.env},           {"created", p.created},            {"elf", p.elf.string()},
          {"trusted", p.trusted}, {"has_source", p.origin != Origin::None}};
+    j["last_settings"] = p.last_settings ? nlohmann::json(*p.last_settings) : nlohmann::json(nullptr);
 }
 
 ProjectStore::ProjectStore(fs::path root) : root_(std::move(root)) { fs::create_directories(root_); }
@@ -123,6 +125,7 @@ std::optional<ProjectMeta> ProjectStore::update(std::string_view id, const Proje
     if (change.env) meta->env = *change.env;
     if (change.trusted) meta->trusted = *change.trusted;
     if (change.dir) meta->dir = *change.dir;
+    if (change.last_settings) meta->last_settings = *change.last_settings;
     write_project(*dir, *meta);
     return meta;
 }

@@ -5,6 +5,7 @@
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
+#include "plan.hpp"
 #include "pio.hpp"
 #include "process.hpp"
 #include "projects.hpp"
@@ -128,6 +129,7 @@ private:
             return {{"dir", project->dir.string()}, {"envs", project->envs}, {"default_env", project->default_env}};
         }
         if (cmd == "boards") return boards();
+        if (cmd == "run_plan") return run_plan(req);
         if (cmd == "setup") return setup_info();
         if (cmd == "projects") return list_projects();
         if (cmd == "project_update") return update_project(req);
@@ -228,7 +230,9 @@ private:
         if (live()) throw std::runtime_error("a run is live: stop it first");
         const auto port = str_arg(req, "port");
         std::string project_id;
-        fs::path project_dir, elf = opt_str_arg(req, "elf").value_or("");
+        const auto settings = settings_arg(req);
+        fs::path project_dir, elf = !settings.elf.empty() ? settings.elf : fs::path(opt_str_arg(req, "elf").value_or(""));
+        if (!elf.empty() && !fs::exists(elf)) throw std::runtime_error("the firmware ELF does not exist: " + elf.string());
         if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
             const auto project = project_of(*id);
             project_id = project.id;
@@ -236,7 +240,9 @@ private:
             if (elf.empty()) elf = project.elf; // a project without code may still have been given its ELF
         }
         auto source = open_source(port);
-        return start_live(std::move(source), {.name = str_arg(req, "name"), .project = project_dir.string(), .port = port, .project_id = project_id},
+        remember_settings(project_id, settings);
+        return start_live(std::move(source),
+                          {.name = str_arg(req, "name"), .project = project_dir.string(), .port = port, .project_id = project_id, .settings = settings},
                           std::move(elf), std::move(project_dir));
     }
 
@@ -426,11 +432,59 @@ private:
     json new_run(const json& req) {
         const auto p = prepare(req);
         if (live()) throw std::runtime_error("stop the live run first");
-        flash_agent(p, options_.home, options_.agent_dir, options_.backup_dir, build_line());
+        const auto settings = settings_arg(req);
+        // every setting is checked before the board is touched; a typo in a field costs nothing
+        const auto plan = make_plan(p, options_.agent_dir, settings);
+        write_plan_files(p, options_.agent_dir, plan);
+        flash_agent(p, options_.home, options_.backup_dir, plan.build, plan.upload, build_line());
         auto source = open_after_upload(p.port);
+        remember_settings(str_arg(req, "project"), settings);
         return start_live(std::move(source),
-                          {.name = str_arg(req, "name"), .project = p.project.dir.string(), .env = p.env, .port = p.port, .project_id = str_arg(req, "project")},
-                          agent_elf(p.project, p.env), p.project.dir);
+                          {.name = str_arg(req, "name"), .project = p.project.dir.string(), .env = plan.env, .port = p.port,
+                           .project_id = str_arg(req, "project"), .settings = settings},
+                          settings.elf.empty() ? agent_elf(p.project, plan.env) : settings.elf, p.project.dir);
+    }
+
+    // ---- run settings -------------------------------------------------------------------------------------------------
+    static RunSettings settings_arg(const json& req) {
+        return req.contains("settings") && req["settings"].is_object() ? req["settings"].get<RunSettings>() : RunSettings{};
+    }
+
+    // What a run used is offered again before the next one (the panel is shown every time, pre-filled with it).
+    void remember_settings(const std::string& project_id, const RunSettings& settings) {
+        if (!project_id.empty()) projects_.update(project_id, {.last_settings = settings});
+    }
+
+    // What the settings panel needs: the detected values, what the project used last, and the exact commands for the settings
+    // the panel holds right now (so the preview and the real run come from the same make_plan). A field that does not hold up is
+    // reported as `error` next to the commands, not as a failed request: the panel is being edited.
+    json run_plan(const json& req) {
+        const auto project = project_of(str_arg(req, "project"));
+        const auto mode = opt_str_arg(req, "mode").value_or("new_run");
+        json result = {{"last", project.last_settings ? json(*project.last_settings) : json(nullptr)}, {"commands", nullptr}, {"error", ""}};
+        RunSettings detected;
+        detected.elf = project.elf; // a project without code may have been given its ELF
+        if (mode == "attach") {
+            result["detected"] = detected;
+            return result;
+        }
+        require_buildable(project);
+        const auto p = prepare_project(options_.home, project.dir, project.env, str_arg(req, "port"));
+        detected.env = p.env;
+        detected.rate_hz = kDefaultRateHz;
+        detected.elf.clear(); // a new run finds its ELF after the build: nothing to offer here
+        result["detected"] = detected;
+        result["envs"] = p.project.envs;
+        result["elf_hint"] = agent_elf(p.project, p.env).string(); // where the build puts it; used when no ELF is chosen
+        const auto detected_plan = make_plan(p, options_.agent_dir, {});
+        result["detected_commands"] = {{"build", detected_plan.build_text}, {"upload", detected_plan.upload_text}};
+        try {
+            const auto plan = make_plan(p, options_.agent_dir, settings_arg(req));
+            result["commands"] = {{"build", plan.build_text}, {"upload", plan.upload_text}, {"env", plan.build.env}};
+        } catch (const std::exception& e) {
+            result["error"] = e.what();
+        }
+        return result;
     }
 
     json remove_agent(const json& req) {
