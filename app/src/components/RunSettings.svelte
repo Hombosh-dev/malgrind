@@ -139,7 +139,7 @@
       </label>
 
       {#if mode === 'new_run'}
-        <label>Extra pio arguments <input bind:value={extraArgs} placeholder="--verbose" aria-label="Extra pio arguments" /></label>
+        <label>Extra pio arguments <input bind:value={extraArgs} placeholder="--disable-auto-clean" aria-label="Extra pio arguments" /></label>
         <label>Extra build flags <input bind:value={buildFlags} placeholder="-DMY_FLAG=1" aria-label="Extra build flags" /></label>
       {/if}
     </div>
@@ -186,7 +186,7 @@
   .wide { grid-column: 1 / -1; }
   .row { display: flex; gap: 8px; }
   input, select, textarea { min-width: 0; padding: 7px 10px; font: 13px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
-  input { flex: 1; }
+  .row input { flex: 1; }
   input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
   input[aria-invalid='true'] { border-color: var(--danger); }
   textarea { resize: vertical; width: 100%; }
