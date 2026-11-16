@@ -23,6 +23,7 @@ void usb_device(const fs::path& sys, const std::string& name, std::string_view v
     write(dir / "idProduct", pid);
     write(dir / "product", product);
     write(dir / "manufacturer", "maker");
+    if (name == "1-1") write(dir / "serial", "0001"); // not every adapter has one
     fs::create_directories(dir / (name + ":1.0"));
     fs::create_directories(sys / "bus/usb/devices");
     fs::create_directory_symlink(dir, sys / "bus/usb/devices" / name);
@@ -44,9 +45,11 @@ void finds_the_adapter_behind_a_port() {
 
     const auto acm = usb_info_for_port("/dev/ttyACM0", sys);
     assert(acm && acm->vid == "1a86" && acm->pid == "55d3" && acm->product == "USB Single Serial");
+    assert(acm->serial == "0001" && acm->location == "1-1"); // two identical boards differ here
     assert(adapter_name(*acm) == "WCH CH340/CH343 USB-UART");
     const auto usb = usb_info_for_port("/dev/ttyUSB0", sys);
     assert(usb && usb->vid == "10c4" && adapter_name(*usb) == "Silicon Labs CP210x USB-UART");
+    assert(usb->serial.empty() && usb->location == "1-2");
     assert(!usb_info_for_port("/dev/ttyUSB7", sys)); // not in sysfs
     assert(adapter_name({"abcd", "1", "My Gadget", ""}) == "My Gadget" && adapter_name({"abcd", "1", "", ""}) == "USB serial adapter");
     fs::remove_all(sys);

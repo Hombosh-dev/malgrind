@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
   import { formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
@@ -75,6 +76,7 @@
 
 <div class="page">
   <TopBar />
+  <Setup {sidecar} />
   {#if error}<div class="error" role="alert">{error}</div>{/if}
 
   {#if !loaded}

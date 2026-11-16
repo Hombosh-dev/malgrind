@@ -32,6 +32,7 @@ export interface Method {
 export interface Probe {
   busy: boolean;
   agent: boolean;
+  denied: boolean; // this user may not open the port (not in its group)
   arch?: string;
   ncores?: number;
   cpu_mhz?: number;
@@ -67,6 +68,18 @@ export interface BoardPort {
   adapter: string; // the USB adapter (not the chip); empty if unknown
   vid: string;
   pid: string;
+  serial: string; // the adapter's serial number, if it has one
+  location: string; // where it is plugged in, "3-3"
+  access: { ok: boolean; group: string; in_group: boolean }; // whether this user may open the port
+}
+
+// What the machine has for the jobs the app needs done (`setup`): paths, or null when missing.
+export interface SetupInfo {
+  pio: string | null;
+  python: string | null;
+  git: string | null;
+  pkexec: boolean; // the system's graphical password prompt, used to grant port access
+  user: string;
 }
 
 export interface BoardsInfo {

@@ -112,6 +112,7 @@
     <span class="logo">🔥 malgrind</span>
     <input class="name" bind:value={name} onblur={() => save({ name })} onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Run name" />
     {#if live}<span class="live"><span class="dot"></span>LIVE</span>{:else}<span class="muted">{formatDuration(duration)}</span>{/if}
+    {#if run.port}<span class="muted stat" title="The board this run was recorded from">{run.port}</span>{/if}
     <span class="spacer"></span>
     {#if stats.arch}
       <span class="stat muted">{stats.samples_per_s ?? '–'} samples/s · {stats.dropped ?? 0} dropped · {stats.overhead_pct == null ? '–' : stats.overhead_pct + ' %'} overhead</span>

@@ -65,9 +65,20 @@ Views: **Flamegraph** (core and time-window filters, smoothed so it does not fli
 time per function; click one to see who calls it and what it calls). The slider at the bottom moves through time, in a live run
 and in a replay.
 
-Needs [PlatformIO](https://platformio.org) (`pip install platformio`) for *Build & flash* and *Rebuild*, and `git` for GitHub links;
-attaching to a board that already runs the agent needs neither. Projects must use the ESP-IDF framework (`framework = espidf`) and a
-path without spaces (PlatformIO's own limit).
+Projects must use the ESP-IDF framework (`framework = espidf`) and a path without spaces (PlatformIO's own limit).
+
+### Setup, done from the app
+
+- **PlatformIO** (for *Build & flash* and *Rebuild*): when it is missing, the start screen and the board step show an **Install
+  PlatformIO** button. It creates a Python environment in `~/.platformio/penv` and pip-installs `platformio` from pypi.org there
+  (no administrator rights). It needs `python3` with the `venv` module (on Ubuntu: `sudo apt install python3 python3-venv`). The
+  first build then downloads the ESP32 toolchain, about 1 GB. Attaching to a board that already runs the agent needs no PlatformIO.
+- **Permission denied on the USB port** (Linux: you are not in the port's group, `dialout` on Ubuntu): the board's tile says so and
+  offers **Grant access…**. One system password prompt (`pkexec`) sets an ACL on the port, which works at once until the board is
+  replugged, and adds you to the group, which holds after your next login. Without `pkexec` the tile shows the two `sudo` lines.
+- **git** is only needed for GitHub links. malgrind tells you if it is missing but does not install it.
+- **Two boards plugged in?** Each gets its own tile (adapter, port, USB socket and serial number tell identical ones apart). *Build &
+  flash* asks you to confirm the board by name before it flashes anything, and a run shows the port it was recorded from.
 
 ## Terminal mode: `malgrind-cli`
 
@@ -99,6 +110,7 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
 | Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done; the app was driven on a real USB port and a real GitHub clone worked; drag and drop not exercised |
 | Flash backup before the agent, restore on remove | done, verified on the ESP32-D0WD-V3 dev board: backup, agent flash and live data, restore, `esptool verify_flash` matched |
+| Setup from the app: install PlatformIO, grant USB port access (`pkexec`), tell two boards apart, confirm before flashing | done; PlatformIO install ran for real in a clean home, the root script was tested with fake tools; the real `pkexec` prompt and a denied port were not tried (needs another machine) |
 | Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |
 | Flamegraph and function table, live and replayed, time scrubber | done |
 | `malgrind-cli run / attach / detect` | done |

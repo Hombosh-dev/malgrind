@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <thread>
+#include <unistd.h>
 
 using namespace malgrind::host;
 using namespace std::chrono_literals;
@@ -311,6 +312,56 @@ void boards_lists_ports_and_probes() {
     for (const auto& p : boards["result"]["ports"]) assert(p.contains("port") && p.contains("adapter") && p.contains("vid"));
 }
 
+void setup_reports_the_machine() {
+    Harness h("malgrind_serve_t");
+    setenv("PATH", "/usr/bin:/bin", 1); // no pio there, and the harness home is empty
+    const auto setup = h.call({{"cmd", "setup"}});
+    assert(setup["ok"] && setup["result"]["pio"].is_null() && setup["result"]["pkexec"].is_boolean() && !setup["result"]["user"].get<std::string>().empty());
+    assert(setup["result"].contains("python") && setup["result"].contains("git"));
+    fake_pio(h);
+    assert(h.call({{"cmd", "setup"}})["result"]["pio"].is_string()); // found in the home's PlatformIO folder now
+}
+
+void install_pio_refuses_what_it_cannot_do() {
+    Harness h("malgrind_serve_u");
+    fake_pio(h); // there is a pio already
+    const auto again = h.call({{"cmd", "install_pio"}});
+    assert(again["ok"] == false && contains(again["error"], "already installed"));
+    fs::remove(h.root / "home/.platformio/penv/bin/pio");
+    setenv("PATH", "/nonexistent", 1); // and no Python to install it with
+    const auto nopython = h.call({{"cmd", "install_pio"}});
+    assert(nopython["ok"] == false && contains(nopython["error"], "Python 3 was not found"));
+}
+
+void boards_tell_access_and_identity() {
+    Harness h("malgrind_serve_v");
+    for (const auto& p : h.call({{"cmd", "boards"}})["result"]["ports"]) {
+        assert(p["access"]["ok"].is_boolean() && p["access"].contains("group") && p["access"]["in_group"].is_boolean());
+        assert(p.contains("serial") && p.contains("location"));
+    }
+    const auto unknown = h.call({{"cmd", "grant_access"}, {"port", "/dev/ttyUSB99"}});
+    assert(unknown["ok"] == false && contains(unknown["error"], "not a serial port"));
+    assert(h.call({{"cmd", "grant_access"}, {"port", "/etc/passwd"}})["ok"] == false); // only ports the engine found itself
+}
+
+void a_port_without_permission_is_reported_not_opened() {
+    if (geteuid() == 0) return void(std::puts("denied port: skipped, root may open anything"));
+    Harness h("malgrind_serve_w");
+    fake_pio(h);
+    Pty pty;
+    fs::permissions(pty.slave, fs::perms::none); // the user is not allowed to open it
+    const auto probe = h.call({{"cmd", "probe"}, {"port", pty.slave}});
+    fs::permissions(pty.slave, fs::perms::owner_read | fs::perms::owner_write);
+    assert(probe["ok"] && probe["result"]["denied"] == true && probe["result"]["agent"] == false);
+    assert(method(probe["result"], "attach")["available"] == false && contains(method(probe["result"], "attach")["why"], "Grant access"));
+    assert(method(probe["result"], "new_run")["available"] == false && contains(method(probe["result"], "new_run")["why"], "Grant access"));
+    // opening it for real names the fix too
+    fs::permissions(pty.slave, fs::perms::none);
+    const auto attach = h.call({{"cmd", "attach"}, {"port", pty.slave}, {"name", "x"}});
+    fs::permissions(pty.slave, fs::perms::owner_read | fs::perms::owner_write);
+    assert(attach["ok"] == false && contains(attach["error"], "no permission") && contains(attach["error"], "Grant access"));
+}
+
 void open_while_live_refused() {
     Harness h("malgrind_serve_f");
     Pty pty;
@@ -349,6 +400,10 @@ int main() {
     a_cloned_project_must_be_trusted();
     runs_belong_to_projects();
     boards_lists_ports_and_probes();
+    setup_reports_the_machine();
+    install_pio_refuses_what_it_cannot_do();
+    boards_tell_access_and_identity();
+    a_port_without_permission_is_reported_not_opened();
     remove_agent_restores_or_says_why_not();
     open_while_live_refused();
     eof_finishes_run();
