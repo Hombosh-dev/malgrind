@@ -9,13 +9,17 @@
 // Commands (arguments -> result):
 //   hello                                  -> {version, data_dir, pio}
 //   ports                                  -> ["/dev/ttyUSB0", ...]
-//   probe {port}                           -> {busy, agent, arch?, ncores?, cpu_mhz?}   listens up to 2 s, records nothing
+//   probe {port, project?, env?}           -> {busy, agent, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
+//                                             methods = [{id: attach|new_run|no_flash, available, why}]; `project` only
+//                                             decides whether new_run is possible with it
 //   chip_id {port}                         -> {chip}                                    resets the board
 //   project {dir}                          -> {dir, envs, default_env}
-//   new_run {dir, env, port, name}         -> {run}   builds with the agent, uploads, then records live; streams `build` events
+//   new_run {dir, env, port, name}         -> {run}   backs up the board's flash (first time), builds with the agent, uploads,
+//                                             then records live; streams `build` events
 //   attach {port, name, project?, elf?}    -> {run}   records a board that already runs the agent
 //   stop                                   -> {}      ends the live run, or closes an opened one
-//   remove_agent {dir, env, port}          -> {}      rebuilds the user's project without the agent and uploads it
+//   remove_agent {port, how?, dir?, env?}  -> {}      how "restore" (default): writes the board's backup back; "rebuild": builds
+//                                             the user's project (dir, env) without the agent and uploads it
 //   runs                                   -> [RunMeta...], the live one has "live": true
 //   open {run}                             -> {run}   replays a stored run (refused while a run is live)
 //   update {run, name?, notes?}            -> RunMeta
@@ -35,6 +39,7 @@ struct ServeOptions {
     std::filesystem::path data_dir;  // where runs are stored
     std::filesystem::path agent_dir; // contains agent/esp32/ (the app's resources, or the repository)
     std::filesystem::path home;      // for finding PlatformIO and esptool
+    std::filesystem::path backup_dir; // flash backups, <dir>/<board MAC>/<time>.bin (see backup.hpp)
 };
 
 // Serves requests from `in` until it ends (the app closed, or end of file), then closes the live run. Returns 0.

@@ -46,8 +46,13 @@ Download from the repository's **Releases** page:
   without interrupting or resetting it. Choose your project folder first if you want function names.
 - **Runs that exist** are listed with their length; click one to reopen it, ✎ to rename, 🗑 to delete. Everything a run
   shows live can be replayed, and the slider at the bottom moves through time.
-- **Remove agent…** (bottom left of a run, or on the start screen) rebuilds your project *without* the agent and flashes it,
-  so the board runs your original firmware again.
+- **Safe flash.** The first time the agent goes onto a board, malgrind reads the board's whole flash into
+  `~/.local/share/malgrind/backups/<board MAC>/<time>.bin` (about a minute); if that fails, nothing is flashed.
+- **Remove agent…** (bottom left of a run, or on the start screen) writes that backup back, byte for byte, so the board runs
+  the firmware it had before, even if nobody has its source. "Rebuild my project instead" flashes your project built without
+  the agent.
+- **Ways to profile this board** are listed on the start screen: attach, build with the agent and flash, and (planned)
+  profile without flashing through a debug probe. Each one that is not possible says what is missing.
 
 Views: **Flamegraph** (core and time-window filters, smoothed so it does not flicker) and **Functions** (self and inclusive
 time per function; click one to see who calls it and what it calls).
@@ -83,6 +88,8 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 | | |
 |---|---|
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
+| Flash backup before the agent, restore on remove, methods list | done in the engine and its tests; not yet tried on a board |
+| Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |
 | Flamegraph and function table, live and replayed, time scrubber | done |
 | `malgrind-cli run / attach / detect` | done |
 | macOS `.dmg` | not yet (the code is portable; CI builds and tests on macOS) |

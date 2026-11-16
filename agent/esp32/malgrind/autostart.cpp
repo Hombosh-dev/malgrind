@@ -10,6 +10,10 @@
 #define MALGRIND_RATE_HZ 997 // prime: no aliasing with the RTOS tick
 #endif
 
+// Lets the host tell a flash image holding this agent from the user's own firmware (host/src/backup.hpp, kAgentMarker):
+// a board that already runs malgrind must not have its agent saved as if it were the original.
+extern "C" const char malgrind_agent_marker[] = "malgrind-agent-v1";
+
 namespace {
 
 void start_task(void*) {
@@ -18,6 +22,8 @@ void start_task(void*) {
 }
 
 [[gnu::constructor]] void autostart() {
+    // --gc-sections would drop the marker (only a reference keeps a section); the constructor is never dropped
+    asm volatile("" : : "r"(malgrind_agent_marker));
     xTaskCreate(start_task, "malgrind_boot", 4096, nullptr, configMAX_PRIORITIES - 2, nullptr);
 }
 

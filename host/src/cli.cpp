@@ -199,7 +199,7 @@ int run_command(const Options& o, const ServeOptions& defaults) {
     }
     const fs::path agent_dir = o.get("agent-dir").empty() ? defaults.agent_dir : fs::path(o.get("agent-dir"));
     const auto p = prepare_project(defaults.home, dir, o.get("env"), *port);
-    run_pio(agent_build(p.pio, p.project, p.env, *port, agent_dir), [](std::string_view line) { std::cerr << line << "\n"; });
+    flash_agent(p, defaults.home, agent_dir, defaults.backup_dir, [](std::string_view line) { std::cerr << line << "\n"; });
     Options with = o;
     with.values["port"] = *port;
     with.values["env"] = p.env;

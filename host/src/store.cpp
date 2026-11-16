@@ -27,15 +27,6 @@ bool valid_id(std::string_view id) {
            std::ranges::all_of(id, [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
 }
 
-std::string utc_now(const char* fmt) {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm{};
-    gmtime_r(&t, &tm);
-    std::array<char, 32> buf{};
-    std::strftime(buf.data(), buf.size(), fmt, &tm);
-    return buf.data();
-}
-
 // meta.json is replaced atomically: a crash leaves the old file or the new one, never half of one.
 void write_meta(const fs::path& dir, const RunMeta& meta) {
     const auto tmp = dir / "meta.json.tmp";
@@ -70,6 +61,15 @@ void put_le(std::ofstream& out, std::uint64_t v, int bytes) {
 }
 
 } // namespace
+
+std::string utc_now(const char* fmt) {
+    const std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    std::array<char, 32> buf{};
+    std::strftime(buf.data(), buf.size(), fmt, &tm);
+    return buf.data();
+}
 
 void to_json(nlohmann::json& j, const RunMeta& m) {
     j = {{"id", m.id},           {"name", m.name},       {"notes", m.notes},

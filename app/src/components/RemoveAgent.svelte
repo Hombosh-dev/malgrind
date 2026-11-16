@@ -24,6 +24,7 @@
     portsKnown = true;
   });
 
+  let rebuild = $state(false); // false: write back the backup taken before the agent went on; true: build the user's project
   let dir = $state('');
   let env = $state('');
   let valid = $state(false);
@@ -39,7 +40,7 @@
     error = '';
     lines = [];
     try {
-      await sidecar.call('remove_agent', { dir, env, port });
+      await sidecar.call('remove_agent', rebuild ? { how: 'rebuild', dir, env, port } : { how: 'restore', port });
       onDone();
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -52,8 +53,12 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="remove-title">
     <h3 id="remove-title">Remove the agent from the board?</h3>
     <p class="muted">
-      Rebuilds your project without malgrind and flashes it. The board runs your original firmware again. Your code is not touched.
-      Live profiling stops.
+      {#if rebuild}
+        Rebuilds your project without malgrind and flashes it. Your code is not touched. Live profiling stops.
+      {:else}
+        Restores the firmware that was on the board before malgrind first flashed it (a backup taken then), byte for byte. Live
+        profiling stops.
+      {/if}
     </p>
     {#if ports.length > 1}
       <label class="muted">Port <select bind:value={port}>{#each ports as p}<option>{p}</option>{/each}</select></label>
@@ -62,11 +67,16 @@
     {:else if portsKnown}
       <p class="error" role="alert">No serial port found. Connect the board first.</p>
     {/if}
-    <ProjectPicker {sidecar} bind:dir bind:env bind:valid />
+    {#if rebuild}<ProjectPicker {sidecar} bind:dir bind:env bind:valid />{/if}
+    {#if !started}
+      <button class="link" onclick={() => (rebuild = !rebuild)}>{rebuild ? 'Restore the backup instead' : 'Rebuild my project instead'}</button>
+    {/if}
     {#if started}<BuildLog {lines} busy={working} />{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button class="btn danger" disabled={!valid || !port || working} onclick={remove}>{working ? 'Flashing…' : 'Remove & flash'}</button>
+      <button class="btn danger" disabled={(rebuild && !valid) || !port || working} onclick={remove}>
+        {working ? 'Flashing…' : rebuild ? 'Rebuild & flash' : 'Restore & flash'}
+      </button>
       <button class="btn ghost" disabled={working} onclick={onCancel}>Cancel</button>
     </div>
   </div>
@@ -78,5 +88,7 @@
   h3 { margin: 0 0 8px; }
   .actions { display: flex; gap: 10px; margin-top: 16px; }
   .error { color: var(--danger); }
+  .link { background: none; border: 0; padding: 4px 0; color: var(--muted); text-decoration: underline; }
+  .link:hover { color: var(--fg); }
   code { font-family: var(--mono); }
 </style>

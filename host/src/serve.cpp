@@ -111,7 +111,7 @@ private:
             return {{"version", kVersion}, {"data_dir", options_.data_dir.string()}, {"pio", pio ? json(pio->string()) : json(nullptr)}};
         }
         if (cmd == "ports") return json(find_serial_ports());
-        if (cmd == "probe") return probe(str_arg(req, "port"));
+        if (cmd == "probe") return probe(req);
         if (cmd == "project") {
             std::string why;
             const auto project = read_project(str_arg(req, "dir"), why);
@@ -172,7 +172,8 @@ private:
         return result ? *result : R"({"functions":[]})";
     }
 
-    json probe(const std::string& port) {
+    json probe(const json& req) {
+        const auto port = str_arg(req, "port");
         const auto r = probe_port(port);
         json result = {{"busy", r.busy}, {"agent", r.agent}};
         if (r.agent) {
@@ -180,6 +181,19 @@ private:
             result["ncores"] = r.ncores;
             result["cpu_mhz"] = r.cpu_mhz;
         }
+        std::string problem; // why the chosen project cannot be built with the agent; none chosen: no problem yet
+        const auto project = opt_str_arg(req, "project").value_or("");
+        if (!project.empty()) {
+            try {
+                (void)prepare_project(options_.home, project, opt_str_arg(req, "env").value_or(""), port);
+            } catch (const std::exception& e) {
+                problem = e.what();
+            }
+        }
+        json list = json::array();
+        for (const auto& m : methods(r, find_pio(options_.home).has_value(), problem))
+            list.push_back({{"id", m.id}, {"available", m.available}, {"why", m.why}});
+        result["methods"] = std::move(list);
         return result;
     }
 
@@ -217,23 +231,32 @@ private:
     Prepared prepare(const json& req) {
         return prepare_project(options_.home, str_arg(req, "dir"), str_arg(req, "env"), str_arg(req, "port"));
     }
-    void run_pio_events(const Invocation& inv) {
-        run_pio(inv, [this](std::string_view line) { send({{"event", "build"}, {"line", std::string(line)}}); });
+    LineFn build_line() {
+        return [this](std::string_view line) { send({{"event", "build"}, {"line", std::string(line)}}); };
     }
 
     json new_run(const json& req) {
         const auto p = prepare(req);
         if (live()) throw std::runtime_error("stop the live run first");
-        run_pio_events(agent_build(p.pio, p.project, p.env, p.port, options_.agent_dir));
+        flash_agent(p, options_.home, options_.agent_dir, options_.backup_dir, build_line());
         auto source = open_after_upload(p.port);
         return start_live(std::move(source), {.name = str_arg(req, "name"), .project = p.project.dir.string(), .env = p.env, .port = p.port},
                           agent_elf(p.project, p.env), p.project.dir);
     }
 
     json remove_agent(const json& req) {
-        const auto p = prepare(req);
-        set_session(nullptr); // the port must be free for the upload
-        run_pio_events(plain_flash(p.pio, p.project, p.env, p.port));
+        const auto how = opt_str_arg(req, "how").value_or("restore");
+        if (how != "restore" && how != "rebuild") throw std::runtime_error("how must be \"restore\" or \"rebuild\"");
+        if (how == "rebuild") {
+            const auto p = prepare(req);
+            set_session(nullptr); // the port must be free for the upload
+            run_pio(plain_flash(p.pio, p.project, p.env, p.port), build_line());
+            return json::object();
+        }
+        const auto pio = find_pio(options_.home);
+        if (!pio) throw std::runtime_error(kNoPio);
+        set_session(nullptr);
+        restore_flash(*pio, options_.home, str_arg(req, "port"), options_.backup_dir, build_line());
         return json::object();
     }
 

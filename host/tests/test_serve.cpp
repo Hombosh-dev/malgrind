@@ -153,6 +153,53 @@ void probe_finds_agent() {
     assert(h.runs().empty()); // probing records nothing
 }
 
+const json& method(const json& result, const char* id) {
+    for (const auto& m : result["methods"])
+        if (m["id"] == id) return m;
+    assert(false && "method missing");
+    static const json none;
+    return none;
+}
+
+void probe_lists_methods() {
+    Harness h("malgrind_serve_m");
+    Pty pty;
+    std::thread board([&] {
+        std::this_thread::sleep_for(300ms);
+        pty.send(make_stream(1));
+    });
+    const auto with_agent = h.call({{"cmd", "probe"}, {"port", pty.slave}});
+    board.join();
+    assert(method(with_agent["result"], "attach")["available"] == true);
+    assert(method(with_agent["result"], "no_flash")["available"] == false);
+    assert(contains(method(with_agent["result"], "no_flash")["why"], "debug probe"));
+
+    // a project that cannot take the agent is named as the reason new_run is unavailable (an Arduino project here)
+    const auto proj = h.root / "arduino";
+    fs::create_directories(h.root / "home/.platformio/penv/bin");
+    std::ofstream(h.root / "home/.platformio/penv/bin/pio") << "#!/bin/sh\n";
+    fs::permissions(h.root / "home/.platformio/penv/bin/pio", fs::perms::owner_exec, fs::perm_options::add);
+    fs::create_directories(proj);
+    std::ofstream(proj / "platformio.ini") << "[env:a]\nplatform = espressif32\nframework = arduino\n";
+    setenv("PATH", "/usr/bin:/bin", 1); // the fake pio, not the user's
+    Pty quiet; // a pty stays exclusive after the first probe closed it
+    const auto silent = h.call({{"cmd", "probe"}, {"port", quiet.slave}, {"project", proj.string()}});
+    assert(silent["ok"] && silent["result"]["agent"] == false);
+    assert(method(silent["result"], "attach")["available"] == false);
+    assert(method(silent["result"], "new_run")["available"] == false && contains(method(silent["result"], "new_run")["why"], "arduino"));
+}
+
+void remove_agent_restores_or_says_why_not() {
+    Harness h("malgrind_serve_n");
+    const auto bad = h.call({{"cmd", "remove_agent"}, {"port", "/dev/null"}, {"how", "burn"}});
+    assert(bad["ok"] == false && contains(bad["error"], "restore"));
+    // the default is a restore: without PlatformIO (and so without esptool) the reason is given, not a rebuild
+    setenv("PATH", "/usr/bin:/bin", 1);
+    const auto none = h.call({{"cmd", "remove_agent"}, {"port", "/dev/null"}});
+    assert(none["ok"] == false && contains(none["error"], "PlatformIO"));
+    assert(h.call({{"cmd", "remove_agent"}, {"port", "/dev/null"}, {"how", "rebuild"}})["ok"] == false); // needs dir, env
+}
+
 void open_while_live_refused() {
     Harness h("malgrind_serve_f");
     Pty pty;
@@ -186,6 +233,8 @@ int main() {
     attach_snapshot_stop();
     busy_port();
     probe_finds_agent();
+    probe_lists_methods();
+    remove_agent_restores_or_says_why_not();
     open_while_live_refused();
     eof_finishes_run();
     std::puts("serve ok");

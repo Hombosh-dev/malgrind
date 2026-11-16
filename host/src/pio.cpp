@@ -176,18 +176,25 @@ fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
     return project.dir / ".pio/malgrind/build" / env / "firmware.elf";
 }
 
-std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
-    const fs::path esptool = home / ".platformio/packages/tool-esptoolpy/esptool.py";
+std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
+    const fs::path script_path = home / ".platformio/packages/tool-esptoolpy/esptool.py";
     // PlatformIO's own Python has pyserial; its launcher script names it in the shebang line
     std::ifstream script(pio);
     std::string shebang;
     std::getline(script >> std::ws, shebang);
-    if (!shebang.starts_with("#!") || !fs::exists(esptool)) return std::nullopt;
-    std::vector<std::string> cmd; // "#!/usr/bin/env python3" is two words
+    if (!shebang.starts_with("#!") || !fs::exists(script_path)) return std::nullopt;
+    Invocation inv; // "#!/usr/bin/env python3" is two words
     std::istringstream words(shebang.substr(2));
-    for (std::string w; words >> w;) cmd.push_back(w);
-    for (auto& a : std::vector<std::string>{esptool.string(), "--port", port, "chip_id"}) cmd.push_back(std::move(a));
-    const auto out = capture(cmd);
+    for (std::string w; words >> w;) inv.argv.push_back(w);
+    for (auto& a : std::vector<std::string>{script_path.string(), "--port", port, "--baud", "921600"}) inv.argv.push_back(std::move(a));
+    for (auto& a : args) inv.argv.push_back(std::move(a));
+    return inv;
+}
+
+std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
+    const auto inv = esptool(pio, home, port, {"chip_id"});
+    if (!inv) return std::nullopt;
+    const auto out = capture(inv->argv);
     const auto at = out.find("Chip is ");
     if (at == std::string::npos) return std::nullopt;
     return out.substr(at + 8, out.find('\n', at) - at - 8);

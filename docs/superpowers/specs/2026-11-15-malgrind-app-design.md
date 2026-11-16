@@ -28,7 +28,7 @@ No tight deadline; everything below is expected before the defense.
 
 **Non-goals (this version)**
 - Windows; any MCU except ESP32 classic (the core and port structure stay chip-neutral, no new ports now).
-- JTAG-probe attach and QEMU emulation.
+- QEMU emulation. (JTAG/SWD probe attach moved from here to a planned stage, section 5a.)
 - Own build system or flasher: building and flashing is PlatformIO's job (`pio`).
 - Several boards at once; a background daemon (closing the window ends the run); cloud or sharing.
 - Uninitialised-memory and arbitrary invalid-read/write detection (needs emulation; this is not real memcheck).
@@ -99,6 +99,44 @@ UI which tabs have data. *Builder to measure and show the overhead in the UI.*
 
 **Console sharing.** The agent shares UART0 with the user's `ESP_LOG` text, as today; the host separates frames from text.
 
+## 5a. Sources and methods (added 2026-11-16)
+
+Why: a board may run firmware we have no source for and must not lose (the user's water simulator). Flashing an agent
+is then impossible, and a debug probe is the only way to look inside. The app must also grow beyond ESP32.
+
+**Source.** Everything that produces samples `{time, core, stack of PCs}` is a *source*. What comes after it (symbols,
+aggregation, run store, replay, UI) is shared and knows nothing about the source.
+
+| source | needs | overhead on the chip | gives |
+|---|---|---|---|
+| agent over UART (exists, ESP32) | firmware project, PlatformIO, flash | ~1.5% per kHz per core | stacks; later heap, tasks, memcheck |
+| debug probe via OpenOCD (planned) | probe + 4 wires, or a chip with built-in USB-JTAG | Cortex-M3/M4/M7: ~0 (DWT_PCSR is read without halting); M0/M0+ and ESP32: the core halts briefly per sample | PCs; stacks unwound on the host from the ELF; no heap or memcheck views |
+| emulator (later) | firmware, no board | emulation | exact, but not the real board |
+
+Probe sample rates are unmeasured; the first probe stage starts with a spike on real hardware (Nucleo/ST-Link or a Pico
+running debugprobe) before anything is promised.
+
+**One interchange format.** The existing MLC1 wire frame is already chip-neutral (`Arch`, cores, counted stacks). A probe
+source encodes its samples into the same frames with the core encoder, so the run store, replay and aggregator stay as
+they are. `Source` stays a concrete serial reader until the second implementation exists; then it becomes an interface
+(same size of change now or then, so no speculative abstraction today). The UI shows only the views the source provides.
+
+**Methods report.** When a board is plugged in, the app lists every way to profile it and, for each one that is not
+possible, says what is missing:
+
+| method | available when | else it says |
+|---|---|---|
+| attach | the agent's frames arrive | "no agent running on this board" |
+| new run | PlatformIO found, project is ESP-IDF on espressif32 | "PlatformIO not found" / the project problem |
+| without flashing | a debug probe is found | "needs a debug probe (JTAG/SWD); not supported yet" |
+
+**Safe flash.** The first time the agent is flashed onto a board, the whole flash is read into
+`<data>/backups/<board MAC>/<time>.bin` (a failed backup stops the flash). **Remove agent** by default writes that
+backup back, byte for byte (esptool verifies the hash); "rebuild my project" remains as the second choice. A board
+that already runs the agent is not backed up again (the image would be ours), recognised by a marker string in the
+agent. Not supported: patching an agent into a dumped image (needs the binary's symbols, free IRAM, no flash
+encryption; fragile), and profiling a board that has neither source nor a probe.
+
 ## 6. Flows
 
 **Open the app.** Probe for a board (serial list, then beacon listen). Then:
@@ -114,9 +152,10 @@ flash (progress and log) → Live. If `pio` is missing, one screen with the inst
 (newest matching, as today; else the user picks one; else raw addresses with a notice). Stopping sends *stop*; the
 board keeps running.
 
-**Remove agent.** Dialog: "Rebuilds your project without malgrind and flashes it. Your code is not touched. Live
-profiling stops." It runs a plain `pio run -t upload` of the user's project (no overrides), which is why it needs
-no extra mechanism. Reachable from the sidebar footer (red) and from the board card on the start screen.
+**Remove agent.** Dialog: "Restores the firmware that was on the board before malgrind first flashed it (a backup taken
+then). Live profiling stops." **Restore & flash** writes the backup of this board (section 5a), so the original comes
+back byte for byte even if its source is unknown. **Rebuild my project instead** runs a plain `pio run -t upload` of the
+user's project (no overrides). Reachable from the sidebar footer (red) and from the board card on the start screen.
 
 **Live run.** Sidebar layout: Flamegraph | Functions | Memory | Tasks | Memcheck (red badge with the problem
 count), core and window filters in the sidebar, LIVE indicator, pause, and a **time scrubber** under the graph (follows
@@ -173,10 +212,12 @@ used) for the flamegraph, **uPlot** for time series. The builder may swap these 
 
 ## 12. Staging (all before the defense)
 
-1. Rename; sidecar `serve` API with token; run store and replay; Tauri shell; start screen, history, live flamegraph and Functions; New run, attach, remove agent; `.deb`.
-2. Agent v2: beacon, start/stop, heap stats, task stats → Memory and Tasks tabs.
-3. Allocation hooks and error events → Memcheck tab.
-4. Diff, export, polish, macOS CI `.dmg`, README and the C++ share check.
+1. Done (0.1.0): rename; sidecar `serve` protocol; run store and replay; Tauri shell; start screen, history, live flamegraph and Functions; New run, attach, remove agent; `.deb`, `.dmg` in CI.
+2. 2a, safe flash and methods report (section 5a; ESP32, no new hardware).
+3. 2b, probe spike on Cortex-M (rate, DWT_PCSR without halting through OpenOCD), then `OpenOcdSource`; 2c ESP32 over JTAG; 2d Cortex-M agent; `Source` becomes an interface here.
+4. Agent v2: beacon, start/stop, heap stats, task stats, Memory and Tasks tabs.
+5. Allocation hooks and error events, Memcheck tab.
+6. Diff, export, polish, README and the C++ share check. The UI is redesigned once, after 2a.
 
 ## 13. Calls I made (please check)
 

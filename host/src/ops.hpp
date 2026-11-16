@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace malgrind::host {
 
@@ -49,5 +50,27 @@ struct ProbeResult {
 };
 // Listens to the port for up to 2 s for a malgrind frame. Never records and never resets the board. Throws open_error.
 [[nodiscard]] ProbeResult probe_port(const std::string& port);
+
+using LineFn = std::function<void(std::string_view line)>;
+
+// Builds the project with the agent and flashes it, after backing up what is on the board (see backup.hpp): nothing is
+// flashed unless the backup succeeded. A board that already runs the agent is not backed up again (its flash holds our
+// own build). `agent_dir` holds agent/esp32/; progress and the path of the backup arrive through on_line. Throws.
+void flash_agent(const Prepared& prepared, const std::filesystem::path& home, const std::filesystem::path& agent_dir,
+                 const std::filesystem::path& backup_dir, const LineFn& on_line);
+
+// Writes the newest backup of the board on `port` back, byte for byte (esptool verifies it). Throws, naming the board,
+// if there is no backup of it.
+void restore_flash(const std::filesystem::path& pio, const std::filesystem::path& home, const std::string& port,
+                   const std::filesystem::path& backup_dir, const LineFn& on_line);
+
+// One way to profile the board that is plugged in, and, when it is not possible, what is missing.
+struct Method {
+    std::string id; // "attach", "new_run", "no_flash"
+    bool available = false;
+    std::string why; // empty when available
+};
+// `project_problem`: why the chosen project cannot be used with the agent (empty: fine, or none chosen yet).
+[[nodiscard]] std::vector<Method> methods(const ProbeResult& probe, bool have_pio, const std::string& project_problem);
 
 } // namespace malgrind::host

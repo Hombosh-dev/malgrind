@@ -63,7 +63,9 @@ int main(int argc, char** argv) {
     }
 
     const char* home = std::getenv("HOME");
-    ServeOptions options{RunStore::default_root(), default_agent_dir(), home ? home : ""};
+    // backups belong to boards, not to a runs directory: --data-dir does not move them
+    ServeOptions options{RunStore::default_root(), default_agent_dir(), home ? home : "",
+                         RunStore::default_root().parent_path() / "backups"};
 
     std::signal(SIGPIPE, SIG_IGN); // a closed browser connection or app must not kill us before the run is saved
     // SIGINT/SIGTERM end the blocking read of `serve` (no SA_RESTART) and make attach/run finish: the live run is closed properly

@@ -21,6 +21,9 @@
 
 namespace malgrind::host {
 
+// The current UTC time through strftime, e.g. utc_now("%Y%m%d-%H%M%S"). Also names the flash backups.
+[[nodiscard]] std::string utc_now(const char* fmt);
+
 struct RunMeta {
     std::string id{}, name{}, notes{}, project{}, env{}, port{};
     std::string started{}; // ISO-8601 UTC, "2026-11-15T20:01:02Z"

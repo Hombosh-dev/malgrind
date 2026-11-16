@@ -109,7 +109,8 @@
         <button class="btn" disabled={!port} onclick={start}>Build &amp; flash</button>
       </div>
     {:else}
-      <h2>{building ? 'Building with the malgrind agent and flashing…' : 'The build did not finish'}</h2>
+      <h2>{building ? 'Backing up the board, building with the malgrind agent and flashing…' : 'The build did not finish'}</h2>
+      <p class="muted">The board's flash is saved first (about a minute the first time), so "Remove agent" can put your firmware back exactly.</p>
       <BuildLog {lines} busy={building} />
       {#if error}
         <p class="error" role="alert">{error}</p>

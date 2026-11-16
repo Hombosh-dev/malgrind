@@ -100,6 +100,12 @@
     input.select();
   }
 
+  const methodLabels = {
+    attach: 'Attach to the running firmware',
+    new_run: 'Build with the agent and flash (the board is backed up first)',
+    no_flash: 'Profile without flashing (debug probe)'
+  };
+
   const boardLine = $derived(
     probe?.agent ? `${probe.arch} · ${probe.ncores} cores · ${probe.cpu_mhz} MHz · ${port}` : port ? port : 'no board found'
   );
@@ -121,6 +127,18 @@
     <div class="picker">
       <label>Port <select bind:value={port} onchange={scan}>{#each ports as p}<option>{p}</option>{/each}</select></label>
     </div>
+  {/if}
+
+  {#if probe && port}
+    <ul class="methods" aria-label="Ways to profile this board">
+      {#each probe.methods as m (m.id)}
+        <li class:off={!m.available}>
+          <span class="mark" aria-hidden="true">{m.available ? '✔' : '✘'}</span>
+          <b>{methodLabels[m.id]}</b>
+          {#if !m.available}<span class="muted">{m.why}</span>{/if}
+        </li>
+      {/each}
+    </ul>
   {/if}
 
   {#if probe?.agent}
@@ -199,6 +217,10 @@
   .notice { margin: 14px 18px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
   .picker { padding: 10px 18px; }
   .live-card { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 18px; padding: 14px 18px; border: 1px solid var(--live); border-radius: 10px; background: color-mix(in srgb, var(--live) 10%, var(--panel)); }
+  .methods { list-style: none; margin: 14px 18px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; border: 0; }
+  .methods li { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; border: 0; }
+  .methods .mark { width: 1.2em; color: var(--live); }
+  .methods .off .mark { color: var(--danger); }
   .project { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 10px var(--live); }
   .empty { margin: auto; padding: 48px 24px; text-align: center; }

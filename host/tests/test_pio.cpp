@@ -172,6 +172,22 @@ void run_lines_streams() {
     assert(run_lines({"/no/such/program"}, {}, [](std::string_view) {}) != 0);
 }
 
+void esptool_command_line() {
+    const auto home = fresh("malgrind_pio_esptool");
+    write(home / "pio", "#!/usr/bin/env python3\n");
+    assert(!esptool(home / "pio", home, "/dev/ttyUSB0", {"chip_id"})); // no esptool package yet
+    write(home / ".platformio/packages/tool-esptoolpy/esptool.py", "");
+    const auto inv = esptool(home / "pio", home, "/dev/ttyUSB0", {"read_flash", "0", "4096", "out.bin"});
+    assert(inv && inv->env.empty());
+    const auto script = (home / ".platformio/packages/tool-esptoolpy/esptool.py").string();
+    // the interpreter is the two words of the shebang line, then the script, the connection, the command
+    assert((inv->argv == std::vector<std::string>{"/usr/bin/env", "python3", script, "--port", "/dev/ttyUSB0", "--baud", "921600",
+                                                  "read_flash", "0", "4096", "out.bin"}));
+    write(home / "notscript", "binary");
+    assert(!esptool(home / "notscript", home, "p", {}));
+    fs::remove_all(home);
+}
+
 } // namespace
 
 int main() {
@@ -183,5 +199,6 @@ int main() {
     plain_flash_has_no_agent();
     find_pio_fallback();
     run_lines_streams();
+    esptool_command_line();
     std::puts("pio ok");
 }

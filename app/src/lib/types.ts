@@ -21,12 +21,20 @@ export interface Hello {
   pio: string | null;
 }
 
+// One way to profile the connected board; `why` says what is missing when it is not available.
+export interface Method {
+  id: 'attach' | 'new_run' | 'no_flash';
+  available: boolean;
+  why: string;
+}
+
 export interface Probe {
   busy: boolean;
   agent: boolean;
   arch?: string;
   ncores?: number;
   cpu_mhz?: number;
+  methods: Method[];
 }
 
 export interface ProjectInfo {
