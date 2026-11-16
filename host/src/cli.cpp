@@ -61,7 +61,7 @@ struct Options {
 std::optional<Options> parse(const std::vector<std::string>& args) {
     if (args.empty()) return std::nullopt;
     Options o{args[0], {}};
-    const bool known_command = o.command == "run" || o.command == "attach" || o.command == "detect";
+    const bool known_command = o.command == "run" || o.command == "attach" || o.command == "detect" || o.command == "restore";
     if (!known_command) return std::nullopt;
     for (std::size_t i = 1; i < args.size(); ++i) {
         const std::string_view key = args[i];
@@ -199,11 +199,21 @@ int run_command(const Options& o, const ServeOptions& defaults) {
     }
     const fs::path agent_dir = o.get("agent-dir").empty() ? defaults.agent_dir : fs::path(o.get("agent-dir"));
     const auto p = prepare_project(defaults.home, dir, o.get("env"), *port);
-    run_pio(agent_build(p.pio, p.project, p.env, *port, agent_dir), [](std::string_view line) { std::cerr << line << "\n"; });
+    flash_agent(p, defaults.home, agent_dir, defaults.backup_dir, [](std::string_view line) { std::cerr << line << "\n"; });
     Options with = o;
     with.values["port"] = *port;
     with.values["env"] = p.env;
     return watch(open_after_upload(*port), with, defaults, p.project.dir, agent_elf(p.project, p.env));
+}
+
+int restore(const Options& o, const ServeOptions& defaults) {
+    const auto port = resolve_port(o);
+    if (!port) return 2;
+    const auto pio = find_pio(defaults.home);
+    if (!pio) throw std::runtime_error(kNoPio);
+    restore_flash(*pio, defaults.home, *port, defaults.backup_dir, [](std::string_view line) { std::cerr << line << "\n"; });
+    std::cout << "the board has the firmware it had before malgrind\n";
+    return 0;
 }
 
 int detect(const Options& o, const ServeOptions& defaults) {
@@ -232,6 +242,7 @@ const char* const kCliUsage = R"(malgrind-cli: live flamegraph profiler for micr
   malgrind-cli run      build + flash the firmware with the agent, then show the live flamegraph in the browser
   malgrind-cli attach   the board already runs the agent: just show the live flamegraph
   malgrind-cli detect   identify the connected chip (this resets the board)
+  malgrind-cli restore  write back the backup `run` took before it flashed the agent (the board's original firmware)
   malgrind-cli serve    the protocol of the malgrind app, on stdin/stdout
 
 Everything is detected automatically. Override only when needed:
@@ -258,6 +269,7 @@ int run_cli(const std::vector<std::string>& args, const ServeOptions& defaults) 
     try {
         if (options->command == "detect") return detect(*options, defaults);
         if (options->command == "attach") return attach(*options, defaults);
+        if (options->command == "restore") return restore(*options, defaults);
         return run_command(*options, defaults);
     } catch (const std::exception& e) {
         std::cerr << "error: " << e.what() << "\n";

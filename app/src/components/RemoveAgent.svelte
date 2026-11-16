@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import BuildLog from './BuildLog.svelte';
-  import ProjectPicker from './ProjectPicker.svelte';
   import type { Sidecar } from '../lib/sidecar';
+  import type { ProjectMeta } from '../lib/types';
 
   interface Props {
     sidecar: Sidecar;
@@ -17,6 +17,8 @@
   let portsKnown = $state(false);
 
   onMount(async () => {
+    buildable = (await sidecar.call<ProjectMeta[]>('projects')).filter((p) => p.has_source && p.trusted && !p.problem);
+    project = buildable[0]?.id ?? '';
     if (!port) {
       ports = await sidecar.call<string[]>('ports');
       port = ports[0] ?? '';
@@ -24,9 +26,9 @@
     portsKnown = true;
   });
 
-  let dir = $state('');
-  let env = $state('');
-  let valid = $state(false);
+  let rebuild = $state(false); // false: write back the backup taken before the agent went on; true: build the user's project
+  let buildable = $state<ProjectMeta[]>([]); // projects with source that may be built, for "rebuild my project instead"
+  let project = $state('');
   let working = $state(false);
   let started = $state(false);
   let lines = $state<string[]>([]);
@@ -39,7 +41,7 @@
     error = '';
     lines = [];
     try {
-      await sidecar.call('remove_agent', { dir, env, port });
+      await sidecar.call('remove_agent', rebuild ? { how: 'rebuild', project, port } : { how: 'restore', port });
       onDone();
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -52,8 +54,12 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="remove-title">
     <h3 id="remove-title">Remove the agent from the board?</h3>
     <p class="muted">
-      Rebuilds your project without malgrind and flashes it. The board runs your original firmware again. Your code is not touched.
-      Live profiling stops.
+      {#if rebuild}
+        Rebuilds your project without malgrind and flashes it. Your code is not touched. Live profiling stops.
+      {:else}
+        Restores the firmware that was on the board before malgrind last flashed the agent (a backup taken then), byte for byte. Live
+        profiling stops.
+      {/if}
     </p>
     {#if ports.length > 1}
       <label class="muted">Port <select bind:value={port}>{#each ports as p}<option>{p}</option>{/each}</select></label>
@@ -62,11 +68,22 @@
     {:else if portsKnown}
       <p class="error" role="alert">No serial port found. Connect the board first.</p>
     {/if}
-    <ProjectPicker {sidecar} bind:dir bind:env bind:valid />
+    {#if rebuild}
+      {#if buildable.length === 0}
+        <p class="error">No project with source code. Add one first (New project), or restore the backup.</p>
+      {:else}
+        <label class="muted">Project <select bind:value={project}>{#each buildable as p}<option value={p.id}>{p.name}</option>{/each}</select></label>
+      {/if}
+    {/if}
+    {#if !started}
+      <button class="link" onclick={() => (rebuild = !rebuild)}>{rebuild ? 'Restore the backup instead' : 'Rebuild my project instead'}</button>
+    {/if}
     {#if started}<BuildLog {lines} busy={working} />{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
-      <button class="btn danger" disabled={!valid || !port || working} onclick={remove}>{working ? 'Flashing…' : 'Remove & flash'}</button>
+      <button class="btn danger" disabled={(rebuild && !project) || !port || working} onclick={remove}>
+        {working ? 'Flashing…' : rebuild ? 'Rebuild & flash' : 'Restore & flash'}
+      </button>
       <button class="btn ghost" disabled={working} onclick={onCancel}>Cancel</button>
     </div>
   </div>
@@ -78,5 +95,7 @@
   h3 { margin: 0 0 8px; }
   .actions { display: flex; gap: 10px; margin-top: 16px; }
   .error { color: var(--danger); }
+  .link { background: none; border: 0; padding: 4px 0; color: var(--muted); text-decoration: underline; }
+  .link:hover { color: var(--fg); }
   code { font-family: var(--mono); }
 </style>

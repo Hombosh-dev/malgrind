@@ -40,20 +40,31 @@ Download from the repository's **Releases** page:
 
 ![start screen with a running board](docs/app-start.png)
 
-- **First start, no runs yet:** a big **New run** button. It asks for your PlatformIO project, finds the board, builds the
-  project *with the agent*, flashes it and shows the live flamegraph.
-- **A board that already runs the agent** (say, your simulator) shows "Your firmware is running". **Attach live** watches it
-  without interrupting or resetting it. Choose your project folder first if you want function names.
-- **Runs that exist** are listed with their length; click one to reopen it, ✎ to rename, 🗑 to delete. Everything a run
-  shows live can be replayed, and the slider at the bottom moves through time.
-- **Remove agent…** (bottom left of a run, or on the start screen) rebuilds your project *without* the agent and flashes it,
-  so the board runs your original firmware again.
+A **project** is what you profile. Its source code is optional, so a board whose firmware nobody has can still be attached to.
+
+- **First start:** a big **New project**. Later it sits on top of the start screen, and under it two tabs list your **Projects**
+  (each with its runs) and all **Runs**. Click a project to open it, a run to replay it; ✎ renames, 🗑 deletes.
+- **New project:** drop a project folder on the window (or *Choose folder*), paste a **GitHub link** (public repositories; it is
+  cloned once into malgrind's own folder), or take **No code, just a board** (optionally with its `.elf` for function names).
+  Your own folder is used in place and never changed. A project cloned from GitHub must be **trusted** by you before it is built,
+  because building runs the repository's PlatformIO scripts.
+- **Profile** (on the project page): pick the **board** (a large tile per plugged-in serial port, with its USB adapter and whether
+  the malgrind agent answers; it only listens), then **how**:
+  - **Attach**: watch firmware that already runs the agent, without flashing or resetting it.
+  - **Build & flash**: builds your project with the agent and flashes it, then shows the live flamegraph.
+  - **Debug probe**: profile without touching the firmware; greyed, *in development*.
+  A card that is not possible says what is missing (for example "this project has no source code").
+- **Safe flash.** The first time the agent goes onto a board, malgrind reads the board's whole flash into
+  `~/.local/share/malgrind/backups/<board MAC>/<time>.bin` (about a minute); if that fails, nothing is flashed.
+- **Remove agent…** (bottom left of a run, or the Board menu) writes that backup back, byte for byte, so the board runs the
+  firmware it had before, even if nobody has its source. "Rebuild my project instead" flashes a project built without the agent.
 
 Views: **Flamegraph** (core and time-window filters, smoothed so it does not flicker) and **Functions** (self and inclusive
-time per function; click one to see who calls it and what it calls).
+time per function; click one to see who calls it and what it calls). The slider at the bottom moves through time, in a live run
+and in a replay.
 
-Needs [PlatformIO](https://platformio.org) (`pip install platformio`) for *New run* and *Remove agent*; attaching to a board
-that already runs the agent works without it. Projects must use the ESP-IDF framework (`framework = espidf`) and a
+Needs [PlatformIO](https://platformio.org) (`pip install platformio`) for *Build & flash* and *Rebuild*, and `git` for GitHub links;
+attaching to a board that already runs the agent needs neither. Projects must use the ESP-IDF framework (`framework = espidf`) and a
 path without spaces (PlatformIO's own limit).
 
 ## Terminal mode: `malgrind-cli`
@@ -64,6 +75,7 @@ The same package installs `malgrind-cli`, the engine with a localhost live page,
 malgrind-cli run      # builds your project with the agent, flashes it, opens the live flamegraph in the browser
 malgrind-cli attach   # the board already runs the agent: just show it
 malgrind-cli detect   # which chip is connected?
+malgrind-cli restore  # write back the backup `run` took before it flashed the agent
 ```
 
 Everything is detected, each guess is printed. Runs go into the same history the app shows.
@@ -83,6 +95,9 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 | | |
 |---|---|
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
+| Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done, tested with fake git/esptool and on the real simulator port (read-only) |
+| Flash backup before the agent, restore on remove | done in the engine and its tests; see the release notes for what ran on a real board |
+| Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |
 | Flamegraph and function table, live and replayed, time scrubber | done |
 | `malgrind-cli run / attach / detect` | done |
 | macOS `.dmg` | not yet (the code is portable; CI builds and tests on macOS) |

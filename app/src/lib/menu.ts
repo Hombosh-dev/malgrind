@@ -1,17 +1,17 @@
 import { Menu, MenuItem, Submenu } from '@tauri-apps/api/menu';
 
 export interface MenuActions {
-  newRun(): void;
+  newProject(): void;
   stop(): void;
   removeAgent(): void;
 }
 
-// The native menu bar: Run (New run, Stop) and Board (Remove agent).
+// The native menu bar: Run (New project, Stop) and Board (Remove agent).
 export async function installMenu(actions: MenuActions): Promise<void> {
   const run = await Submenu.new({
     text: 'Run',
     items: [
-      await MenuItem.new({ text: 'New run…', accelerator: 'CmdOrCtrl+N', action: actions.newRun }),
+      await MenuItem.new({ text: 'New project…', accelerator: 'CmdOrCtrl+N', action: actions.newProject }),
       await MenuItem.new({ text: 'Stop', accelerator: 'CmdOrCtrl+.', action: actions.stop }),
     ],
   });

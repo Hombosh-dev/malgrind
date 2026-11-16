@@ -7,7 +7,7 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
@@ -46,6 +46,32 @@ add_executable(test_session tests/test_session.cpp)
 target_link_libraries(test_session PRIVATE malgrind_host)
 target_compile_options(test_session PRIVATE -UNDEBUG)
 add_test(NAME session COMMAND test_session)
+
+add_executable(test_backup tests/test_backup.cpp)
+target_link_libraries(test_backup PRIVATE malgrind_host)
+target_compile_options(test_backup PRIVATE -UNDEBUG)
+add_test(NAME backup COMMAND test_backup)
+
+add_executable(test_projects tests/test_projects.cpp)
+target_link_libraries(test_projects PRIVATE malgrind_host)
+target_compile_options(test_projects PRIVATE -UNDEBUG)
+add_test(NAME projects COMMAND test_projects)
+
+add_executable(test_github tests/test_github.cpp)
+target_link_libraries(test_github PRIVATE malgrind_host)
+target_compile_options(test_github PRIVATE -UNDEBUG)
+add_test(NAME github COMMAND test_github)
+
+add_executable(test_boards tests/test_boards.cpp)
+target_link_libraries(test_boards PRIVATE malgrind_host)
+target_compile_options(test_boards PRIVATE -UNDEBUG)
+add_test(NAME boards COMMAND test_boards)
+
+add_executable(test_flash tests/test_flash.cpp)
+target_link_libraries(test_flash PRIVATE malgrind_host)
+target_compile_options(test_flash PRIVATE -UNDEBUG)
+target_compile_definitions(test_flash PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME flash COMMAND test_flash)
 
 add_executable(test_pio tests/test_pio.cpp)
 target_link_libraries(test_pio PRIVATE malgrind_host)

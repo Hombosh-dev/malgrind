@@ -27,15 +27,6 @@ bool valid_id(std::string_view id) {
            std::ranges::all_of(id, [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
 }
 
-std::string utc_now(const char* fmt) {
-    const std::time_t t = std::time(nullptr);
-    std::tm tm{};
-    gmtime_r(&t, &tm);
-    std::array<char, 32> buf{};
-    std::strftime(buf.data(), buf.size(), fmt, &tm);
-    return buf.data();
-}
-
 // meta.json is replaced atomically: a crash leaves the old file or the new one, never half of one.
 void write_meta(const fs::path& dir, const RunMeta& meta) {
     const auto tmp = dir / "meta.json.tmp";
@@ -53,6 +44,7 @@ std::optional<RunMeta> read_meta(const fs::path& dir) {
     m.notes = j.value("notes", "");
     m.project = j.value("project", "");
     m.env = j.value("env", "");
+    m.project_id = j.value("project_id", "");
     m.port = j.value("port", "");
     m.started = j.value("started", "");
     if (j.contains("arch") && j["arch"].is_string())
@@ -71,9 +63,19 @@ void put_le(std::ofstream& out, std::uint64_t v, int bytes) {
 
 } // namespace
 
+std::string utc_now(const char* fmt) {
+    const std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    gmtime_r(&t, &tm);
+    std::array<char, 32> buf{};
+    std::strftime(buf.data(), buf.size(), fmt, &tm);
+    return buf.data();
+}
+
 void to_json(nlohmann::json& j, const RunMeta& m) {
     j = {{"id", m.id},           {"name", m.name},       {"notes", m.notes},
          {"project", m.project}, {"env", m.env},         {"port", m.port},
+         {"project_id", m.project_id},
          {"started", m.started}, {"ncores", m.ncores},   {"cpu_mhz", m.cpu_mhz},
          {"duration_ms", m.duration_ms}, {"has_elf", m.has_elf}};
     j["arch"] = m.arch ? nlohmann::json(std::string(arch_name(*m.arch))) : nlohmann::json(nullptr);

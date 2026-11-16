@@ -18,12 +18,6 @@ namespace malgrind::host {
 
 namespace {
 
-std::optional<fs::path> find_in_path(const std::string& name) {
-    std::istringstream dirs(std::getenv("PATH") ? std::getenv("PATH") : "");
-    for (std::string dir; std::getline(dirs, dir, ':');)
-        if (std::error_code ec; !dir.empty() && fs::exists(fs::path(dir) / name, ec)) return fs::path(dir) / name;
-    return std::nullopt;
-}
 
 // pio runs with `-d <project>`, which changes its directory: every path handed to it must be absolute.
 fs::path absolute_path(const fs::path& path) {
@@ -59,6 +53,13 @@ std::optional<std::string> sdkconfig_key(const std::string& line) {
 }
 
 } // namespace
+
+std::optional<fs::path> find_in_path(const std::string& name) {
+    std::istringstream dirs(std::getenv("PATH") ? std::getenv("PATH") : "");
+    for (std::string dir; std::getline(dirs, dir, ':');)
+        if (std::error_code ec; !dir.empty() && fs::exists(fs::path(dir) / name, ec)) return fs::path(dir) / name;
+    return std::nullopt;
+}
 
 std::optional<fs::path> find_pio(const fs::path& home) {
     if (auto found = find_in_path("pio")) return found;
@@ -151,7 +152,7 @@ std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
 }
 
 Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
-                       const fs::path& agent_dir) {
+                       const fs::path& agent_dir, bool upload) {
     const fs::path agent_files = absolute_path(agent_dir) / "agent/esp32";
     const auto agent_keys = slurp(agent_files / "sdkconfig.agent");
     if (agent_keys.empty() || !fs::exists(agent_files / "inject.py"))
@@ -160,10 +161,14 @@ Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const st
     const fs::path out = project.dir / ".pio/malgrind";
     fs::create_directories(out);
     const fs::path sdkconfig = out / ("sdkconfig." + env);
-    std::ofstream(sdkconfig, std::ios::trunc) << merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
+    // an unchanged file keeps its time stamp: a newer sdkconfig makes ESP-IDF reconfigure and rebuild everything
+    const auto merged = merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
+    if (slurp(sdkconfig) != merged) std::ofstream(sdkconfig, std::ios::trunc) << merged;
     if (!fs::exists(sdkconfig)) throw std::runtime_error("cannot write " + sdkconfig.string());
 
-    return {{pio.string(), "run", "-d", project.dir.string(), "-e", env, "-t", "upload", "--upload-port", port},
+    std::vector<std::string> argv{pio.string(), "run", "-d", project.dir.string(), "-e", env};
+    if (upload) argv.insert(argv.end(), {"-t", "upload", "--upload-port", port});
+    return {std::move(argv),
             {"PLATFORMIO_BUILD_DIR=" + (out / "build").string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent_files / "inject.py").string(),
              "MALGRIND_AGENT_DIR=" + agent_files.string(), "MALGRIND_SDKCONFIG=" + sdkconfig.string()}};
 }
@@ -176,18 +181,25 @@ fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
     return project.dir / ".pio/malgrind/build" / env / "firmware.elf";
 }
 
-std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
-    const fs::path esptool = home / ".platformio/packages/tool-esptoolpy/esptool.py";
+std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
+    const fs::path script_path = home / ".platformio/packages/tool-esptoolpy/esptool.py";
     // PlatformIO's own Python has pyserial; its launcher script names it in the shebang line
     std::ifstream script(pio);
     std::string shebang;
     std::getline(script >> std::ws, shebang);
-    if (!shebang.starts_with("#!") || !fs::exists(esptool)) return std::nullopt;
-    std::vector<std::string> cmd; // "#!/usr/bin/env python3" is two words
+    if (!shebang.starts_with("#!") || !fs::exists(script_path)) return std::nullopt;
+    Invocation inv; // "#!/usr/bin/env python3" is two words
     std::istringstream words(shebang.substr(2));
-    for (std::string w; words >> w;) cmd.push_back(w);
-    for (auto& a : std::vector<std::string>{esptool.string(), "--port", port, "chip_id"}) cmd.push_back(std::move(a));
-    const auto out = capture(cmd);
+    for (std::string w; words >> w;) inv.argv.push_back(w);
+    for (auto& a : std::vector<std::string>{script_path.string(), "--port", port, "--baud", "921600"}) inv.argv.push_back(std::move(a));
+    for (auto& a : args) inv.argv.push_back(std::move(a));
+    return inv;
+}
+
+std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
+    const auto inv = esptool(pio, home, port, {"chip_id"});
+    if (!inv) return std::nullopt;
+    const auto out = capture(inv->argv);
     const auto at = out.find("Chip is ");
     if (at == std::string::npos) return std::nullopt;
     return out.substr(at + 8, out.find('\n', at) - at - 8);

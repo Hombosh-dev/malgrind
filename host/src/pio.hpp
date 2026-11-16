@@ -36,6 +36,9 @@
 
 namespace malgrind::host {
 
+// The first `name` found in the directories of $PATH.
+[[nodiscard]] std::optional<std::filesystem::path> find_in_path(const std::string& name);
+
 // The `pio` executable: PATH first, then PlatformIO's own installs under `home` (a GUI app often lacks the shell's PATH).
 [[nodiscard]] std::optional<std::filesystem::path> find_pio(const std::filesystem::path& home);
 
@@ -60,11 +63,12 @@ struct Invocation {
     std::vector<std::string> env; // "NAME=value", added to the environment of the child
 };
 
-// Builds the project with the agent and uploads it. `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
+// Builds the project with the agent and uploads it (`upload` false: only builds; a second call with true then uploads
+// without compiling again). `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
 // Writes <project>/.pio/malgrind/sdkconfig.<env>; nothing else of the project is touched. Throws std::runtime_error
 // if the agent files are missing.
 [[nodiscard]] Invocation agent_build(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
-                                     const std::string& port, const std::filesystem::path& agent_dir);
+                                     const std::string& port, const std::filesystem::path& agent_dir, bool upload = true);
 
 // The user's own firmware, built and uploaded as PlatformIO would: this is what "remove agent" runs.
 [[nodiscard]] Invocation plain_flash(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
@@ -72,6 +76,12 @@ struct Invocation {
 
 // The ELF agent_build produces (it symbolizes the frames the flashed board sends).
 [[nodiscard]] std::filesystem::path agent_elf(const ProjectInfo& project, const std::string& env);
+
+// esptool.py (PlatformIO's copy, run with PlatformIO's Python) as `esptool.py --port P --baud 921600 <args>`.
+// nullopt if the launcher's interpreter or the esptool package cannot be found. esptool resets the board, and every
+// command prints "Chip is ..." and "MAC: ..." when it connects.
+[[nodiscard]] std::optional<Invocation> esptool(const std::filesystem::path& pio, const std::filesystem::path& home,
+                                                const std::string& port, std::vector<std::string> args);
 
 // "ESP32-D0WD-V3 (revision v3.1)" etc. through esptool, which resets the board. nullopt if esptool cannot be run.
 [[nodiscard]] std::optional<std::string> chip_id(const std::filesystem::path& pio, const std::string& port,
