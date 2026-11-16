@@ -38,7 +38,7 @@ Download from the repository's **Releases** page:
 
 ## Using the app
 
-![start screen with a running board](docs/app-start.png)
+![start screen: projects and runs](docs/app-start.png)
 
 A **project** is what you profile. Its source code is optional, so a board whose firmware nobody has can still be attached to.
 
@@ -54,6 +54,8 @@ A **project** is what you profile. Its source code is optional, so a board whose
   - **Build & flash**: builds your project with the agent and flashes it, then shows the live flamegraph.
   - **Debug probe**: profile without touching the firmware; greyed, *in development*.
   A card that is not possible says what is missing (for example "this project has no source code").
+
+  ![board tile and method cards](docs/app-profile.png)
 - **Safe flash.** The first time the agent goes onto a board, malgrind reads the board's whole flash into
   `~/.local/share/malgrind/backups/<board MAC>/<time>.bin` (about a minute); if that fails, nothing is flashed.
 - **Remove agent…** (bottom left of a run, or the Board menu) writes that backup back, byte for byte, so the board runs the
@@ -95,8 +97,8 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 | | |
 |---|---|
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
-| Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done, tested with fake git/esptool and on the real simulator port (read-only) |
-| Flash backup before the agent, restore on remove | done in the engine and its tests; see the release notes for what ran on a real board |
+| Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done; the app was driven on a real USB port and a real GitHub clone worked; drag and drop not exercised |
+| Flash backup before the agent, restore on remove | done, verified on the ESP32-D0WD-V3 dev board: backup, agent flash and live data, restore, `esptool verify_flash` matched |
 | Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |
 | Flamegraph and function table, live and replayed, time scrubber | done |
 | `malgrind-cli run / attach / detect` | done |
