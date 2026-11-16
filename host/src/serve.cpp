@@ -1,11 +1,14 @@
 #include "serve.hpp"
 
+#include "access.hpp"
 #include "boards.hpp"
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
 #include "pio.hpp"
+#include "process.hpp"
 #include "projects.hpp"
+#include "setup.hpp"
 #include "session.hpp"
 #include "source.hpp"
 #include "store.hpp"
@@ -104,7 +107,7 @@ private:
         try {
             const auto cmd = str_arg(req, "cmd");
             if (cmd == "snapshot" || cmd == "functions") return reply_raw(id, query(cmd, req));
-            if (cmd == "new_run" || cmd == "remove_agent" || cmd == "chip_id" || cmd == "project_add") return run_long(id, cmd, req);
+            if (cmd == "new_run" || cmd == "remove_agent" || cmd == "chip_id" || cmd == "project_add" || cmd == "install_pio" || cmd == "grant_access") return run_long(id, cmd, req);
             reply(id, command(cmd, req));
         } catch (const std::exception& e) {
             fail(id, e.what());
@@ -125,6 +128,7 @@ private:
             return {{"dir", project->dir.string()}, {"envs", project->envs}, {"default_env", project->default_env}};
         }
         if (cmd == "boards") return boards();
+        if (cmd == "setup") return setup_info();
         if (cmd == "projects") return list_projects();
         if (cmd == "project_update") return update_project(req);
         if (cmd == "project_remove") {
@@ -189,7 +193,7 @@ private:
     json probe(const json& req) {
         const auto port = str_arg(req, "port");
         const auto r = probe_port(port);
-        json result = {{"busy", r.busy}, {"agent", r.agent}};
+        json result = {{"busy", r.busy}, {"agent", r.agent}, {"denied", r.denied}};
         if (r.agent) {
             result["arch"] = std::string(arch_name(r.arch));
             result["ncores"] = r.ncores;
@@ -338,14 +342,56 @@ private:
         throw std::runtime_error("source must be \"folder\", \"git\" or \"none\"");
     }
 
+    // What the machine has for the jobs the app needs done: PlatformIO to build, git for GitHub links, pkexec to ask for access.
+    json setup_info() {
+        auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(p->string()) : json(nullptr); };
+        return {{"pio", path_or_null(find_pio(options_.home))},
+                {"python", path_or_null(find_python())},
+                {"git", path_or_null(find_in_path("git"))},
+                {"pkexec", find_in_path("pkexec").has_value()},
+                {"user", current_user()}};
+    }
+
+    json install_pio_command() {
+        if (find_pio(options_.home)) throw std::runtime_error("PlatformIO is already installed");
+        const auto python = find_python();
+        if (!python) throw std::runtime_error("Python 3 was not found: install it (on Ubuntu: sudo apt install python3 python3-venv) and try again");
+        install_pio(*python, options_.home, build_line());
+        return {{"pio", find_pio(options_.home)->string()}};
+    }
+
+    // Gives this user access to a serial port that belongs to a group they are not in: one system password prompt (pkexec).
+    json grant_access(const json& req) {
+        const auto port = str_arg(req, "port");
+        const auto known = find_serial_ports();
+        if (std::ranges::find(known, port) == known.end()) throw std::runtime_error("not a serial port of this computer: " + port);
+        const auto before = port_access(port);
+        if (before.ok) return {{"ok_now", true}, {"relogin", false}}; // nothing to do
+        const auto user = current_user();
+        const auto pkexec = find_in_path("pkexec");
+        if (!pkexec)
+            throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" + manual_commands(port, user, before.group));
+        const auto command = grant_access_command(*pkexec, port, user, before.group);
+        if (!command) throw std::runtime_error("cannot build the command for this user or port");
+        const int code = run_lines(command->argv, command->env, build_line());
+        if (code == 126 || code == 127) throw std::runtime_error("the password prompt was cancelled, or the password was wrong");
+        if (code != 0) throw std::runtime_error(std::format("granting access failed (exit code {})", code));
+        const auto after = port_access(port);
+        return {{"ok_now", after.ok}, {"relogin", !after.in_group}}; // relogin: the group applies from the next login, the ACL until the board is replugged
+    }
+
     json boards() {
         auto ports = json::array();
         for (const auto& port : find_serial_ports()) {
             const auto usb = usb_info_for_port(port);
+            const auto access = port_access(port);
             ports.push_back({{"port", port},
                              {"adapter", usb ? adapter_name(*usb) : ""},
                              {"vid", usb ? usb->vid : ""},
-                             {"pid", usb ? usb->pid : ""}});
+                             {"pid", usb ? usb->pid : ""},
+                             {"serial", usb ? usb->serial : ""},
+                             {"location", usb ? usb->location : ""},
+                             {"access", {{"ok", access.ok}, {"group", access.group}, {"in_group", access.in_group}}}});
         }
         auto probes = json::array();
         for (const auto& p : find_probes()) probes.push_back({{"name", p.name}, {"vid", p.vid}, {"pid", p.pid}});
@@ -358,7 +404,8 @@ private:
         if (worker_.joinable()) worker_.join(); // the previous one has finished (it cleared busy_)
         worker_ = std::thread([this, id, cmd, req] {
             try {
-                reply(id, cmd == "new_run" ? new_run(req) : cmd == "remove_agent" ? remove_agent(req) : cmd == "project_add" ? add_project(req) : chip_id_command(req));
+                reply(id, cmd == "new_run" ? new_run(req) : cmd == "remove_agent" ? remove_agent(req) : cmd == "project_add" ? add_project(req)
+                                : cmd == "install_pio" ? install_pio_command() : cmd == "grant_access" ? grant_access(req) : chip_id_command(req));
             } catch (const std::exception& e) {
                 fail(id, e.what());
             }

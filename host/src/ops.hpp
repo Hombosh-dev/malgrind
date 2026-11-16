@@ -44,6 +44,7 @@ void run_pio(const Invocation& invocation, const std::function<void(std::string_
 
 struct ProbeResult {
     bool busy = false;  // somebody else has the port
+    bool denied = false; // this user may not open the port (not in its group, Linux)
     bool agent = false; // a malgrind frame arrived
     Arch arch{};
     unsigned ncores = 0;

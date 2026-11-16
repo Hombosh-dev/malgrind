@@ -14,6 +14,8 @@ namespace malgrind::host {
 struct UsbInfo {
     std::string vid, pid; // lower-case hex, "1a86"
     std::string product, manufacturer;
+    std::string serial;   // the adapter's serial number, if it has one: tells two boards of the same kind apart
+    std::string location; // where it is plugged in, "3-3" (bus-port): changes when the board moves to another socket
 };
 
 // The USB device behind a serial port such as /dev/ttyACM0. nullopt if sysfs does not say.

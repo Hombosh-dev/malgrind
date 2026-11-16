@@ -165,6 +165,15 @@ building runs the repository's `platformio.ini` scripts; attaching builds nothin
 **Attach** records a board that already runs the agent, with the project's ELF (else the newest matching one in its folder, else raw
 addresses and a notice). Stopping leaves the board running.
 
+**Setup (0.3.0).** What the app needs from the machine is checked, and fixed where it can be fixed without surprises:
+- *PlatformIO missing*: an **Install PlatformIO** button (Python venv in `~/.platformio/penv` + `pip install platformio`, no
+  sudo, output streamed). Python 3 with `venv` is a prerequisite the app only names. git is only reported.
+- *Port not openable* (the user is not in the port's group): the tile says so and offers **Grant access** through `pkexec`, the
+  system's own password prompt: an ACL on the device (immediate) and group membership (permanent after the next login). The engine
+  builds that command itself from the ports it found and from system names, passing them as positional arguments, so nothing the
+  UI sends ends up in a shell command.
+- *Two boards*: tiles carry the USB socket and serial number; flashing asks for confirmation naming the board; a run shows its port.
+
 **Remove agent.** Dialog: "Restores the firmware that was on the board before malgrind last flashed the agent (a backup
 taken then). Live profiling stops." **Restore & flash** writes the backup of this board (section 5a), so the original comes
 back byte for byte even if its source is unknown. **Rebuild my project instead** runs a plain `pio run -t upload` of the

@@ -22,6 +22,8 @@ using namespace std::chrono_literals;
 std::runtime_error open_error(const std::string& port, int err) {
     if (err == EBUSY)
         return std::runtime_error("busy: another program (maybe another malgrind, or a serial monitor) is using " + port);
+    if (err == EACCES)
+        return std::runtime_error(std::format("no permission to use {}: choose Grant access on the board's tile (this user is not allowed to open the port)", port));
     return std::runtime_error(std::format("cannot open {}: {}", port, std::strerror(err)));
 }
 
@@ -70,6 +72,7 @@ ProbeResult probe_port(const std::string& port) {
     auto source = Source::open(port, kBaud);
     if (!source) {
         if (errno == EBUSY) return {.busy = true};
+        if (errno == EACCES) return {.denied = true};
         throw open_error(port, errno);
     }
     FrameReader reader;
@@ -182,10 +185,12 @@ fs::path clone_project(const GithubRepo& repo, const fs::path& dest, const LineF
 
 std::vector<Method> methods(const ProbeResult& probe, bool have_pio, const std::string& project_problem) {
     const std::string busy = "the port is busy: another program is using it";
+    const std::string denied = "no permission to use this port: choose Grant access on the board's tile";
+    const std::string blocked = probe.denied ? denied : probe.busy ? busy : "";
     std::vector<Method> list;
-    list.push_back({"attach", probe.agent, probe.agent ? "" : probe.busy ? busy : "no malgrind agent is running on this board"});
-    const bool can_build = have_pio && project_problem.empty() && !probe.busy;
-    list.push_back({"new_run", can_build, can_build ? "" : probe.busy ? busy : !have_pio ? kNoPio : project_problem});
+    list.push_back({"attach", probe.agent, probe.agent ? "" : !blocked.empty() ? blocked : "no malgrind agent is running on this board"});
+    const bool can_build = have_pio && project_problem.empty() && blocked.empty();
+    list.push_back({"new_run", can_build, can_build ? "" : !blocked.empty() ? blocked : !have_pio ? kNoPio : project_problem});
     list.push_back({"no_flash", false, "needs a debug probe (JTAG/SWD); not supported yet"});
     return list;
 }

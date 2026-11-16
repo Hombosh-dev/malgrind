@@ -27,7 +27,8 @@ std::string lower(std::string s) {
 std::optional<UsbInfo> read_usb_device(const fs::path& dir) {
     auto vid = lower(read_line(dir / "idVendor"));
     if (vid.empty()) return std::nullopt;
-    return UsbInfo{std::move(vid), lower(read_line(dir / "idProduct")), read_line(dir / "product"), read_line(dir / "manufacturer")};
+    return UsbInfo{std::move(vid), lower(read_line(dir / "idProduct")), read_line(dir / "product"), read_line(dir / "manufacturer"),
+                   read_line(dir / "serial"), dir.filename().string()};
 }
 
 } // namespace

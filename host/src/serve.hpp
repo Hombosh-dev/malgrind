@@ -9,11 +9,15 @@
 // Commands (arguments -> result):
 //   hello                                  -> {version, data_dir, pio}
 //   ports                                  -> ["/dev/ttyUSB0", ...]
-//   probe {port, project?}                 -> {busy, agent, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
+//   probe {port, project?}                 -> {busy, agent, denied, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
 //                                             methods = [{id: attach|new_run|no_flash, available, why}]; `project` (an id) only
 //                                             decides whether new_run is possible with it
 //   chip_id {port}                         -> {chip}                                    resets the board
-//   boards                                 -> {ports: [{port, adapter, vid, pid}], probes: [{name, vid, pid}]}   what USB says, nothing is opened
+//   boards                                 -> {ports: [{port, adapter, vid, pid, serial, location, access: {ok, group, in_group}}],
+//                                              probes: [{name, vid, pid}]}   what USB and file permissions say, nothing is opened
+//   setup                                  -> {pio, python, git (paths or null), pkexec (bool), user}   what the app needs from the machine
+//   install_pio {}                         -> {pio}   python -m venv ~/.platformio/penv + pip install platformio; streams `build` events
+//   grant_access {port}                    -> {ok_now, relogin}   one pkexec password prompt: an ACL on the port and the device's group
 //   projects                               -> [Project + run_count + last_run]
 //   project_add {source, dir?|url?|elf?, name?}   source "folder" (a PlatformIO project of the user's, trusted), "git" (a clone of
 //                                          https://github.com/owner/repo, NOT trusted yet, streams `build` events), "none" (only a
@@ -34,7 +38,7 @@
 //   snapshot {core?, window_s, at_ms?}     -> {tree, stats}   {"tree": null} before the first frame
 //   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees}
 //
-// new_run, remove_agent, project_add and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
+// new_run, remove_agent, project_add, install_pio, grant_access and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
 
 #include <filesystem>
 #include <istream>
