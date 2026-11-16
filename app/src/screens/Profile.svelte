@@ -234,9 +234,9 @@
   .card { display: flex; flex-direction: column; gap: 8px; padding: 20px; text-align: left; border: 1.5px solid var(--line); border-radius: 16px; background: var(--panel); }
   .card:not(:disabled):hover { border-color: var(--accent); box-shadow: 0 6px 24px #ff5a1f22; }
   .card b { font-size: 17px; }
-  .card.off { opacity: 0.55; cursor: default; }
+  .card.off { opacity: 0.75; cursor: default; }
   .text { font-size: 13px; }
-  .why { font-size: 12.5px; color: var(--danger); }
+  .why { font-size: 12.5px; color: var(--danger); margin-top: 4px; }
   .soon { align-self: flex-start; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
   .error { color: var(--danger); }
 </style>

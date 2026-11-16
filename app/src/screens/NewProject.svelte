@@ -130,6 +130,7 @@
   .name { display: flex; align-items: center; gap: 10px; font-size: 13px; }
   .name input { font: inherit; }
   .small { font-size: 12px; margin: 8px 0 0; }
+  .small + .line { margin-top: 12px; }
   .error { color: var(--danger); margin: 0; }
   code { font-family: var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 </style>
