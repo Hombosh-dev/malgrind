@@ -1,11 +1,14 @@
 // Port access self-check: reading permissions, and that the privileged command can only carry plain names.
 #include "access.hpp"
+#include "process.hpp"
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <grp.h>
+#include <iterator>
 #include <unistd.h>
 
 using namespace malgrind::host;
@@ -54,6 +57,55 @@ void refuses_anything_that_is_not_a_plain_name() {
         assert(!grant_access_command(p, bad, "me", "dialout") && bad);
 }
 
+// The script is what runs as root, so it is run here: a fake pkexec just executes its arguments, and fake setfacl and usermod
+// log what they were given and fail on demand (FAKE_FAIL=setfacl,usermod).
+struct Tools {
+    fs::path root = fs::canonical(fs::temp_directory_path()) / "malgrind_access_tools";
+    fs::path bin = root / "bin", log = root / "log";
+    Tools() {
+        fs::remove_all(root);
+        fs::create_directories(bin);
+        write("pkexec", "exec \"$@\"\n");
+        for (const char* tool : {"setfacl", "usermod"})
+            write(tool, std::string("echo \"") + tool + " $*\" >> \"$FAKE_LOG\"\ncase \",$FAKE_FAIL,\" in *," + tool + ",*) exit 1;; esac\nexit 0\n");
+        setenv("PATH", (bin.string() + ":/usr/bin:/bin").c_str(), 1);
+        setenv("FAKE_LOG", log.c_str(), 1);
+    }
+    ~Tools() { fs::remove_all(root); }
+    void write(const char* name, const std::string& body) const {
+        std::ofstream(bin / name) << "#!/bin/sh\n" << body;
+        fs::permissions(bin / name, fs::perms::owner_all);
+    }
+    // runs the real command for these values; returns its exit code
+    int run(const char* group, const char* fail = "") const {
+        setenv("FAKE_FAIL", fail, 1);
+        fs::remove(log);
+        const auto inv = grant_access_command(bin / "pkexec", "/dev/ttyUSB0", "partum", group);
+        assert(inv);
+        return malgrind::host::run_lines(inv->argv, inv->env, [](std::string_view) {});
+    }
+    [[nodiscard]] std::string calls() const {
+        std::ifstream in(log);
+        return {std::istreambuf_iterator<char>(in), {}};
+    }
+};
+
+bool has(const std::string& s, std::string_view part) { return s.find(part) != std::string::npos; }
+
+void the_script_does_what_it_says() {
+    Tools t;
+    // both fixes, with user, port and group in the places the script reads them
+    assert(t.run("dialout") == 0);
+    assert(has(t.calls(), "setfacl -m u:partum:rw /dev/ttyUSB0") && has(t.calls(), "usermod -aG dialout partum"));
+    // a device that belongs to root: no group helps, only the ACL is set
+    assert(t.run("root") == 0 && has(t.calls(), "setfacl") && !has(t.calls(), "usermod"));
+    // either fix is enough: one failing does not fail the call, both failing does
+    assert(t.run("dialout", "setfacl") == 0 && has(t.calls(), "usermod -aG dialout partum"));
+    assert(t.run("dialout", "usermod") == 0 && has(t.calls(), "setfacl"));
+    assert(t.run("dialout", "setfacl,usermod") != 0);
+    assert(t.run("root", "setfacl") != 0); // root's device and no ACL: nothing was done
+}
+
 void manual_commands_name_the_fix() {
     const auto text = manual_commands("/dev/ttyUSB0", "partum", "dialout");
     assert(text.find("sudo setfacl -m u:partum:rw /dev/ttyUSB0") != std::string::npos);
@@ -66,6 +118,7 @@ int main() {
     reads_permissions();
     the_privileged_command_carries_names_only();
     refuses_anything_that_is_not_a_plain_name();
+    the_script_does_what_it_says();
     manual_commands_name_the_fix();
     std::puts("access ok");
 }

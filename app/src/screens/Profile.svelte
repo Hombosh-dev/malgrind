@@ -77,7 +77,12 @@
     tile.grantError = '';
     try {
       const result = await sidecar.call<{ ok_now: boolean; relogin: boolean }>('grant_access', { port: tile.port });
-      notice = result.relogin ? 'Access works now. Log out and in once so it stays after the board is replugged.' : '';
+      // ok_now false: only the group part worked (no `setfacl`), and a group applies from the next login
+      notice = !result.ok_now
+        ? `You were added to the group "${tile.access.group}". Log out and in, then press Rescan.`
+        : result.relogin
+          ? 'Access works now. Log out and in once so it stays after the board is replugged.'
+          : '';
       await scan();
     } catch (e) {
       tile.grantError = String(e instanceof Error ? e.message : e);

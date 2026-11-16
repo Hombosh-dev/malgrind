@@ -27,8 +27,10 @@ struct Fake {
 echo "python $*" >> "$FAKE_LOG"
 case "$2" in
 venv)
+  # like Ubuntu without python3-venv: the interpreter is copied, then the missing ensurepip stops it (so there is no pip)
+  mkdir -p "$3/bin" && cp "$0" "$3/bin/python"
   [ "$FAKE_FAIL" = venv ] && { echo "The virtual environment was not created successfully because ensurepip is not available." >&2; exit 1; }
-  mkdir -p "$3/bin" && cp "$0" "$3/bin/python" ;;
+  touch "$3/bin/pip" ;;
 pip)
   [ "$FAKE_FAIL" = pip ] && { echo "ERROR: connection failed" >&2; exit 1; }
   [ "$FAKE_FAIL" = nopio ] && exit 0
@@ -70,6 +72,20 @@ void a_missing_venv_module_says_what_to_install() {
         threw = contains(e.what(), "python3-venv");
     }
     assert(threw && contains(lines, "ensurepip")); // the raw output was shown too
+    // the half-made environment is gone, so after `apt install python3-venv` a second click installs (a stale one made pip fail forever)
+    assert(!fs::exists(fake.home / ".platformio/penv"));
+    unsetenv("FAKE_FAIL");
+    install_pio(fake.python, fake.home, [](std::string_view) {});
+    assert(fs::exists(fake.home / ".platformio/penv/bin/pio"));
+}
+
+void a_broken_environment_from_an_older_try_is_rebuilt() {
+    Fake fake;
+    fs::create_directories(fake.home / ".platformio/penv/bin");
+    std::ofstream(fake.home / ".platformio/penv/bin/python") << "#!/bin/sh\n"; // an interpreter, but no pip
+    assert(install_pio_steps(fake.python, fake.home).size() == 2); // so the venv step runs again
+    std::ofstream(fake.home / ".platformio/penv/bin/pip") << "";
+    assert(install_pio_steps(fake.python, fake.home).size() == 1); // a working one is reused
 }
 
 void a_network_failure_is_named() {
@@ -107,6 +123,7 @@ void no_python_means_no_python() {
 int main() {
     installs_into_the_place_find_pio_looks();
     a_missing_venv_module_says_what_to_install();
+    a_broken_environment_from_an_older_try_is_rebuilt();
     a_network_failure_is_named();
     success_without_pio_is_not_success();
     no_python_means_no_python();
