@@ -115,6 +115,7 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 |---|---|
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
 | Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done; the app was driven on a real USB port and a real GitHub clone worked; drag and drop not exercised |
+| Run settings before every run (environment, sampling rate, ELF, extra arguments/flags, editable commands), project names | done; verified on the dev board through the engine (rate 500 gave 1000 samples/s, the default gave 1993) and in the app (Attach, rename, edit and reset commands); the *Flash this board* button was not clicked |
 | Flash backup before the agent, restore on remove | done, verified on the ESP32-D0WD-V3 dev board: backup, agent flash and live data, restore, `esptool verify_flash` matched |
 | Setup from the app: install PlatformIO, grant USB port access (`pkexec`), tell two boards apart, confirm before flashing | done; PlatformIO install ran for real in a clean home, the root script was tested with fake tools; the real `pkexec` prompt and a denied port were not tried (needs another machine) |
 | Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |
