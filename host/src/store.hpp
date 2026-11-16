@@ -7,6 +7,7 @@
 // Replaying a run means feeding frames.mlg to the same FrameReader and Aggregator a live run uses.
 
 #include "malgrind/target_info.hpp"
+#include "settings.hpp"
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -33,6 +34,7 @@ struct RunMeta {
     double cpu_mhz = 0;
     std::uint64_t duration_ms = 0;
     bool has_elf = false;
+    std::optional<RunSettings> settings{}; // what the run was made with; absent for runs made before settings existed
 };
 
 void to_json(nlohmann::json& j, const RunMeta& m); // arch as its name, or null

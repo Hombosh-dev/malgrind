@@ -5,9 +5,15 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sdkconfig.h"
 
+// The rate comes from the sdkconfig (Kconfig.projbuild next to this file), which malgrind sets from the run settings.
 #ifndef MALGRIND_RATE_HZ
+#ifdef CONFIG_MALGRIND_RATE_HZ
+#define MALGRIND_RATE_HZ CONFIG_MALGRIND_RATE_HZ
+#else
 #define MALGRIND_RATE_HZ 997 // prime: no aliasing with the RTOS tick
+#endif
 #endif
 
 // Lets the host tell a flash image holding this agent from the user's own firmware (host/src/backup.hpp, kAgentMarker):

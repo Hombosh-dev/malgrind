@@ -54,6 +54,12 @@ A **project** is what you profile. Its source code is optional, so a board whose
   - **Build & flash**: builds your project with the agent and flashes it, then shows the live flamegraph.
   - **Debug probe**: profile without touching the firmware; greyed, *in development*.
   A card that is not possible says what is missing (for example "this project has no source code").
+- **Run settings, before every run.** Choosing Attach or Build & flash opens a panel with what malgrind detected, all of it editable:
+  the **project name** and **run name**, the PlatformIO **environment**, the **sampling rate** (default 997 Hz per core), the
+  **firmware ELF** (function names), **extra pio arguments** and **extra build flags** (`-D…`). Under *Advanced* are the two exact
+  commands (build, then upload after the backup); typing in one replaces the detected line (no shell is used: the line is split into
+  words and run as it is, with the agent's environment kept). The panel starts from what the project used last time, *Reset to
+  detected* brings the detected values back, and each run keeps the settings it was made with (the **Settings** button of a run).
 
   ![board tile and method cards](docs/app-profile.png)
 - **Safe flash.** The first time the agent goes onto a board, malgrind reads the board's whole flash into
@@ -109,6 +115,7 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 |---|---|
 | Linux app (`.deb`), start screen, history, New run, attach, remove agent | done, verified on an ESP32-D0WD-V3 board |
 | Projects (folder, GitHub, no code), board tiles, methods, trust for cloned projects | done; the app was driven on a real USB port and a real GitHub clone worked; drag and drop not exercised |
+| Run settings before every run (environment, sampling rate, ELF, extra arguments/flags, editable commands), project names | done; verified on the dev board through the engine (rate 500 gave 1000 samples/s, the default gave 1993) and in the app (Attach, rename, edit and reset commands); the *Flash this board* button was not clicked |
 | Flash backup before the agent, restore on remove | done, verified on the ESP32-D0WD-V3 dev board: backup, agent flash and live data, restore, `esptool verify_flash` matched |
 | Setup from the app: install PlatformIO, grant USB port access (`pkexec`), tell two boards apart, confirm before flashing | done; PlatformIO install ran for real in a clean home, the root script was tested with fake tools; the real `pkexec` prompt and a denied port were not tried (needs another machine) |
 | Profiling without flashing (JTAG/SWD probe through OpenOCD): Cortex-M first, then ESP32 | planned, see the design (section 5a) |

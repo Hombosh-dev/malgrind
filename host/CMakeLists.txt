@@ -7,7 +7,7 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/access.cpp src/setup.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/access.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
@@ -76,6 +76,12 @@ add_executable(test_setup tests/test_setup.cpp)
 target_link_libraries(test_setup PRIVATE malgrind_host)
 target_compile_options(test_setup PRIVATE -UNDEBUG)
 add_test(NAME setup COMMAND test_setup)
+
+add_executable(test_settings tests/test_settings.cpp)
+target_link_libraries(test_settings PRIVATE malgrind_host)
+target_compile_options(test_settings PRIVATE -UNDEBUG)
+target_compile_definitions(test_settings PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+add_test(NAME settings COMMAND test_settings)
 
 add_executable(test_flash tests/test_flash.cpp)
 target_link_libraries(test_flash PRIVATE malgrind_host)

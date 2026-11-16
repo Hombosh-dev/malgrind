@@ -82,6 +82,10 @@
   <TopBar title="New project" onBack={onCancel} backLabel="Cancel" />
 
   <section>
+    <label class="name">Project name <span class="muted">(optional: taken from the folder or repository)</span>
+      <input bind:value={name} placeholder={link && repo ? repo : 'My firmware'} aria-label="Project name" />
+    </label>
+
     <div class="drop" class:hover={hovering} role="group" aria-label="Open a project">
       <div class="big">Drop a project folder here</div>
       <p class="muted">a PlatformIO project (ESP-IDF), or a firmware <code>.elf</code> for a board without code</p>
@@ -107,10 +111,6 @@
       </div>
     </div>
 
-    <label class="name">Name <span class="muted">(optional)</span>
-      <input bind:value={name} placeholder={link && repo ? repo : 'taken from the folder'} aria-label="Project name" />
-    </label>
-
     {#if working && lines.length > 0}<BuildLog {lines} busy={working} />{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
   </section>
@@ -127,8 +127,9 @@
   .line { display: flex; gap: 10px; align-items: center; }
   input { flex: 1; min-width: 0; padding: 8px 10px; font: 13px var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
   input:focus { outline: none; border-color: var(--accent); }
-  .name { display: flex; align-items: center; gap: 10px; font-size: 13px; }
-  .name input { font: inherit; }
+  .name { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
+  .name .muted { font-weight: 400; font-size: 12px; }
+  .name input { flex: none; font: 15px var(--font); padding: 10px 12px; }
   .small { font-size: 12px; margin: 8px 0 0; }
   .small + .line { margin-top: 12px; }
   .error { color: var(--danger); margin: 0; }

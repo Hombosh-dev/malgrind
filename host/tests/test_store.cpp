@@ -37,6 +37,20 @@ void create_list_roundtrip() {
     assert(m.ncores == 2 && m.cpu_mhz == 160 && !m.has_elf && m.started.size() == 20 && m.started.back() == 'Z');
     const auto chunks = store.chunks(m.id);
     assert(chunks.size() == 2 && chunks[0].t_ms == 0 && chunks[0].bytes == kAb && chunks[1].t_ms == 250 && chunks[1].bytes == kCd);
+    assert(!m.settings); // a run made without the settings panel (or before it existed) has none
+    fs::remove_all(root);
+}
+
+void settings_are_kept_with_the_run() {
+    const auto root = fresh_root("malgrind_store_s");
+    std::string id;
+    {
+        RunStore store(root);
+        id = store.create({.name = "tuned", .settings = RunSettings{.env = "b", .extra_args = "-v", .rate_hz = 500, .elf = "/x.elf"}}).meta().id;
+    }
+    RunStore again(root);
+    const auto m = again.get(id);
+    assert(m && m->settings && m->settings->env == "b" && m->settings->rate_hz == 500 && m->settings->extra_args == "-v" && m->settings->elf == "/x.elf");
     fs::remove_all(root);
 }
 
@@ -110,6 +124,7 @@ void elf_copy() {
 
 int main() {
     create_list_roundtrip();
+    settings_are_kept_with_the_run();
     unfinished_run_has_duration();
     truncated_tail_ignored();
     update_and_remove();

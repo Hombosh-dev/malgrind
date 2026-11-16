@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -151,26 +153,68 @@ std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
     return out;
 }
 
-Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
-                       const fs::path& agent_dir, bool upload) {
-    const fs::path agent_files = absolute_path(agent_dir) / "agent/esp32";
-    const auto agent_keys = slurp(agent_files / "sdkconfig.agent");
-    if (agent_keys.empty() || !fs::exists(agent_files / "inject.py"))
-        throw std::runtime_error("the agent files are missing from " + agent_files.string());
+namespace {
 
-    const fs::path out = project.dir / ".pio/malgrind";
-    fs::create_directories(out);
-    const fs::path sdkconfig = out / ("sdkconfig." + env);
+struct AgentPaths {
+    fs::path files, out, sdkconfig;
+};
+
+AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir) {
+    AgentPaths p;
+    p.files = absolute_path(agent_dir) / "agent/esp32";
+    if (!fs::exists(p.files / "sdkconfig.agent") || !fs::exists(p.files / "inject.py"))
+        throw std::runtime_error("the agent files are missing from " + p.files.string());
+    p.out = project.dir / ".pio/malgrind";
+    p.sdkconfig = p.out / ("sdkconfig." + env);
+    return p;
+}
+
+// The part of the agent that CMake reads once, when it configures. PlatformIO does not configure again when a component's
+// CMakeLists or Kconfig changes, so a build directory made with other files would keep the old configuration (a Kconfig option
+// that a newer malgrind added would simply not exist). The stamp says which files the directory was made with.
+std::string agent_stamp(const fs::path& files) {
+    std::uint64_t hash = 1469598103934665603ull; // FNV-1a
+    for (const char* name : {"malgrind/CMakeLists.txt", "malgrind/Kconfig.projbuild", "inject.py", "sdkconfig.agent"})
+        for (const unsigned char c : slurp(files / name)) hash = (hash ^ c) * 1099511628211ull;
+    return std::format("{:016x}", hash);
+}
+
+} // namespace
+
+void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir, unsigned rate_hz) {
+    const auto p = agent_paths(project, env, agent_dir);
+    auto agent_keys = slurp(p.files / "sdkconfig.agent");
+    if (agent_keys.empty()) throw std::runtime_error("the agent files are missing from " + p.files.string());
+    fs::create_directories(p.out);
+    if (const auto stamp = agent_stamp(p.files); slurp(p.out / "agent.stamp") != stamp) {
+        std::error_code ec;
+        fs::remove_all(p.out / "build", ec); // configured with other agent files: start clean (a few minutes, once per malgrind update)
+        std::ofstream(p.out / "agent.stamp", std::ios::trunc) << stamp;
+    }
+    // The rate travels as an sdkconfig key, not as an environment variable: IDF reconfigures and recompiles the agent when
+    // the sdkconfig changes, but would keep a stale object when only an environment variable does.
+    if (rate_hz != 0) agent_keys += "\nCONFIG_MALGRIND_RATE_HZ=" + std::to_string(rate_hz) + "\n";
+    fs::create_directories(p.out);
     // an unchanged file keeps its time stamp: a newer sdkconfig makes ESP-IDF reconfigure and rebuild everything
     const auto merged = merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
-    if (slurp(sdkconfig) != merged) std::ofstream(sdkconfig, std::ios::trunc) << merged;
-    if (!fs::exists(sdkconfig)) throw std::runtime_error("cannot write " + sdkconfig.string());
+    if (slurp(p.sdkconfig) != merged) std::ofstream(p.sdkconfig, std::ios::trunc) << merged;
+    if (!fs::exists(p.sdkconfig)) throw std::runtime_error("cannot write " + p.sdkconfig.string());
+}
 
+Invocation agent_command(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
+                         const fs::path& agent_dir, bool upload) {
+    const auto p = agent_paths(project, env, agent_dir);
     std::vector<std::string> argv{pio.string(), "run", "-d", project.dir.string(), "-e", env};
     if (upload) argv.insert(argv.end(), {"-t", "upload", "--upload-port", port});
     return {std::move(argv),
-            {"PLATFORMIO_BUILD_DIR=" + (out / "build").string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent_files / "inject.py").string(),
-             "MALGRIND_AGENT_DIR=" + agent_files.string(), "MALGRIND_SDKCONFIG=" + sdkconfig.string()}};
+            {"PLATFORMIO_BUILD_DIR=" + (p.out / "build").string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (p.files / "inject.py").string(),
+             "MALGRIND_AGENT_DIR=" + p.files.string(), "MALGRIND_SDKCONFIG=" + p.sdkconfig.string()}};
+}
+
+Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
+                       const fs::path& agent_dir, bool upload) {
+    write_agent_sdkconfig(project, env, agent_dir);
+    return agent_command(pio, project, env, port, agent_dir, upload);
 }
 
 Invocation plain_flash(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port) {

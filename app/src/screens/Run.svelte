@@ -41,6 +41,21 @@
   let name = $state(untrack(() => run.name));
   let notes = $state(untrack(() => run.notes));
   let showNotes = $state(false);
+  let showSettings = $state(false); // what the run was made with (only runs made with the settings panel have it)
+  // the fields the user set; an empty one was the detected value
+  const used = $derived(
+    run.settings
+      ? ([
+          ['Environment', run.settings.env],
+          ['Sampling rate', run.settings.rate_hz ? `${run.settings.rate_hz} Hz` : ''],
+          ['Firmware ELF', run.settings.elf],
+          ['Extra arguments', run.settings.extra_args],
+          ['Build flags', run.settings.build_flags],
+          ['Build command', run.settings.build_command],
+          ['Upload command', run.settings.upload_command]
+        ].filter(([, value]) => value) as [string, string][])
+      : []
+  );
   let error = $state('');
   let busy = false;
 
@@ -117,10 +132,17 @@
     {#if stats.arch}
       <span class="stat muted">{stats.samples_per_s ?? '–'} samples/s · {stats.dropped ?? 0} dropped · {stats.overhead_pct == null ? '–' : stats.overhead_pct + ' %'} overhead</span>
     {/if}
+    {#if run.settings}<button class="btn ghost small" onclick={() => (showSettings = !showSettings)}>Settings</button>{/if}
     <button class="btn ghost small" onclick={() => (showNotes = !showNotes)}>Notes</button>
     <button class="btn small" onclick={close}>{live ? 'Stop' : 'Close'}</button>
   </header>
 
+  {#if showSettings && run.settings}
+    <div class="used" aria-label="Settings of this run">
+      {#if used.length === 0}<span class="muted">Made with everything as detected.</span>{/if}
+      {#each used as [label, value]}<span><span class="muted">{label}</span> <code>{value}</code></span>{/each}
+    </div>
+  {/if}
   {#if showNotes}
     <textarea class="notes" bind:value={notes} onblur={() => save({ notes })} placeholder="Notes about this run…"></textarea>
   {/if}
@@ -175,6 +197,8 @@
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live); box-shadow: 0 0 8px var(--live); }
   .spacer { flex: 1; }
   .stat { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .used { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 16px; font-size: 12.5px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .used code { font-family: var(--mono); font-size: 12px; }
   .notes { margin: 0; width: 100%; min-height: 70px; padding: 10px 16px; font: inherit; color: var(--fg); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); resize: vertical; }
   .notice { display: flex; justify-content: space-between; padding: 8px 16px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-bottom: 1px solid var(--line); font-size: 13px; }
   .notice.bad { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); }

@@ -119,12 +119,14 @@ Board identify(const fs::path& pio, const fs::path& home, const std::string& por
 
 } // namespace
 
-void flash_agent(const Prepared& p, const fs::path& home, const fs::path& agent_dir, const fs::path& backup_dir, const LineFn& on_line) {
+void flash_agent(const Prepared& p, const fs::path& home, const fs::path& backup_dir, const Invocation& build, const Invocation& upload,
+                 const LineFn& on_line) {
     const auto probe = probe_port(p.port);
     if (probe.busy) throw open_error(p.port, EBUSY);
+    if (probe.denied) throw open_error(p.port, EACCES);
     // Build first: a compile error then costs the board neither a reset nor a backup, and PlatformIO has downloaded esptool
     // by the time the backup needs it (on a fresh machine it is not there before the first build).
-    run_pio(agent_build(p.pio, p.project, p.env, p.port, agent_dir, false), on_line);
+    run_pio(build, on_line);
     if (probe.agent) {
         on_line("the board already runs malgrind: no backup taken now");
     } else {
@@ -151,7 +153,7 @@ void flash_agent(const Prepared& p, const fs::path& home, const fs::path& agent_
             on_line("backup saved: " + done.string());
         }
     }
-    run_pio(agent_build(p.pio, p.project, p.env, p.port, agent_dir, true), on_line); // nothing left to compile
+    run_pio(upload, on_line); // nothing left to compile
 }
 
 void restore_flash(const fs::path& pio, const fs::path& home, const std::string& port, const fs::path& backup_dir, const LineFn& on_line) {

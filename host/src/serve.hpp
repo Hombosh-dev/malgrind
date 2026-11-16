@@ -25,9 +25,15 @@
 //   project_update {project, name?, env?, trusted?} -> Project
 //   project_remove {project}               -> {}      the record and a clone; never the user's own folder
 //   project {dir}                          -> {dir, envs, default_env}
-//   new_run {project, port, name, env?}    -> {run}   backs up the board's flash (first time), builds with the agent, uploads,
-//                                             then records live; streams `build` events
-//   attach {port, name, project?, elf?}    -> {run}   records a board that already runs the agent; `project` is an id
+//   run_plan {project, port, mode?, settings?} -> {detected, last, envs, elf_hint, detected_commands, commands, error}   what the settings
+//                                             panel shows before a run: the detected RunSettings, the project's last-used ones, and the
+//                                             exact commands (+ environment) for `settings` as they are now. A field that does not hold up
+//                                             is `error` (commands null), not a failed request. mode "attach": only `detected` and `last`.
+//   new_run {project, port, name, settings?} -> {run}   backs up the board's flash (first time), builds with the agent, uploads,
+//                                             then records live; streams `build` events. `settings` = RunSettings {env, extra_args,
+//                                             build_flags, rate_hz, elf, build_command, upload_command}, all checked first; stored with
+//                                             the run and as the project's last_settings
+//   attach {port, name, project?, elf?, settings?} -> {run}   records a board that already runs the agent; `project` is an id
 //   stop                                   -> {}      ends the live run, or closes an opened one
 //   remove_agent {port, how?, project?}    -> {}      how "restore" (default): writes the board's backup back; "rebuild": builds
 //                                             the project (an id) without the agent and uploads it

@@ -54,6 +54,7 @@ std::optional<RunMeta> read_meta(const fs::path& dir) {
     m.cpu_mhz = j.value("cpu_mhz", 0.0);
     m.duration_ms = j.value("duration_ms", std::uint64_t{0});
     m.has_elf = fs::exists(dir / "firmware.elf");
+    if (j.contains("settings") && j["settings"].is_object()) m.settings = j["settings"].get<RunSettings>();
     return m;
 }
 
@@ -79,6 +80,7 @@ void to_json(nlohmann::json& j, const RunMeta& m) {
          {"started", m.started}, {"ncores", m.ncores},   {"cpu_mhz", m.cpu_mhz},
          {"duration_ms", m.duration_ms}, {"has_elf", m.has_elf}};
     j["arch"] = m.arch ? nlohmann::json(std::string(arch_name(*m.arch))) : nlohmann::json(nullptr);
+    j["settings"] = m.settings ? nlohmann::json(*m.settings) : nlohmann::json(nullptr);
 }
 
 RunWriter::RunWriter(fs::path dir, RunMeta meta)

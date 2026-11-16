@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import BuildLog from '../components/BuildLog.svelte';
+  import RunSettingsPanel from '../components/RunSettings.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
   import { accessProblem, boardDetail } from '../lib/boards';
-  import { defaultRunName } from '../lib/format';
   import { boardTitle } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
-  import type { BoardPort, BoardsInfo, Method, Probe, ProjectMeta, RunMeta } from '../lib/types';
+  import type { BoardPort, BoardsInfo, Method, Probe, ProjectMeta, RunMeta, RunSettings } from '../lib/types';
 
   interface Props {
     sidecar: Sidecar;
@@ -35,7 +35,8 @@
   let building = $state(false);
   let error = $state('');
   let notice = $state('');
-  let confirming = $state(false); // asking "flash this board?" before Build & flash
+  let setting = $state<'attach' | 'new_run' | null>(null); // the settings panel is open for this way of looking at the board
+  let projectTitle = $state(untrack(() => project.name)); // follows a rename made in the panel
   let scanId = 0;
 
   // One tile per serial port, shown at once; each port is then listened to in turn (2 s, read-only) to see whether the agent runs.
@@ -118,36 +119,33 @@
   function choose(tile: Tile) {
     chosen = tile;
     error = '';
-    confirming = false;
+    setting = null;
     step = 'mode';
   }
 
-  // Attach only listens, so it starts at once. Build & flash replaces what is on the board: it asks first, naming the board,
-  // so a click on the wrong one of two plugged-in boards is caught.
-  async function pick(method: Method) {
-    if (!chosen || !method.available) return;
+  // Both ways open the settings panel first (shown before every run, so a run can be made differently from the last one). It
+  // names the board, which catches a click on the wrong one of two plugged-in boards; Build & flash replaces what is on the board.
+  function pick(method: Method) {
+    if (!chosen || !method.available || (method.id !== 'attach' && method.id !== 'new_run')) return;
     error = '';
-    if (method.id === 'new_run') {
-      confirming = true;
-      return;
-    }
-    if (method.id !== 'attach') return;
-    try {
-      const { run } = await sidecar.call<{ run: RunMeta }>('attach', { port: chosen.port, name: defaultRunName(project.name), project: project.id });
-      onRun(run, true);
-    } catch (e) {
-      error = String(e instanceof Error ? e.message : e);
-    }
+    setting = method.id;
   }
 
-  async function flash() {
-    if (!chosen) return;
-    confirming = false;
-    step = 'process';
-    building = true;
-    lines = [];
+  async function start(args: { projectName: string; runName: string; settings: RunSettings }) {
+    if (!chosen || !setting) return;
+    const mode = setting;
+    error = '';
     try {
-      const { run } = await sidecar.call<{ run: RunMeta }>('new_run', { project: project.id, port: chosen.port, name: defaultRunName(project.name) });
+      if (args.projectName !== projectTitle) {
+        await sidecar.call('project_update', { project: project.id, name: args.projectName });
+        projectTitle = args.projectName;
+      }
+      if (mode === 'new_run') {
+        step = 'process';
+        building = true;
+        lines = [];
+      }
+      const { run } = await sidecar.call<{ run: RunMeta }>(mode, { project: project.id, port: chosen.port, name: args.runName, settings: args.settings });
       onRun(run, true);
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
@@ -158,7 +156,7 @@
 
 <div class="page">
   <TopBar
-    title={project.name}
+    title={projectTitle}
     onBack={step === 'board' ? onBack : step === 'mode' ? () => (step = 'board') : building ? undefined : () => (step = 'mode')}
     backLabel="Back"
   >
@@ -239,7 +237,7 @@
       <p class="muted">{[boardTitle(chosen), chosen.port, boardDetail(chosen)].filter(Boolean).join(' · ')}</p>
       <div class="cards">
         {#each methods as m (m.id)}
-          <button class="card" class:off={!m.available} class:picked={m.id === 'new_run' && confirming} disabled={!m.available} onclick={() => pick(m)}>
+          <button class="card" class:off={!m.available} class:picked={m.id === setting} disabled={!m.available} onclick={() => pick(m)}>
             <b>{labels[m.id].title}</b>
             {#if m.id === 'no_flash'}<span class="soon">in development</span>{/if}
             <span class="muted text">{labels[m.id].text}</span>
@@ -247,17 +245,18 @@
           </button>
         {/each}
       </div>
-      {#if confirming}
-        <div class="confirm" role="alertdialog" aria-label="Confirm flashing">
-          <p>
-            Flash the agent onto <b>{boardTitle(chosen)}</b> · <code>{chosen.port}</code>{#if boardDetail(chosen)} · {boardDetail(chosen)}{/if}?
-            The firmware that is on it now is saved first and can be restored.
-          </p>
-          <div class="actions">
-            <button class="btn" onclick={flash}>Flash this board</button>
-            <button class="btn ghost" onclick={() => (confirming = false)}>Cancel</button>
-          </div>
-        </div>
+      {#if setting}
+        {#key setting}
+          <RunSettingsPanel
+            {sidecar}
+            {project}
+            port={chosen.port}
+            mode={setting}
+            boardLine={[boardTitle(chosen), chosen.port, boardDetail(chosen)].filter(Boolean).join(' · ')}
+            onStart={start}
+            onCancel={() => (setting = null)}
+          />
+        {/key}
       {/if}
       {#if error}<p class="error" role="alert">{error}</p>{/if}
     </section>
@@ -315,8 +314,4 @@
   .small { font-size: 12px; }
   .notice { margin: 14px 0 0; padding: 10px 14px; border: 1px solid var(--live); border-radius: 8px; color: var(--live); }
   .card.picked { border-color: var(--accent); }
-  .confirm { margin-top: 18px; padding: 16px 18px; border: 1.5px solid var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
-  .confirm p { margin: 0 0 12px; }
-  .actions { display: flex; gap: 10px; }
-  code { font-family: var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; }
 </style>
