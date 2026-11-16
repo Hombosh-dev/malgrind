@@ -60,11 +60,12 @@ struct Invocation {
     std::vector<std::string> env; // "NAME=value", added to the environment of the child
 };
 
-// Builds the project with the agent and uploads it. `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
+// Builds the project with the agent and uploads it (`upload` false: only builds; a second call with true then uploads
+// without compiling again). `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
 // Writes <project>/.pio/malgrind/sdkconfig.<env>; nothing else of the project is touched. Throws std::runtime_error
 // if the agent files are missing.
 [[nodiscard]] Invocation agent_build(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,
-                                     const std::string& port, const std::filesystem::path& agent_dir);
+                                     const std::string& port, const std::filesystem::path& agent_dir, bool upload = true);
 
 // The user's own firmware, built and uploaded as PlatformIO would: this is what "remove agent" runs.
 [[nodiscard]] Invocation plain_flash(const std::filesystem::path& pio, const ProjectInfo& project, const std::string& env,

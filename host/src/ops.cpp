@@ -118,8 +118,11 @@ Board identify(const fs::path& pio, const fs::path& home, const std::string& por
 void flash_agent(const Prepared& p, const fs::path& home, const fs::path& agent_dir, const fs::path& backup_dir, const LineFn& on_line) {
     const auto probe = probe_port(p.port);
     if (probe.busy) throw open_error(p.port, EBUSY);
+    // Build first: a compile error then costs the board neither a reset nor a backup, and PlatformIO has downloaded esptool
+    // by the time the backup needs it (on a fresh machine it is not there before the first build).
+    run_pio(agent_build(p.pio, p.project, p.env, p.port, agent_dir, false), on_line);
     if (probe.agent) {
-        on_line("the board already runs malgrind: keeping the backup taken before");
+        on_line("the board already runs malgrind: no backup taken now");
     } else {
         on_line("backing up the board's flash first (this takes a minute)...");
         const auto board = identify(p.pio, home, p.port, on_line);
@@ -144,13 +147,13 @@ void flash_agent(const Prepared& p, const fs::path& home, const fs::path& agent_
             on_line("backup saved: " + done.string());
         }
     }
-    run_pio(agent_build(p.pio, p.project, p.env, p.port, agent_dir), on_line);
+    run_pio(agent_build(p.pio, p.project, p.env, p.port, agent_dir, true), on_line); // nothing left to compile
 }
 
 void restore_flash(const fs::path& pio, const fs::path& home, const std::string& port, const fs::path& backup_dir, const LineFn& on_line) {
     const auto board = identify(pio, home, port, on_line);
     const auto file = latest_backup(backup_dir, board.mac);
-    if (!file) throw std::runtime_error(std::format("no backup of this board (MAC {}): malgrind takes one the first time it flashes the agent", board.mac));
+    if (!file) throw std::runtime_error(std::format("no backup of this board (MAC {}): malgrind takes one when it first flashes the agent onto a board. If you have this firmware's project, use \"Rebuild my project instead\"", board.mac));
     on_line("restoring " + file->string());
     run_esptool(pio, home, port, {"write_flash", "--flash_mode", "keep", "--flash_freq", "keep", "--flash_size", "keep", "0", file->string()}, on_line);
 }

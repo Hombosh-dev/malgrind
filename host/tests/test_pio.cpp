@@ -5,12 +5,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <thread>
 
 using namespace malgrind::host;
 namespace fs = std::filesystem;
@@ -148,6 +150,21 @@ void agent_build_leaves_the_project_alone() {
     fs::remove_all(dir.parent_path());
 }
 
+void build_without_upload_and_stable_sdkconfig() {
+    const auto dir = fresh("malgrind_pio_noup");
+    write(dir / "platformio.ini", "[env:esp32dev]\n");
+    const ProjectInfo project{dir, {"esp32dev"}, "esp32dev"};
+    const auto build = agent_build("/opt/pio", project, "esp32dev", "/dev/ttyUSB0", MALGRIND_SOURCE_DIR, false);
+    assert(!any_contains(build.argv, "upload") && !any_contains(build.argv, "ttyUSB0") && any_contains(build.argv, "esp32dev"));
+    const auto sdkconfig = dir / ".pio/malgrind/sdkconfig.esp32dev";
+    const auto stamp = fs::last_write_time(sdkconfig);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto upload = agent_build("/opt/pio", project, "esp32dev", "/dev/ttyUSB0", MALGRIND_SOURCE_DIR);
+    assert(any_contains(upload.argv, "upload") && build.env == upload.env);
+    assert(fs::last_write_time(sdkconfig) == stamp); // same content: not rewritten, so IDF does not rebuild everything
+    fs::remove_all(dir);
+}
+
 void plain_flash_has_no_agent() {
     const ProjectInfo project{"/tmp/proj", {"esp32dev"}, "esp32dev"};
     const auto inv = plain_flash("/opt/pio", project, "esp32dev", "/dev/ttyUSB0");
@@ -196,6 +213,7 @@ int main() {
     relative_paths_become_absolute();
     merge_keeps_user_keys();
     agent_build_leaves_the_project_alone();
+    build_without_upload_and_stable_sdkconfig();
     plain_flash_has_no_agent();
     find_pio_fallback();
     run_lines_streams();

@@ -151,7 +151,7 @@ std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
 }
 
 Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
-                       const fs::path& agent_dir) {
+                       const fs::path& agent_dir, bool upload) {
     const fs::path agent_files = absolute_path(agent_dir) / "agent/esp32";
     const auto agent_keys = slurp(agent_files / "sdkconfig.agent");
     if (agent_keys.empty() || !fs::exists(agent_files / "inject.py"))
@@ -160,10 +160,14 @@ Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const st
     const fs::path out = project.dir / ".pio/malgrind";
     fs::create_directories(out);
     const fs::path sdkconfig = out / ("sdkconfig." + env);
-    std::ofstream(sdkconfig, std::ios::trunc) << merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
+    // an unchanged file keeps its time stamp: a newer sdkconfig makes ESP-IDF reconfigure and rebuild everything
+    const auto merged = merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
+    if (slurp(sdkconfig) != merged) std::ofstream(sdkconfig, std::ios::trunc) << merged;
     if (!fs::exists(sdkconfig)) throw std::runtime_error("cannot write " + sdkconfig.string());
 
-    return {{pio.string(), "run", "-d", project.dir.string(), "-e", env, "-t", "upload", "--upload-port", port},
+    std::vector<std::string> argv{pio.string(), "run", "-d", project.dir.string(), "-e", env};
+    if (upload) argv.insert(argv.end(), {"-t", "upload", "--upload-port", port});
+    return {std::move(argv),
             {"PLATFORMIO_BUILD_DIR=" + (out / "build").string(), "PLATFORMIO_EXTRA_SCRIPTS=pre:" + (agent_files / "inject.py").string(),
              "MALGRIND_AGENT_DIR=" + agent_files.string(), "MALGRIND_SDKCONFIG=" + sdkconfig.string()}};
 }

@@ -69,6 +69,7 @@ The same package installs `malgrind-cli`, the engine with a localhost live page,
 malgrind-cli run      # builds your project with the agent, flashes it, opens the live flamegraph in the browser
 malgrind-cli attach   # the board already runs the agent: just show it
 malgrind-cli detect   # which chip is connected?
+malgrind-cli restore  # write back the backup `run` took before it flashed the agent
 ```
 
 Everything is detected, each guess is printed. Runs go into the same history the app shows.

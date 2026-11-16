@@ -152,8 +152,8 @@ flash (progress and log) → Live. If `pio` is missing, one screen with the inst
 (newest matching, as today; else the user picks one; else raw addresses with a notice). Stopping sends *stop*; the
 board keeps running.
 
-**Remove agent.** Dialog: "Restores the firmware that was on the board before malgrind first flashed it (a backup taken
-then). Live profiling stops." **Restore & flash** writes the backup of this board (section 5a), so the original comes
+**Remove agent.** Dialog: "Restores the firmware that was on the board before malgrind last flashed the agent (a backup
+taken then). Live profiling stops." **Restore & flash** writes the backup of this board (section 5a), so the original comes
 back byte for byte even if its source is unknown. **Rebuild my project instead** runs a plain `pio run -t upload` of the
 user's project (no overrides). Reachable from the sidebar footer (red) and from the board card on the start screen.
 

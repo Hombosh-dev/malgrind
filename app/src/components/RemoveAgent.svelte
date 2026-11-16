@@ -56,7 +56,7 @@
       {#if rebuild}
         Rebuilds your project without malgrind and flashes it. Your code is not touched. Live profiling stops.
       {:else}
-        Restores the firmware that was on the board before malgrind first flashed it (a backup taken then), byte for byte. Live
+        Restores the firmware that was on the board before malgrind last flashed the agent (a backup taken then), byte for byte. Live
         profiling stops.
       {/if}
     </p>

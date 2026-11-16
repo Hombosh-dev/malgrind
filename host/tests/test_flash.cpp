@@ -38,10 +38,14 @@ struct Fake {
     fs::path root = fs::canonical(fs::temp_directory_path()) / "malgrind_flash";
     fs::path home = root / "home", backups = root / "backups", project = root / "proj", log = root / "log";
 
-    Fake() {
+    // `esptool_installed` false: like a fresh machine, where PlatformIO downloads esptool only when it first builds
+    explicit Fake(bool esptool_installed = true) {
         fs::remove_all(root);
-        write(home / ".platformio/penv/bin/pio", "#!/bin/sh\necho \"pio $* build=$PLATFORMIO_BUILD_DIR\" >> \"$FAKE_LOG\"\n", true);
-        write(home / ".platformio/packages/tool-esptoolpy/esptool.py", R"(echo "esptool $*" >> "$FAKE_LOG"
+        write(home / ".platformio/penv/bin/pio", R"(#!/bin/sh
+echo "pio $* build=$PLATFORMIO_BUILD_DIR" >> "$FAKE_LOG"
+mkdir -p "$FAKE_ESPTOOL_DIR" && cp "$FAKE_ESPTOOL_SRC" "$FAKE_ESPTOOL_DIR/esptool.py"
+)", true);
+        write(root / "esptool.src", R"(echo "esptool $*" >> "$FAKE_LOG"
 shift 4   # --port P --baud B
 echo "Chip is ESP32-D0WD-V3"
 echo "MAC: 24:0a:c4:AA:bb:0c"
@@ -54,6 +58,12 @@ read_flash)
 esac
 exit 0
 )");
+        setenv("FAKE_ESPTOOL_SRC", (root / "esptool.src").c_str(), 1);
+        setenv("FAKE_ESPTOOL_DIR", (home / ".platformio/packages/tool-esptoolpy").c_str(), 1);
+        if (esptool_installed) {
+            fs::create_directories(home / ".platformio/packages/tool-esptoolpy");
+            fs::copy_file(root / "esptool.src", home / ".platformio/packages/tool-esptoolpy/esptool.py");
+        }
         write(project / "platformio.ini", "[env:esp32dev]\nplatform = espressif32\nframework = espidf\n");
         setenv("FAKE_LOG", log.c_str(), 1);
         setenv("PATH", "/usr/bin:/bin", 1); // not the real pio
@@ -84,8 +94,10 @@ void backs_up_then_flashes() {
     flash_agent(fake.prepared(board.slave), fake.home, MALGRIND_SOURCE_DIR, fake.backups, lines.fn());
     const auto calls = fake.calls();
     assert(contains(calls, "flash_id") && contains(calls, "read_flash 0 4194304"));
-    assert(calls.find("read_flash") < calls.find("pio run")); // the backup comes first
-    assert(contains(calls, "-t upload") && contains(calls, "build=" + (fake.project / ".pio/malgrind/build").string())); // then the agent build
+    // build, then backup, then upload: a compile error costs the board nothing
+    const auto build = calls.find("pio run"), backup = calls.find("read_flash"), upload = calls.find("-t upload");
+    assert(build < backup && backup < upload && calls.substr(build, backup - build).find("-t upload") == std::string::npos);
+    assert(contains(calls, "build=" + (fake.project / ".pio/malgrind/build").string())); // the agent build, not the user's
     assert(fake.backup_count() == 1 && contains(lines.text, "backup saved"));
     for (const auto& e : fs::directory_iterator(fake.backups / kMac)) assert(e.path().extension() == ".bin" && fs::file_size(e.path()) == 4194304);
 }
@@ -102,7 +114,7 @@ void no_backup_no_flash() {
         threw = contains(e.what(), "esptool failed") && contains(e.what(), "timeout");
     }
     assert(threw);
-    assert(!contains(fake.calls(), "pio run")); // nothing was flashed
+    assert(contains(fake.calls(), "pio run") && !contains(fake.calls(), "-t upload")); // built, but nothing was flashed
     assert(fake.backup_count() == 0 && fs::is_empty(fake.backups / kMac)); // and no half-written file stays
 }
 
@@ -116,7 +128,7 @@ void board_with_agent_is_not_backed_up_again() {
     Lines lines;
     flash_agent(fake.prepared(board.slave), fake.home, MALGRIND_SOURCE_DIR, fake.backups, lines.fn());
     agent.join();
-    assert(!contains(fake.calls(), "esptool") && contains(fake.calls(), "pio run") && !fs::exists(fake.backups));
+    assert(!contains(fake.calls(), "esptool") && contains(fake.calls(), "-t upload") && !fs::exists(fake.backups));
     assert(contains(lines.text, "already runs malgrind"));
 }
 
@@ -126,7 +138,30 @@ void our_own_image_is_not_kept() {
     setenv("FAKE_AGENT_IMAGE", "1", 1);
     Lines lines;
     flash_agent(fake.prepared(board.slave), fake.home, MALGRIND_SOURCE_DIR, fake.backups, lines.fn());
-    assert(fake.backup_count() == 0 && contains(fake.calls(), "pio run") && contains(lines.text, "no backup kept"));
+    assert(fake.backup_count() == 0 && contains(fake.calls(), "-t upload") && contains(lines.text, "no backup kept"));
+}
+
+void fresh_machine_has_no_esptool_until_the_first_build() {
+    Fake fake(false);
+    Pty board;
+    Lines lines;
+    assert(!fs::exists(fake.home / ".platformio/packages/tool-esptoolpy"));
+    flash_agent(fake.prepared(board.slave), fake.home, MALGRIND_SOURCE_DIR, fake.backups, lines.fn());
+    assert(fake.backup_count() == 1 && contains(fake.calls(), "-t upload")); // the build brought esptool, the backup could run
+}
+
+void a_compile_error_stops_before_the_board_is_touched() {
+    Fake fake;
+    Pty board;
+    write(fake.home / ".platformio/penv/bin/pio", "#!/bin/sh\necho \"pio $*\" >> \"$FAKE_LOG\"\necho 'error: boom' >&2\nexit 1\n", true);
+    Lines lines;
+    bool threw = false;
+    try {
+        flash_agent(fake.prepared(board.slave), fake.home, MALGRIND_SOURCE_DIR, fake.backups, lines.fn());
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    assert(threw && !contains(fake.calls(), "esptool") && !fs::exists(fake.backups) && contains(lines.text, "boom"));
 }
 
 void restore_writes_the_backup_back() {
@@ -138,7 +173,7 @@ void restore_writes_the_backup_back() {
     try {
         restore_flash(*find_pio(fake.home), fake.home, board.slave, fake.backups, lines.fn());
     } catch (const std::exception& e) {
-        threw = contains(e.what(), "no backup") && contains(e.what(), kMac);
+        threw = contains(e.what(), "no backup") && contains(e.what(), kMac) && contains(e.what(), "Rebuild my project");
     }
     assert(threw && !contains(fake.calls(), "write_flash"));
 
@@ -177,6 +212,8 @@ int main() {
     no_backup_no_flash();
     board_with_agent_is_not_backed_up_again();
     our_own_image_is_not_kept();
+    fresh_machine_has_no_esptool_until_the_first_build();
+    a_compile_error_stops_before_the_board_is_touched();
     restore_writes_the_backup_back();
     methods_say_what_is_missing();
     std::puts("flash ok");
