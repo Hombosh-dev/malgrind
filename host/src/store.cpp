@@ -44,6 +44,7 @@ std::optional<RunMeta> read_meta(const fs::path& dir) {
     m.notes = j.value("notes", "");
     m.project = j.value("project", "");
     m.env = j.value("env", "");
+    m.project_id = j.value("project_id", "");
     m.port = j.value("port", "");
     m.started = j.value("started", "");
     if (j.contains("arch") && j["arch"].is_string())
@@ -74,6 +75,7 @@ std::string utc_now(const char* fmt) {
 void to_json(nlohmann::json& j, const RunMeta& m) {
     j = {{"id", m.id},           {"name", m.name},       {"notes", m.notes},
          {"project", m.project}, {"env", m.env},         {"port", m.port},
+         {"project_id", m.project_id},
          {"started", m.started}, {"ncores", m.ncores},   {"cpu_mhz", m.cpu_mhz},
          {"duration_ms", m.duration_ms}, {"has_elf", m.has_elf}};
     j["arch"] = m.arch ? nlohmann::json(std::string(arch_name(*m.arch))) : nlohmann::json(nullptr);

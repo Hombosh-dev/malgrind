@@ -18,12 +18,6 @@ namespace malgrind::host {
 
 namespace {
 
-std::optional<fs::path> find_in_path(const std::string& name) {
-    std::istringstream dirs(std::getenv("PATH") ? std::getenv("PATH") : "");
-    for (std::string dir; std::getline(dirs, dir, ':');)
-        if (std::error_code ec; !dir.empty() && fs::exists(fs::path(dir) / name, ec)) return fs::path(dir) / name;
-    return std::nullopt;
-}
 
 // pio runs with `-d <project>`, which changes its directory: every path handed to it must be absolute.
 fs::path absolute_path(const fs::path& path) {
@@ -59,6 +53,13 @@ std::optional<std::string> sdkconfig_key(const std::string& line) {
 }
 
 } // namespace
+
+std::optional<fs::path> find_in_path(const std::string& name) {
+    std::istringstream dirs(std::getenv("PATH") ? std::getenv("PATH") : "");
+    for (std::string dir; std::getline(dirs, dir, ':');)
+        if (std::error_code ec; !dir.empty() && fs::exists(fs::path(dir) / name, ec)) return fs::path(dir) / name;
+    return std::nullopt;
+}
 
 std::optional<fs::path> find_pio(const fs::path& home) {
     if (auto found = find_in_path("pio")) return found;

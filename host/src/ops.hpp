@@ -2,6 +2,7 @@
 
 // Steps that both front-ends need: the app's JSON protocol (serve.cpp) and the terminal commands (cli.cpp).
 
+#include "github.hpp"
 #include "malgrind/target_info.hpp"
 #include "pio.hpp"
 #include "source.hpp"
@@ -52,6 +53,11 @@ struct ProbeResult {
 [[nodiscard]] ProbeResult probe_port(const std::string& port);
 
 using LineFn = std::function<void(std::string_view line)>;
+
+// Shallow-clones the repository into `dest` (which must not exist; git's progress goes to on_line) and returns the PlatformIO
+// project inside it: the clone itself or its only firmware/* folder. Never asks for a password (a private repository
+// fails at once). On any failure `dest` is removed again and this throws.
+[[nodiscard]] std::filesystem::path clone_project(const GithubRepo& repo, const std::filesystem::path& dest, const LineFn& on_line);
 
 // Builds the project with the agent and flashes it, after backing up what is on the board (see backup.hpp): nothing is
 // flashed unless the backup succeeded. A board that already runs the agent is not backed up again (its flash holds our

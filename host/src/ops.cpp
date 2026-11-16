@@ -1,6 +1,7 @@
 #include "ops.hpp"
 
 #include "backup.hpp"
+#include "discover.hpp"
 #include "process.hpp"
 #include "store.hpp"
 #include "wire.hpp"
@@ -156,6 +157,27 @@ void restore_flash(const fs::path& pio, const fs::path& home, const std::string&
     if (!file) throw std::runtime_error(std::format("no backup of this board (MAC {}): malgrind takes one when it first flashes the agent onto a board. If you have this firmware's project, use \"Rebuild my project instead\"", board.mac));
     on_line("restoring " + file->string());
     run_esptool(pio, home, port, {"write_flash", "--flash_mode", "keep", "--flash_freq", "keep", "--flash_size", "keep", "0", file->string()}, on_line);
+}
+
+fs::path clone_project(const GithubRepo& repo, const fs::path& dest, const LineFn& on_line) {
+    const auto git = find_in_path("git");
+    if (!git) throw std::runtime_error("git was not found: install git to open a project from GitHub");
+    // protocol.allow=never then https only: whatever the link says, git speaks nothing but https here
+    const int code = run_lines({git->string(), "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "clone", "--depth", "1",
+                                "--progress", "--", repo.url, dest.string()},
+                               {"GIT_TERMINAL_PROMPT=0"}, on_line);
+    std::error_code ec;
+    if (code != 0) {
+        fs::remove_all(dest, ec);
+        throw std::runtime_error(std::format("git clone failed (exit code {}): is the repository public and the link right?", code));
+    }
+    std::string why;
+    const auto project = find_project(dest, why);
+    if (!project) {
+        fs::remove_all(dest, ec);
+        throw std::runtime_error("no platformio.ini found in this repository (looked in its root and in firmware/*)");
+    }
+    return *project;
 }
 
 std::vector<Method> methods(const ProbeResult& probe, bool have_pio, const std::string& project_problem) {

@@ -36,6 +36,9 @@
 
 namespace malgrind::host {
 
+// The first `name` found in the directories of $PATH.
+[[nodiscard]] std::optional<std::filesystem::path> find_in_path(const std::string& name);
+
 // The `pio` executable: PATH first, then PlatformIO's own installs under `home` (a GUI app often lacks the shell's PATH).
 [[nodiscard]] std::optional<std::filesystem::path> find_pio(const std::filesystem::path& home);
 
