@@ -1,5 +1,7 @@
 #include "devices.hpp"
 
+#include "families/family.hpp"
+
 #include <cstddef>
 #include <utility>
 
@@ -59,18 +61,30 @@ std::string probe_device_id(const DebugProbe& probe) {
     return sanitize_id("probe-" + probe.vid + "-" + probe.pid + "-" + probe.name);
 }
 
+std::string family_hint_for_usb(std::string_view vid, std::string_view pid) {
+    for (const Family* f : all_families()) {
+        if (auto hint = f->family_hint_for_usb(vid, pid); !hint.empty()) return hint;
+    }
+    return {};
+}
+
+Device device_from_port(os::PortInfo port) {
+    Device d;
+    d.id = device_id(port);
+    d.kind = DeviceKind::Serial;
+    d.path = std::move(port.path);
+    d.name = std::move(port.name);
+    d.title = port.usb ? adapter_name(*port.usb) : (!port.description.empty() ? port.description : d.name);
+    if (port.usb) d.family_hint = family_hint_for_usb(port.usb->vid, port.usb->pid);
+    d.usb = std::move(port.usb);
+    d.access = os::port_access(d.path);
+    return d;
+}
+
 std::vector<Device> list_devices() {
     std::vector<Device> out;
     for (auto& p : os::list_serial_ports()) {
-        Device d;
-        d.id = device_id(p);
-        d.kind = DeviceKind::Serial;
-        d.path = p.path;
-        d.name = p.name;
-        d.title = p.usb ? adapter_name(*p.usb) : (!p.description.empty() ? p.description : p.name);
-        d.usb = std::move(p.usb);
-        d.access = os::port_access(d.path);
-        out.push_back(std::move(d));
+        out.push_back(device_from_port(std::move(p)));
     }
     for (auto& probe : find_probes()) {
         Device d;

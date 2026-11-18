@@ -121,15 +121,32 @@ void platformio_core_dirs_checks() {
     os::set_env("PLATFORMIO_CORE_DIR", os::to_utf8(home / "." / ".platformio"));
     assert(os::platformio_core_dirs(home).size() == 1);
 
-    // find_addr2line searches <core>/packages/toolchain-*/bin across platformio_core_dirs
+    // find_addr2line searches PATH first (Host) and <core>/packages/toolchain-*/bin across platformio_core_dirs via families
     {
-        ScopedEnv save_path("PATH", os::to_utf8(root / "nonexistent"));
+        const auto bin_dir = root / "bin";
+        fs::create_directories(bin_dir);
+        const auto host_tool = bin_dir / os::exe_name("addr2line");
+        std::ofstream(host_tool) << "";
+        const auto arm_tool = bin_dir / os::exe_name("arm-none-eabi-addr2line");
+        std::ofstream(arm_tool) << "";
+        const auto generic_riscv = bin_dir / os::exe_name("riscv-none-elf-addr2line");
+        std::ofstream(generic_riscv) << "";
+        ScopedEnv save_path("PATH", os::to_utf8(bin_dir));
         os::set_env("PLATFORMIO_CORE_DIR", os::to_utf8(custom));
         const auto tool_dir = custom / "packages/toolchain-xtensa-esp32/bin";
         fs::create_directories(tool_dir);
         const auto tool = tool_dir / os::exe_name("xtensa-esp32-elf-addr2line");
         std::ofstream(tool) << "";
+        const auto riscv_dir = custom / "packages/toolchain-riscv32-esp/bin";
+        fs::create_directories(riscv_dir);
+        const auto riscv_tool = riscv_dir / os::exe_name("riscv32-esp-elf-addr2line");
+        std::ofstream(riscv_tool) << "";
+
+        assert(find_addr2line(malgrind::Arch::Host) == host_tool);
         assert(find_addr2line(malgrind::Arch::Xtensa) == tool);
+        assert(find_addr2line(malgrind::Arch::RiscV32) == riscv_tool);
+        // No registered family handles ArmV7M yet, so find_addr2line returns empty instead of hardcoding a tool name.
+        assert(find_addr2line(malgrind::Arch::ArmV7M).empty());
     }
 
     fs::remove_all(root);

@@ -1,6 +1,4 @@
 {
   "os": [],
-  "chip": [
-    "host/src/symbols.cpp"
-  ]
+  "chip": []
 }

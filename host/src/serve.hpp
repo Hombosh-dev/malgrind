@@ -8,10 +8,10 @@
 //
 // Commands (arguments -> result). Commands taking `device` accept a device id, path, or short name (`port` is accepted as a fallback alias):
 //   hello                                  -> {version, data_dir, pio}
-//   devices                                -> {devices: [{id, kind, path, name, title, usb, access, family_hint}], can_grant_access}
+//   devices                                -> {devices: [{id, kind, path, name, title, usb, access, family_hint, family_hint_name}], can_grant_access}
 //                                             kind = "serial"|"probe"; usb = {vid, pid, serial, location, product, manufacturer}|null;
 //                                             access = {ok, group, in_group, fixable}; nothing is opened
-//   probe {device, project?}               -> {busy, agent, denied, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
+//   probe {device, project?}               -> {busy, agent, denied, family, family_name, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
 //                                             methods = [{id: attach|new_run|no_flash, available, why}]; `project` (an id) only
 //                                             decides whether new_run is possible with it
 //   chip_id {device}                       -> {chip}                                    resets the board

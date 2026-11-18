@@ -243,7 +243,34 @@ void probe_finds_agent() {
     const auto probe = h.call({{"cmd", "probe"}, {"device", dev.id}});
     assert(probe["ok"] && probe["result"]["busy"] == false && probe["result"]["agent"] == true);
     assert(probe["result"]["arch"] == "xtensa" && probe["result"]["ncores"] == 2);
+    assert(probe["result"]["family"] == "esp32" && probe["result"]["family_name"] == "ESP32 (ESP-IDF)");
     assert(h.runs().empty()); // probing records nothing
+
+    // Silent board reports empty family.
+    h.set_source_factory([](const Device&, unsigned) {
+        auto src = std::make_unique<MemorySource>();
+        src->close();
+        return std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(std::move(src));
+    });
+    const auto silent = h.call({{"cmd", "probe"}, {"device", dev.id}});
+    assert(silent["ok"] && silent["result"]["agent"] == false);
+    assert(silent["result"]["family"] == "" && silent["result"]["family_name"] == "");
+
+    // Agent frame whose arch has no registered family also reports empty family.
+    h.set_source_factory([](const Device&, unsigned) {
+        auto src = std::make_unique<MemorySource>();
+        malgrind::Profiler p({"arm", malgrind::Arch::ArmV7M, 72'000'000, 1}, 997);
+        const std::uint32_t pc = 0x08001000;
+        p.record(0, &pc, 1, 10);
+        std::vector<std::uint8_t> bytes;
+        p.flush([&](const std::uint8_t* d, std::size_t n) { bytes.insert(bytes.end(), d, d + n); }, [] {}, 100);
+        src->push(bytes);
+        src->close();
+        return std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(std::move(src));
+    });
+    const auto unhandled = h.call({{"cmd", "probe"}, {"device", dev.id}});
+    assert(unhandled["ok"] && unhandled["result"]["agent"] == true && unhandled["result"]["arch"] == "armv7m");
+    assert(unhandled["result"]["family"] == "" && unhandled["result"]["family_name"] == "");
 }
 
 const json& method(const json& result, const char* id) {
@@ -259,6 +286,11 @@ void fake_pio(Harness& h) {
     const auto pio = os::venv_bin(h.root / "home/.platformio/penv") / os::exe_name("pio");
     fs::create_directories(pio.parent_path());
     fs::copy_file(MALGRIND_FAKE_TOOL, pio, fs::copy_options::overwrite_existing);
+}
+
+json add_project(Harness& h, json args) {
+    args["cmd"] = "project_add";
+    return h.call(std::move(args));
 }
 
 void probe_lists_methods() {
@@ -290,6 +322,22 @@ void probe_lists_methods() {
     assert(silent["ok"] && silent["result"]["agent"] == false);
     assert(method(silent["result"], "attach")["available"] == false);
     assert(method(silent["result"], "new_run")["available"] == false && contains(method(silent["result"], "new_run")["why"], "arduino"));
+
+    // No project and no family_hint / agent -> no matching target family for new_run.
+    const auto no_proj = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}});
+    assert(no_proj["ok"] && method(no_proj["result"], "new_run")["available"] == false);
+    assert(contains(method(no_proj["result"], "new_run")["why"], "family"));
+
+    // A non-ESP32 project reports the family mismatch from family_for_project.
+    const auto stm_proj = h.root / "stm32";
+    fs::create_directories(stm_proj);
+    std::ofstream(stm_proj / "platformio.ini") << "[env:a]\nplatform = ststm32\nframework = stm32cube\n";
+    const auto added_stm = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(stm_proj)}});
+    assert(added_stm["ok"]);
+    const std::string stm_id = added_stm["result"]["id"];
+    const auto stm_probe = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}, {"project", stm_id}});
+    assert(stm_probe["ok"] && method(stm_probe["result"], "new_run")["available"] == false);
+    assert(contains(method(stm_probe["result"], "new_run")["why"], "ststm32"));
 }
 
 void remove_agent_restores_or_says_why_not() {
@@ -301,11 +349,6 @@ void remove_agent_restores_or_says_why_not() {
     const auto none = h.call({{"cmd", "remove_agent"}, {"device", dev.id}});
     assert(none["ok"] == false && contains(none["error"], "PlatformIO"));
     assert(h.call({{"cmd", "remove_agent"}, {"device", dev.id}, {"how", "rebuild"}})["ok"] == false); // needs dir, env
-}
-
-json add_project(Harness& h, json args) {
-    args["cmd"] = "project_add";
-    return h.call(std::move(args));
 }
 
 void projects_of_every_kind() {
@@ -436,7 +479,7 @@ void devices_tell_access_and_reject_unknown() {
     assert(devs["ok"] && devs["result"]["devices"].is_array() && devs["result"]["can_grant_access"].is_boolean());
     for (const auto& d : devs["result"]["devices"]) {
         assert(d.contains("id") && d.contains("kind") && d.contains("path") && d.contains("name") && d.contains("title"));
-        assert(d.contains("usb") && d.contains("family_hint"));
+        assert(d.contains("usb") && d.contains("family_hint") && d.contains("family_hint_name"));
         assert(d["access"]["ok"].is_boolean() && d["access"].contains("group") && d["access"]["in_group"].is_boolean() &&
                d["access"]["fixable"].is_boolean());
     }
@@ -519,7 +562,7 @@ void devices_shape_and_id_resolution() {
     assert(s["usb"]["serial"] == "0001" && s["usb"]["location"] == "1-3");
     assert(s["access"]["ok"] == false && s["access"]["group"] == "dialout" &&
            s["access"]["in_group"] == false && s["access"]["fixable"] == true);
-    assert(s["family_hint"] == "esp32");
+    assert(s["family_hint"] == "esp32" && s["family_hint_name"] == "ESP32 (ESP-IDF)");
 
     const auto& p = list[1];
     assert(p["id"] == "probe-0483-374b-sn-st01");
@@ -530,7 +573,7 @@ void devices_shape_and_id_resolution() {
     assert(p["usb"].is_null());
     assert(p["access"]["ok"] == true && p["access"]["group"] == "" &&
            p["access"]["in_group"] == false && p["access"]["fixable"] == false);
-    assert(p["family_hint"] == "");
+    assert(p["family_hint"] == "" && p["family_hint_name"] == "");
 
     // Unknown device returns exact message.
     const auto missing = h.call({{"cmd", "attach"}, {"device", "usb-missing"}, {"name", "x"}});

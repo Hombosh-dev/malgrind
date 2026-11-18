@@ -58,6 +58,8 @@ export interface Probe {
   busy: boolean;
   agent: boolean;
   denied: boolean; // this user may not open the port (not in its group)
+  family: string;
+  family_name: string;
   arch?: string;
   ncores?: number;
   cpu_mhz?: number;
@@ -107,6 +109,7 @@ export interface Device {
   usb: UsbInfo | null;
   access: { ok: boolean; group: string; in_group: boolean; fixable: boolean };
   family_hint: string;
+  family_hint_name: string;
 }
 
 // What the machine has for the jobs the app needs done (`setup`): paths, or null when missing.

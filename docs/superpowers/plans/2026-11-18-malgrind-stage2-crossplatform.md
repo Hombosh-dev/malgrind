@@ -715,7 +715,7 @@ public:
   Reasons never name ESP32 unless the family does.
 - `probe` result adds `family` (from the frame's `Arch` via `family_for_arch`, else `""`).
 - UI: Profile shows `family_hint` as "probably <name>" (muted), and the probed family as fact.
-- [ ] Commit `feat: family hints from USB ids; methods and symbols per family`.
+- [x] Commit `feat: family hints from USB ids; methods and symbols per family`.
 
 **P3 done when:** `"chip": []` in the allow list; `grep -ri esp32 host/src --exclude-dir=families` finds only comments
 that explain history (the checker forbids even those, so: nothing).

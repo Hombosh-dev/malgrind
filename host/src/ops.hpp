@@ -95,7 +95,9 @@ struct Method {
     bool available = false;
     std::string why; // empty when available
 };
-// `project_problem`: why the chosen project cannot be used with the agent (empty: fine, or none chosen yet).
-[[nodiscard]] std::vector<Method> methods(const ProbeResult& probe, bool have_pio, const std::string& project_problem);
+// `family`: target family for building the agent (nullable); `project_problem`: why the chosen project cannot be used
+// with the agent (empty: fine, or none chosen yet).
+[[nodiscard]] std::vector<Method> methods(const ProbeResult& probe, const Family* family, bool have_pio,
+                                          const std::string& project_problem);
 
 } // namespace malgrind::host

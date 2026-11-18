@@ -284,14 +284,26 @@ fs::path clone_project(const GithubRepo& repo, const fs::path& dest, const LineF
     return *project;
 }
 
-std::vector<Method> methods(const ProbeResult& probe, bool have_pio, const std::string& project_problem) {
+std::vector<Method> methods(const ProbeResult& probe, const Family* family, bool have_pio,
+                            const std::string& project_problem) {
     const std::string busy = "the port is busy: another program is using it";
     const std::string denied = "no permission to use this port: choose Grant access on the board's tile";
     const std::string blocked = probe.denied ? denied : probe.busy ? busy : "";
     std::vector<Method> list;
     list.push_back({"attach", probe.agent, probe.agent ? "" : !blocked.empty() ? blocked : "no malgrind agent is running on this board"});
-    const bool can_build = have_pio && project_problem.empty() && blocked.empty();
-    list.push_back({"new_run", can_build, can_build ? "" : !blocked.empty() ? blocked : !have_pio ? kNoPio : project_problem});
+    std::string new_run_why;
+    if (!blocked.empty()) {
+        new_run_why = blocked;
+    } else if (!project_problem.empty()) {
+        new_run_why = project_problem;
+    } else if (!family) {
+        new_run_why = "no matching target family";
+    } else if (!family->caps().agent) {
+        new_run_why = std::string(family->name()) + ": building with the agent is not supported";
+    } else if (!have_pio) {
+        new_run_why = kNoPio;
+    }
+    list.push_back({"new_run", new_run_why.empty(), new_run_why});
     list.push_back({"no_flash", false, "needs a debug probe (JTAG/SWD); not supported yet"});
     return list;
 }

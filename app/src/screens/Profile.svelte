@@ -4,7 +4,7 @@
   import RunSettingsPanel from '../components/RunSettings.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import { accessProblem, boardDetail } from '../lib/boards';
+  import { accessProblem, boardDetail, boardFamily } from '../lib/boards';
   import type { Sidecar } from '../lib/sidecar';
   import type { Device, DevicesInfo, Method, Probe, ProjectMeta, RunMeta, RunSettings } from '../lib/types';
 
@@ -194,11 +194,13 @@
 
       <div class="tiles">
         {#each tiles as tile (tile.id)}
+          {@const family = boardFamily(tile, tile.probe)}
           <div class="tile" class:wait={tile.access.ok && !tile.probe && !tile.error} class:denied={!tile.access.ok}>
             <button class="pick" disabled={!tile.probe || !tile.access.ok} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} on ${tile.name}`}>
               <span class="chipicon" aria-hidden="true">▦</span>
               <span class="t">
                 <b>{tile.title || tile.name}</b>
+                {#if family}<span class="family" class:muted={family.tentative}>{family.text}</span>{/if}
                 <span class="muted">{tile.name}</span>
                 {#if boardDetail(tile)}<span class="muted detail">{boardDetail(tile)}</span>{/if}
               </span>
@@ -298,6 +300,7 @@
   .chipicon { font-size: 34px; color: var(--accent); line-height: 1; }
   .t { display: flex; flex-direction: column; }
   .t b { font-size: 16px; }
+  .family { font-size: 12.5px; margin-top: 2px; }
   .status { font-size: 12.5px; color: var(--muted); }
   .good { color: var(--live); }
   .bad { color: var(--danger); }

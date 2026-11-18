@@ -109,6 +109,31 @@ void resolve_device_checks() {
     assert(!resolve_device(serial1.id, {serial1, serial1}));
 }
 
+void family_hint_checks() {
+    assert(family_hint_for_usb("303a", "1001") == "esp32");
+    assert(family_hint_for_usb("303a", "0002") == "esp32");
+
+    // Generic USB-UART bridges can sit in front of any MCU: never guess.
+    for (const auto& [vid, pid] : {std::pair{"1a86", "7523"}, std::pair{"1a86", "55d3"}, std::pair{"10c4", "ea60"},
+                                   std::pair{"0403", "6001"}, std::pair{"0403", "6010"}, std::pair{"067b", "2303"},
+                                   std::pair{"2e8a", "000a"}, std::pair{"", ""}}) {
+        assert(family_hint_for_usb(vid, pid).empty());
+    }
+
+    os::PortInfo native_usb{"/dev/ttyACM0", "ttyACM0", "", os::UsbInfo{"303a", "1001", "USB JTAG", "Espressif", "1", "1-2"}};
+    const Device esp_dev = device_from_port(native_usb);
+    assert(esp_dev.family_hint == "esp32");
+    assert(esp_dev.title == "Espressif USB-Serial/JTAG (built-in debug port)");
+
+    for (const auto& [vid, pid] : {std::pair{"10c4", "ea60"}, std::pair{"1a86", "7523"}, std::pair{"0403", "6001"}, std::pair{"067b", "2303"}}) {
+        os::PortInfo bridge{"/dev/ttyUSB0", "ttyUSB0", "", os::UsbInfo{vid, pid, "", "", "", "1-3"}};
+        assert(device_from_port(bridge).family_hint.empty());
+    }
+
+    os::PortInfo no_usb{"/dev/ttyS0", "ttyS0", "Serial port", std::nullopt};
+    assert(device_from_port(no_usb).family_hint.empty());
+}
+
 void list_devices_smoke_check() {
     const auto devs = list_devices();
     for (const auto& d : devs) {
@@ -132,6 +157,7 @@ int main() {
     device_id_checks();
     probe_device_id_checks();
     resolve_device_checks();
+    family_hint_checks();
     list_devices_smoke_check();
     std::puts("devices ok");
 }

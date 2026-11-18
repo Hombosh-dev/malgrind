@@ -1,5 +1,6 @@
 #include "symbols.hpp"
 
+#include "families/family.hpp"
 #include "os/paths.hpp"
 #include "os/process.hpp"
 #include "os/tools.hpp"
@@ -18,12 +19,8 @@ namespace {
 std::uint32_t lookup_addr(std::size_t index, std::uint32_t pc) { return index == 0 ? pc : pc - 1; }
 
 std::vector<std::string> tool_names(Arch arch) {
-    switch (arch) {
-        case Arch::Host: return {"addr2line"};
-        case Arch::Xtensa: return {"xtensa-esp32-elf-addr2line", "xtensa-esp32s3-elf-addr2line"};
-        case Arch::ArmV7M: return {"arm-none-eabi-addr2line"};
-        case Arch::RiscV32: return {"riscv32-esp-elf-addr2line", "riscv-none-elf-addr2line"};
-    }
+    if (arch == Arch::Host) return {"addr2line"};
+    if (const Family* family = family_for_arch(arch)) return family->addr2line_names(arch);
     return {};
 }
 

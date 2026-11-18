@@ -21,8 +21,12 @@ struct Device {
     std::string title;                 // "WCH CH340/CH343 USB-UART", "ST-Link"
     std::optional<os::UsbInfo> usb;
     os::PortAccess access;             // Serial only
-    std::string family_hint;           // filled in P3 (T3.3); "" = unknown
+    std::string family_hint;           // family id from USB VID/PID; "" = unknown
 };
+
+// First non-empty family hint for a USB VID/PID across registered families, or "".
+[[nodiscard]] std::string family_hint_for_usb(std::string_view vid, std::string_view pid);
+[[nodiscard]] Device device_from_port(os::PortInfo port);
 
 // Rules, in order:
 //   usb with serial    -> "usb-<vid>-<pid>-sn-<serial>"

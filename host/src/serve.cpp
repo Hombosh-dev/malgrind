@@ -208,24 +208,32 @@ private:
     json probe(const json& req) {
         const auto dev = resolve_serial(device_arg(req));
         const auto r = probe_device(dev, options_.open_source);
-        json result = {{"busy", r.busy}, {"agent", r.agent}, {"denied", r.denied}};
+        const Family* probed_family = r.agent ? family_for_arch(r.arch) : nullptr;
+        json result = {{"busy", r.busy},
+                       {"agent", r.agent},
+                       {"denied", r.denied},
+                       {"family", probed_family ? std::string(probed_family->id()) : ""},
+                       {"family_name", probed_family ? std::string(probed_family->name()) : ""}};
         if (r.agent) {
             result["arch"] = std::string(arch_name(r.arch));
             result["ncores"] = r.ncores;
             result["cpu_mhz"] = r.cpu_mhz;
         }
+        const Family* method_family =
+            probed_family ? probed_family : (!dev.family_hint.empty() ? family_by_id(dev.family_hint) : nullptr);
         std::string problem; // why the chosen project cannot be built with the agent; none chosen: no problem yet
         if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
             try {
                 const auto project = project_of(*id);
                 require_buildable(project);
-                (void)prepare_project(options_.home, project.dir, project.env, dev.path);
+                method_family = prepare_project(options_.home, project.dir, project.env, dev.path).family;
             } catch (const std::exception& e) {
+                method_family = nullptr;
                 problem = e.what();
             }
         }
         json list = json::array();
-        for (const auto& m : methods(r, find_pio(options_.home).has_value(), problem))
+        for (const auto& m : methods(r, method_family, find_pio(options_.home).has_value(), problem))
             list.push_back({{"id", m.id}, {"available", m.available}, {"why", m.why}});
         result["methods"] = std::move(list);
         return result;
@@ -419,6 +427,7 @@ private:
                        {"product", d.usb->product},
                        {"manufacturer", d.usb->manufacturer}};
             }
+            const Family* hinted = d.family_hint.empty() ? nullptr : family_by_id(d.family_hint);
             list.push_back({{"id", d.id},
                             {"kind", d.kind == DeviceKind::Probe ? "probe" : "serial"},
                             {"path", d.path},
@@ -430,7 +439,8 @@ private:
                               {"group", d.access.group},
                               {"in_group", d.access.in_group},
                               {"fixable", d.access.fixable}}},
-                            {"family_hint", d.family_hint}});
+                            {"family_hint", d.family_hint},
+                            {"family_hint_name", hinted ? std::string(hinted->name()) : ""}});
         }
         return {{"devices", std::move(list)}, {"can_grant_access", os::can_grant_access()}};
     }

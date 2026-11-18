@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accessProblem, boardDetail } from './boards';
+import { accessProblem, boardDetail, boardFamily } from './boards';
 import type { UsbInfo } from './types';
 
 const usb = (location: string, serial: string): UsbInfo => ({
@@ -30,5 +30,40 @@ describe('boardDetail', () => {
     expect(boardDetail({ name: 'usbserial-1430', usb: usb('', '') })).toBe('usbserial-1430');
     expect(boardDetail({ name: 'usbserial-1440', usb: null })).toBe('usbserial-1440');
     expect(boardDetail({ name: '', usb: null })).toBe('');
+  });
+});
+
+describe('boardFamily', () => {
+  it('returns null for generic bridges without a hint or probed family', () => {
+    expect(boardFamily({ family_hint: '', family_hint_name: '' }, null)).toBeNull();
+    expect(boardFamily({ family_hint: '', family_hint_name: '' }, { family: '', family_name: '' })).toBeNull();
+  });
+
+  it('marks a USB family hint as tentative before and after a non-agent probe', () => {
+    expect(boardFamily({ family_hint: 'acme', family_hint_name: 'Acme MCU' }, null)).toEqual({
+      text: 'probably Acme MCU',
+      tentative: true
+    });
+    expect(boardFamily({ family_hint: 'acme', family_hint_name: 'Acme MCU' }, { family: '', family_name: '' })).toEqual({
+      text: 'probably Acme MCU',
+      tentative: true
+    });
+    expect(boardFamily({ family_hint: 'acme', family_hint_name: '' }, null)).toEqual({
+      text: 'probably acme',
+      tentative: true
+    });
+  });
+
+  it('shows the probed family as fact even when a hint existed', () => {
+    expect(
+      boardFamily({ family_hint: 'acme', family_hint_name: 'Acme MCU' }, { family: 'acme', family_name: 'Acme MCU' })
+    ).toEqual({
+      text: 'Acme MCU',
+      tentative: false
+    });
+    expect(boardFamily({ family_hint: '', family_hint_name: '' }, { family: 'acme', family_name: '' })).toEqual({
+      text: 'acme',
+      tentative: false
+    });
   });
 });
