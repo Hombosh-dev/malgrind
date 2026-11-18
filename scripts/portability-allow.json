@@ -1,9 +1,6 @@
 {
   "os": [],
   "chip": [
-    "app/src/components/RunSettings.svelte",
-    "app/src/lib/types.ts",
-    "app/src/screens/Profile.svelte",
     "host/src/backup.hpp",
     "host/src/boards.cpp",
     "host/src/cli.cpp",
