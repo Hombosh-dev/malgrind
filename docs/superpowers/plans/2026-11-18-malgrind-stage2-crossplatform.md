@@ -801,7 +801,7 @@ resource path differs on Windows; it uses `resolveResource`, so probably no chan
 - Release matrix: add `{ os: windows-latest, bundle: nsis }`. Smoke test (bash on Windows runners): install silently to a
   temp dir with `/S /D=<dir>`, run `malgrind-cli.exe --version`, check `agent-src/agent/esp32/family.json` exists.
 - `SHA256SUMS` covers the `.exe` too.
-- [ ] Commit `release: Windows installer`.
+- [x] Commit `release: Windows installer`.
 
 ### T5.4 Manual verification checklists 🔌 (human)
 
