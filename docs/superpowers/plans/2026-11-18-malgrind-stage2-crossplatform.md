@@ -790,7 +790,7 @@ public: void push(std::span<const std::uint8_t>); void close(); std::vector<std:
 - Build with `cmake --build build-app --target malgrind-cli --config Release -j`.
 - Source binary: `build-app/host/malgrind-cli`, or `build-app/host/Release/malgrind-cli.exe` (multi-config generators);
   pick the one that exists. Destination: `binaries/malgrind-cli-<triple>` plus `.exe` on Windows.
-- [ ] Commit `build(app): sidecar script for Windows`.
+- [x] Commit `build(app): sidecar script for Windows`.
 
 ### T5.3 Windows bundle and release 🟡
 
