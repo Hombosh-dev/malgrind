@@ -91,8 +91,8 @@ std::optional<Options> parse(const std::vector<std::string>& args) {
 }
 
 // --device/--port if given, otherwise the only serial device found. Says why when it cannot decide.
-std::optional<Device> resolve_serial_device(const Options& o) {
-    const auto all = list_devices();
+std::optional<Device> resolve_serial_device(const Options& o, const ServeOptions& defaults) {
+    const auto all = defaults.devices ? defaults.devices() : list_devices();
     if (const auto ref = o.get("device"); !ref.empty()) {
         if (const auto dev = resolve_device(ref, all)) {
             if (dev->kind == DeviceKind::Serial) return *dev;
@@ -124,15 +124,15 @@ std::optional<Device> resolve_serial_device(const Options& o) {
     return std::nullopt;
 }
 
-int devices_command(const Options& o) {
+int devices_command(const Options& o, const ServeOptions& defaults) {
     const bool probe = !o.get("probe").empty();
-    for (const auto& d : list_devices()) {
+    for (const auto& d : (defaults.devices ? defaults.devices() : list_devices())) {
         std::cout << d.id << "  " << d.name << "  " << d.title;
         if (probe && d.kind == DeviceKind::Serial) {
             if (!d.access.ok) {
                 std::cout << "  [no permission]";
             } else {
-                const auto p = probe_port(d.path);
+                const auto p = probe_device(d, defaults.open_source);
                 if (p.agent) {
                     std::cout << "  [agent: " << arch_name(p.arch) << ", " << p.ncores << " cores]";
                 } else if (p.busy) {
@@ -187,7 +187,8 @@ std::string today() {
 }
 
 // Records `source` as a new run and shows it until Ctrl-C or the board stops sending.
-int watch(Source source, const Device& dev, const Options& o, const ServeOptions& defaults, const fs::path& project, fs::path elf) {
+int watch(std::unique_ptr<ByteSource> source, const Device& dev, const Options& o, const ServeOptions& defaults,
+          const fs::path& project, fs::path elf) {
     RunStore store(o.get("data-dir").empty() ? defaults.data_dir : fs::path(o.get("data-dir")));
     const std::string port_label = dev.name.empty() ? dev.path : dev.name;
     const auto name = o.get("name", (project.empty() ? port_label : project.filename().string()) + " " + today());
@@ -218,15 +219,18 @@ int watch(Source source, const Device& dev, const Options& o, const ServeOptions
 }
 
 int attach(const Options& o, const ServeOptions& defaults) {
-    const auto dev = resolve_serial_device(o);
+    const auto dev = resolve_serial_device(o, defaults);
     if (!dev) return 2;
     // the old rule: look for the firmware in the current directory and firmware/*
     const fs::path project = o.get("project").empty() ? fs::path(".") : fs::path(o.get("project"));
-    return watch(open_source(dev->path), *dev, o, defaults, project, o.get("elf"));
+    auto source = (dev->id.empty() && !defaults.open_source)
+        ? open_source(dev->path)
+        : open_device_source(*dev, defaults.open_source);
+    return watch(std::move(source), *dev, o, defaults, project, o.get("elf"));
 }
 
 int run_command(const Options& o, const ServeOptions& defaults) {
-    const auto dev = resolve_serial_device(o);
+    const auto dev = resolve_serial_device(o, defaults);
     if (!dev) return 2;
     fs::path dir = o.get("project");
     if (dir.empty()) {
@@ -247,13 +251,13 @@ int run_command(const Options& o, const ServeOptions& defaults) {
     Options with = o;
     with.values["env"] = p.env;
     auto source = dev->id.empty()
-        ? open_after_upload(dev->path, [&] { return std::vector<Device>{*dev}; })
-        : open_after_upload(dev->id);
+        ? open_after_upload(dev->path, [&] { return std::vector<Device>{*dev}; }, defaults.open_source)
+        : open_after_upload(dev->id, defaults.devices ? defaults.devices : list_devices, defaults.open_source);
     return watch(std::move(source), *dev, with, defaults, p.project.dir, agent_elf(p.project, p.env));
 }
 
 int restore(const Options& o, const ServeOptions& defaults) {
-    const auto dev = resolve_serial_device(o);
+    const auto dev = resolve_serial_device(o, defaults);
     if (!dev) return 2;
     const auto pio = find_pio(defaults.home);
     if (!pio) throw std::runtime_error(kNoPio);
@@ -263,7 +267,7 @@ int restore(const Options& o, const ServeOptions& defaults) {
 }
 
 int detect(const Options& o, const ServeOptions& defaults) {
-    const auto dev = resolve_serial_device(o);
+    const auto dev = resolve_serial_device(o, defaults);
     if (!dev) return 2;
     if (const auto pio = find_pio(defaults.home)) {
         if (const auto chip = chip_id(*pio, dev->path, defaults.home)) { // resets the board
@@ -272,7 +276,7 @@ int detect(const Options& o, const ServeOptions& defaults) {
         }
     }
     std::cout << "esptool could not identify the chip; listening for a malgrind frame...\n";
-    const auto probe = probe_port(dev->path);
+    const auto probe = probe_device(*dev, defaults.open_source);
     if (!probe.agent) {
         std::cerr << (probe.busy ? "the port is busy\n" : probe.denied ? "no permission to open the port\n" : "no chip found\n");
         return 1;
@@ -314,7 +318,7 @@ int run_cli(const std::vector<std::string>& args, const ServeOptions& defaults) 
     }
     g_stop = false;
     try {
-        if (options->command == "devices") return devices_command(*options);
+        if (options->command == "devices") return devices_command(*options, defaults);
         if (options->command == "detect") return detect(*options, defaults);
         if (options->command == "attach") return attach(*options, defaults);
         if (options->command == "restore") return restore(*options, defaults);

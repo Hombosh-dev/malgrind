@@ -11,9 +11,11 @@
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace malgrind::host {
@@ -23,15 +25,22 @@ inline constexpr unsigned kBaud = 921600; // what the agent uses
 inline constexpr const char* kNoPio =
     "PlatformIO (pio) was not found: install it with `pip install platformio` (attaching to a running board works without it)";
 
+using SourceFactory =
+    std::function<std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(const Device& dev, unsigned baud)>;
+
 // The error for a port that could not be opened; Busy becomes "busy: ...".
 [[nodiscard]] std::runtime_error open_error(const std::string& port, const os::OpenFailure& failure);
 
-// Opens the port exclusively. Throws open_error.
-[[nodiscard]] Source open_source(const std::string& port);
+// Opens the port exclusively (or stdin when port == "-"). Throws open_error.
+[[nodiscard]] std::unique_ptr<ByteSource> open_source(const std::string& port);
+
+// Opens a resolved serial device via `factory` (default: SerialSource::open). Throws open_error.
+[[nodiscard]] std::unique_ptr<ByteSource> open_device_source(const Device& dev, const SourceFactory& factory = {});
 
 // After an upload the board resets and its USB port can vanish or renumber for a moment: keeps trying for about 5 s.
-[[nodiscard]] Source open_after_upload(const std::string& device_ref,
-                                       const std::function<std::vector<Device>()>& devices_fn = list_devices);
+[[nodiscard]] std::unique_ptr<ByteSource> open_after_upload(
+    const std::string& device_ref, const std::function<std::vector<Device>()>& devices_fn = list_devices,
+    const SourceFactory& factory = {});
 
 struct Prepared {
     std::filesystem::path pio;
@@ -53,8 +62,11 @@ struct ProbeResult {
     unsigned ncores = 0;
     double cpu_mhz = 0;
 };
+// Listens to an already-open source for up to 2 s for a malgrind frame. Never records.
+[[nodiscard]] ProbeResult probe_source(ByteSource& source);
 // Listens to the port for up to 2 s for a malgrind frame. Never records and never resets the board. Throws open_error.
 [[nodiscard]] ProbeResult probe_port(const std::string& port);
+[[nodiscard]] ProbeResult probe_device(const Device& dev, const SourceFactory& factory = {});
 
 using LineFn = std::function<void(std::string_view line)>;
 

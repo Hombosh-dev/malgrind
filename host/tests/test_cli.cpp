@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#include <variant>
 
 using namespace malgrind::host;
 namespace fs = std::filesystem;
@@ -98,8 +99,8 @@ void exit_codes() {
     assert(run_cli({"attach", "--device", "usb-missing-device-123"}, {}) != 0);
     Pty pty;
     if (!exclusive_open_is_enforced()) return void(std::puts("exit_codes: busy-port check skipped, this platform does not enforce exclusive open on a pty"));
-    auto other_program = Source::open(pty.slave, 921600); // the port is taken
-    assert(other_program);
+    auto other_program = SerialSource::open_path(pty.slave, 921600); // the port is taken
+    assert(std::holds_alternative<std::unique_ptr<SerialSource>>(other_program));
     assert(run_cli({"attach", "--port", pty.slave, "--no-open", "--data-dir", (fs::temp_directory_path() / "malgrind_cli_b").string()}, {}) == 1);
     fs::remove_all(fs::temp_directory_path() / "malgrind_cli_b");
 }

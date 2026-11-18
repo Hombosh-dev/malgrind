@@ -174,7 +174,7 @@ void busy_port() {
     Pty pty;
     const auto dev = h.plug(pty.slave);
     if (!exclusive_open_is_enforced()) return void(std::puts("busy_port: skipped, this platform does not enforce exclusive open on a pty"));
-    auto other_program = Source::open(pty.slave, 921600); // somebody else has the port
+    auto other_program = open_source(pty.slave); // somebody else has the port
     assert(other_program);
     const auto probe = h.call({{"cmd", "probe"}, {"port", pty.slave}});
     assert(probe["ok"] && probe["result"]["busy"] == true && probe["result"]["agent"] == false);
@@ -636,7 +636,7 @@ void open_after_upload_reenumerates() {
     assert(calls == 2);
     pty.send(make_stream(1));
     std::array<std::uint8_t, 64> buf{};
-    const auto n = source.read(buf, 500);
+    const auto n = source->read(buf, 500);
     assert(n && *n > 0);
 }
 

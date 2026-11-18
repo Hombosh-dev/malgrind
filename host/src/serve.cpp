@@ -207,7 +207,7 @@ private:
 
     json probe(const json& req) {
         const auto dev = resolve_serial(device_arg(req));
-        const auto r = probe_port(dev.path);
+        const auto r = probe_device(dev, options_.open_source);
         json result = {{"busy", r.busy}, {"agent", r.agent}, {"denied", r.denied}};
         if (r.agent) {
             result["arch"] = std::string(arch_name(r.arch));
@@ -231,7 +231,7 @@ private:
         return result;
     }
 
-    json start_live(Source source, RunMeta meta, fs::path elf, fs::path project) {
+    json start_live(std::unique_ptr<ByteSource> source, RunMeta meta, fs::path elf, fs::path project) {
         auto writer = store_.create(std::move(meta));
         json run = writer.meta();
         set_session(Session::live(std::move(source), std::move(writer), std::move(elf), std::move(project), emitter()));
@@ -252,7 +252,7 @@ private:
             project_dir = project.dir;
             if (elf.empty()) elf = project.elf; // a project without code may still have been given its ELF
         }
-        auto source = open_source(dev.path);
+        auto source = open_device_source(dev, options_.open_source);
         remember_settings(project_id, settings);
         return start_live(std::move(source),
                           {.name = str_arg(req, "name"),
@@ -478,7 +478,7 @@ private:
         const auto plan = make_plan(p, options_.agent_dir, settings);
         write_plan_files(p, options_.agent_dir, plan);
         flash_agent(p, options_.home, options_.backup_dir, plan.build, plan.upload, build_line());
-        auto source = open_after_upload(dev.id, options_.devices ? options_.devices : list_devices);
+        auto source = open_after_upload(dev.id, options_.devices ? options_.devices : list_devices, options_.open_source);
         remember_settings(str_arg(req, "project"), settings);
         return start_live(std::move(source),
                           {.name = str_arg(req, "name"),

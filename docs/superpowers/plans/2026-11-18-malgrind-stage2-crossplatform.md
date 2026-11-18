@@ -750,7 +750,7 @@ public: void push(std::span<const std::uint8_t>); void close(); std::vector<std:
 ```
 `Session::live(std::unique_ptr<ByteSource>, ...)`. `open_source`/`open_after_upload` return `std::unique_ptr<ByteSource>`.
 
-- [ ] Commit `refactor: ByteSource interface (serial, stdin, memory)`.
+- [x] Commit `refactor: ByteSource interface (serial, stdin, memory)`.
 
 ### T4.2 Tests without a pty 🟢
 

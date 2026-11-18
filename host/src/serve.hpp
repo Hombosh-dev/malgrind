@@ -47,6 +47,7 @@
 // new_run, remove_agent, project_add, install_pio, grant_access and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
 
 #include "devices.hpp"
+#include "ops.hpp"
 
 #include <filesystem>
 #include <functional>
@@ -62,6 +63,7 @@ struct ServeOptions {
     std::filesystem::path backup_dir; // flash backups, <dir>/<board MAC>/<time>.bin (see backup.hpp)
     std::filesystem::path projects_dir; // projects and clones of GitHub projects (see projects.hpp)
     std::function<std::vector<Device>()> devices = list_devices;
+    SourceFactory open_source{};
 };
 
 // Serves requests from `in` until it ends (the app closed, or end of file), then closes the live run. Returns 0.

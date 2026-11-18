@@ -18,6 +18,32 @@ namespace malgrind::host {
 
 using namespace std::chrono_literals;
 
+namespace {
+
+std::variant<std::unique_ptr<ByteSource>, os::OpenFailure> open_device_result(const Device& dev, unsigned baud,
+                                                                              const SourceFactory& factory) {
+    if (factory) {
+        auto res = factory(dev, baud);
+        if (auto* source = std::get_if<std::unique_ptr<ByteSource>>(&res); source && !*source) {
+            return os::OpenFailure{os::OpenError::Other, false, "source factory returned null"};
+        }
+        return res;
+    }
+    auto res = SerialSource::open(dev, baud);
+    if (auto* source = std::get_if<std::unique_ptr<SerialSource>>(&res)) {
+        return std::unique_ptr<ByteSource>(std::move(*source));
+    }
+    return std::get<os::OpenFailure>(std::move(res));
+}
+
+ProbeResult probe_failure(const std::string& port, const os::OpenFailure& failure) {
+    if (failure.kind == os::OpenError::Busy) return {.busy = true};
+    if (failure.kind == os::OpenError::Denied) return {.denied = true};
+    throw open_error(port, failure);
+}
+
+} // namespace
+
 std::runtime_error open_error(const std::string& port, const os::OpenFailure& failure) {
     if (failure.kind == os::OpenError::Busy)
         return std::runtime_error("busy: another program (maybe another malgrind, or a serial monitor) is using " + port);
@@ -26,13 +52,22 @@ std::runtime_error open_error(const std::string& port, const os::OpenFailure& fa
     return std::runtime_error(std::format("cannot open {}: {}", port, failure.detail));
 }
 
-Source open_source(const std::string& port) {
-    auto res = Source::open_result(port, kBaud);
-    if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
+std::unique_ptr<ByteSource> open_source(const std::string& port) {
+    if (port == "-") return std::make_unique<StdinSource>();
+    auto res = SerialSource::open_path(port, kBaud);
+    if (auto* source = std::get_if<std::unique_ptr<SerialSource>>(&res)) return std::move(*source);
     throw open_error(port, std::get<os::OpenFailure>(res));
 }
 
-Source open_after_upload(const std::string& device_ref, const std::function<std::vector<Device>()>& devices_fn) {
+std::unique_ptr<ByteSource> open_device_source(const Device& dev, const SourceFactory& factory) {
+    auto res = open_device_result(dev, kBaud, factory);
+    if (auto* source = std::get_if<std::unique_ptr<ByteSource>>(&res)) return std::move(*source);
+    throw open_error(dev.path, std::get<os::OpenFailure>(res));
+}
+
+std::unique_ptr<ByteSource> open_after_upload(const std::string& device_ref,
+                                              const std::function<std::vector<Device>()>& devices_fn,
+                                              const SourceFactory& factory) {
     for (int attempt = 0;; ++attempt) {
         const auto now = devices_fn ? devices_fn() : list_devices();
         const auto dev = resolve_device(device_ref, now);
@@ -42,8 +77,8 @@ Source open_after_upload(const std::string& device_ref, const std::function<std:
             std::this_thread::sleep_for(250ms);
             continue;
         }
-        auto res = Source::open_result(dev->path, kBaud);
-        if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
+        auto res = open_device_result(*dev, kBaud, factory);
+        if (auto* source = std::get_if<std::unique_ptr<ByteSource>>(&res)) return std::move(*source);
         const auto& failure = std::get<os::OpenFailure>(res);
         if (!failure.transient || attempt >= 20) throw open_error(dev->path, failure);
         std::this_thread::sleep_for(250ms);
@@ -74,24 +109,33 @@ void run_pio(const Invocation& invocation, const std::function<void(std::string_
     if (code != 0) throw std::runtime_error(code < 0 ? "cannot start pio" : std::format("build or upload failed (pio exit code {})", code));
 }
 
-ProbeResult probe_port(const std::string& port) {
-    auto res = Source::open_result(port, kBaud);
-    auto* source = std::get_if<Source>(&res);
-    if (!source) {
-        const auto& failure = std::get<os::OpenFailure>(res);
-        if (failure.kind == os::OpenError::Busy) return {.busy = true};
-        if (failure.kind == os::OpenError::Denied) return {.denied = true};
-        throw open_error(port, failure);
-    }
+ProbeResult probe_source(ByteSource& source) {
     FrameReader reader;
     std::array<std::uint8_t, 4096> buf;
     for (const auto end = std::chrono::steady_clock::now() + 2s; std::chrono::steady_clock::now() < end;) {
-        const auto n = source->read(buf, 100);
+        const auto n = source.read(buf, 100);
         if (!n) break;
+        if (*n == 0) continue;
         if (const auto frames = reader.feed(std::span(buf).first(*n)).frames; !frames.empty())
             return {.agent = true, .arch = frames[0].arch, .ncores = frames[0].ncores, .cpu_mhz = frames[0].cpu_hz / 1e6};
     }
     return {};
+}
+
+ProbeResult probe_port(const std::string& port) {
+    if (port == "-") {
+        StdinSource stdin_source;
+        return probe_source(stdin_source);
+    }
+    auto res = SerialSource::open_path(port, kBaud);
+    if (auto* source = std::get_if<std::unique_ptr<SerialSource>>(&res)) return probe_source(**source);
+    return probe_failure(port, std::get<os::OpenFailure>(res));
+}
+
+ProbeResult probe_device(const Device& dev, const SourceFactory& factory) {
+    auto res = open_device_result(dev, kBaud, factory);
+    if (auto* source = std::get_if<std::unique_ptr<ByteSource>>(&res)) return probe_source(**source);
+    return probe_failure(dev.path, std::get<os::OpenFailure>(res));
 }
 
 namespace {

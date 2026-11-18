@@ -9,9 +9,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fcntl.h>
+#include <memory>
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include <variant>
 #include <vector>
 
 // The "board": the master side of a pty. Code under test opens `slave` exactly as it opens /dev/ttyUSB0.
@@ -37,8 +39,10 @@ struct Pty {
 // attach successfully, and a live attach never ends by itself). Probes a pty of its own: the flag can outlive the close.
 inline bool exclusive_open_is_enforced() {
     Pty scratch;
-    auto first = malgrind::host::Source::open(scratch.slave, 921600);
-    return first && !malgrind::host::Source::open(scratch.slave, 921600);
+    auto first = malgrind::host::SerialSource::open_path(scratch.slave, 921600);
+    return std::holds_alternative<std::unique_ptr<malgrind::host::SerialSource>>(first) &&
+           std::holds_alternative<malgrind::host::os::OpenFailure>(
+               malgrind::host::SerialSource::open_path(scratch.slave, 921600));
 }
 
 template <class Pred>

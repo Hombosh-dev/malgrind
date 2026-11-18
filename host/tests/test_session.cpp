@@ -15,6 +15,7 @@
 #include <mutex>
 #include <thread>
 #include <unistd.h>
+#include <variant>
 
 using namespace malgrind;
 using namespace malgrind::host;
@@ -53,9 +54,10 @@ constexpr auto kAll = Aggregator::Ms{0};
 
 // 2 rounds = 4 frames: core 0 sends 3 samples per round, core 1 one, so 8 samples in all.
 std::unique_ptr<Session> start(RunStore& store, Pty& pty, Events& ev, const fs::path& project) {
-    auto source = Source::open(pty.slave, 921600);
-    assert(source);
-    return Session::live(std::move(*source), store.create({.name = "t"}), {}, project, ev.sink());
+    auto source = SerialSource::open_path(pty.slave, 921600);
+    assert(std::holds_alternative<std::unique_ptr<SerialSource>>(source));
+    return Session::live(std::get<std::unique_ptr<SerialSource>>(std::move(source)), store.create({.name = "t"}), {},
+                         project, ev.sink());
 }
 
 void live_records_and_aggregates() {
