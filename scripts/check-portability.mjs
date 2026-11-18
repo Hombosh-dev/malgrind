@@ -21,16 +21,21 @@ export const OS_PATTERNS = [
   /\berrno\b/,
 ];
 
-export const CHIP_PATTERNS = [
+export const CHIP_ONLY_PATTERNS = [
   /\besp(32|tool|ressif|idf)\w*/i,
   /xtensa-/i,
   /sdkconfig/i,
+];
+
+export const CHIP_OS_PORT_PATTERNS = [
   /ttyUSB|ttyACM|\/dev\//i,
   /\bCOM\d/,
   /pkexec/i,
   /\bsudo\b/i,
   /apt install/i,
 ];
+
+export const CHIP_PATTERNS = [...CHIP_ONLY_PATTERNS, ...CHIP_OS_PORT_PATTERNS];
 
 function toPosix(p) {
   return sep === '/' ? p : p.split(sep).join('/');
@@ -82,8 +87,12 @@ export function getFilesForRule(root, rule) {
   throw new Error(`Unknown portability rule: ${rule}`);
 }
 
-export function scanLines(text, rule) {
-  const patterns = rule === 'os' ? OS_PATTERNS : rule === 'chip' ? CHIP_PATTERNS : null;
+export function scanLines(text, rule, { osLayer = false } = {}) {
+  const patterns = rule === 'os'
+    ? OS_PATTERNS
+    : rule === 'chip'
+      ? (osLayer ? CHIP_ONLY_PATTERNS : CHIP_PATTERNS)
+      : null;
   if (!patterns) throw new Error(`Unknown portability rule: ${rule}`);
   const lines = text.split(/\r?\n/);
   const hits = [];
@@ -112,7 +121,8 @@ export function checkPortability(root, allow = loadAllowList(join(root, 'scripts
     for (const file of getFilesForRule(root, rule)) {
       if (allowed.has(file)) continue;
       const content = readFileSync(join(root, file), 'utf8');
-      for (const hit of scanLines(content, rule)) {
+      const osLayer = rule === 'chip' && file.startsWith('host/src/os/');
+      for (const hit of scanLines(content, rule, { osLayer })) {
         violations.push({ file, line: hit.line, rule, text: hit.text });
       }
     }

@@ -144,3 +144,19 @@ test('allow-listed files are skipped only for their listed rule set', () => {
     },
   );
 });
+
+test('host/src/os/** allows OS port/privilege terms while still forbidding MCU chip terms', () => {
+  withTempTree(
+    {
+      'host/src/os/ports.cpp': 'const char* p = "/dev/ttyUSB0"; // COM5, pkexec, sudo, apt install\n',
+      'host/src/os/bad.cpp': '// ESP32 sdkconfig\n',
+    },
+    (root) => {
+      const violations = checkPortability(root, { os: [], chip: [] });
+      assert.deepEqual(
+        violations.map((v) => `${v.file}:${v.line}:${v.rule}`),
+        ['host/src/os/bad.cpp:1:chip'],
+      );
+    },
+  );
+});
