@@ -689,9 +689,9 @@ public:
   the ESP32 key *is* the MAC in the same format).
 - `kBaud` is removed; callers use `family->agent_baud()` or, before a family is known (probe/attach), a list of bauds to
   try from `all_families()` (only 921600 today).
-- [x] 1. Move code, no behaviour change: all existing tests (`test_pio`, `test_flash`, `test_settings`, `test_serve`) pass unchanged except include paths.
-- [x] 2. `test_families.cpp`: registry lookups; `family_for_project` on an ESP-IDF ini, an Arduino-ESP32 ini (problem text), an STM32 ini (no family → combined why).
-- [x] 3. Remove cleaned files from the `chip` allow list. Commit `refactor: chip families behind one interface; ESP32 is the first`.
+- [ ] 1. Move code, no behaviour change: all existing tests (`test_pio`, `test_flash`, `test_settings`, `test_serve`) pass unchanged except include paths.
+- [ ] 2. `test_families.cpp`: registry lookups; `family_for_project` on an ESP-IDF ini, an Arduino-ESP32 ini (problem text), an STM32 ini (no family → combined why).
+- [ ] 3. Remove cleaned files from the `chip` allow list. Commit `refactor: chip families behind one interface; ESP32 is the first`.
 
 ### T3.2 Agent directory per family 🟢
 
@@ -701,7 +701,7 @@ public:
   `family.json` (new, tiny: `{"id":"esp32"}`), instead of looking for `agent/esp32/inject.py`.
 - Each family finds its files at `agent_root / "agent" / id()`.
 - Tauri resources: ship `../../platforms/` whole (STM32/RP2040 ports later) instead of only `platforms/esp32/`.
-- [x] Commit `refactor: agent sources per family`.
+- [ ] Commit `refactor: agent sources per family`.
 
 ### T3.3 Family hints, symbols, methods report 🟢
 
@@ -715,7 +715,7 @@ public:
   Reasons never name ESP32 unless the family does.
 - `probe` result adds `family` (from the frame's `Arch` via `family_for_arch`, else `""`).
 - UI: Profile shows `family_hint` as "probably <name>" (muted), and the probed family as fact.
-- [x] Commit `feat: family hints from USB ids; methods and symbols per family`.
+- [ ] Commit `feat: family hints from USB ids; methods and symbols per family`.
 
 **P3 done when:** `"chip": []` in the allow list; `grep -ri esp32 host/src --exclude-dir=families` finds only comments
 that explain history (the checker forbids even those, so: nothing).
@@ -781,7 +781,7 @@ public: void push(std::span<const std::uint8_t>); void close(); std::vector<std:
       - run: cmake --build build --config Release
       - run: ctest --test-dir build -C Release --output-on-failure
 ```
-- [ ] Fix whatever MSVC reports (expect: missing includes, `ssize_t`, narrowing warnings). Commit `ci: build and test the engine on Windows`.
+- [x] Fix whatever MSVC reports (expect: missing includes, `ssize_t`, narrowing warnings). Commit `ci: build and test the engine on Windows`.
 
 ### T5.2 Sidecar build script on every OS 🟢
 
