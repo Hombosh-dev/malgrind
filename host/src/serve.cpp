@@ -1,12 +1,11 @@
 #include "serve.hpp"
 
-#include "boards.hpp"
+#include "devices.hpp"
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
 #include "os/access.hpp"
 #include "os/paths.hpp"
-#include "os/ports.hpp"
 #include "os/process.hpp"
 #include "os/tools.hpp"
 #include "plan.hpp"
@@ -24,6 +23,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <format>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -48,6 +48,12 @@ std::string str_arg(const json& req, const char* key) {
 std::optional<std::string> opt_str_arg(const json& req, const char* key) {
     if (!req.contains(key) || !req[key].is_string()) return std::nullopt;
     return req[key].get<std::string>();
+}
+
+std::string device_arg(const json& req) {
+    if (const auto dev = opt_str_arg(req, "device")) return *dev;
+    if (const auto port = opt_str_arg(req, "port")) return *port;
+    throw std::runtime_error("missing argument: device");
 }
 
 class Server {
@@ -120,11 +126,7 @@ private:
             const auto pio = find_pio(options_.home);
             return {{"version", kVersion}, {"data_dir", os::to_utf8(options_.data_dir)}, {"pio", pio ? json(os::to_utf8(*pio)) : json(nullptr)}};
         }
-        if (cmd == "ports") {
-            std::vector<std::string> paths;
-            for (const auto& p : os::list_serial_ports()) paths.push_back(p.path);
-            return json(paths);
-        }
+        if (cmd == "devices") return devices_command();
         if (cmd == "probe") return probe(req);
         if (cmd == "project") {
             std::string why;
@@ -132,7 +134,6 @@ private:
             if (!project) throw std::runtime_error(why);
             return {{"dir", os::to_utf8(project->dir)}, {"envs", project->envs}, {"default_env", project->default_env}};
         }
-        if (cmd == "boards") return boards();
         if (cmd == "run_plan") return run_plan(req);
         if (cmd == "setup") return setup_info();
         if (cmd == "projects") return list_projects();
@@ -196,9 +197,17 @@ private:
         return result ? *result : R"({"functions":[]})";
     }
 
+    Device resolve_serial(const std::string& ref) const {
+        const auto now = options_.devices ? options_.devices() : list_devices();
+        const auto dev = resolve_device(ref, now);
+        if (!dev) throw std::runtime_error(std::format("device {} is not plugged in", ref));
+        if (dev->kind != DeviceKind::Serial) throw std::runtime_error(std::format("device {} is not a serial port", ref));
+        return *dev;
+    }
+
     json probe(const json& req) {
-        const auto port = str_arg(req, "port");
-        const auto r = probe_port(port);
+        const auto dev = resolve_serial(device_arg(req));
+        const auto r = probe_port(dev.path);
         json result = {{"busy", r.busy}, {"agent", r.agent}, {"denied", r.denied}};
         if (r.agent) {
             result["arch"] = std::string(arch_name(r.arch));
@@ -210,7 +219,7 @@ private:
             try {
                 const auto project = project_of(*id);
                 require_buildable(project);
-                (void)prepare_project(options_.home, project.dir, project.env, port);
+                (void)prepare_project(options_.home, project.dir, project.env, dev.path);
             } catch (const std::exception& e) {
                 problem = e.what();
             }
@@ -232,7 +241,7 @@ private:
     json attach(const json& req) {
         if (busy_) throw std::runtime_error("busy: a build or flash is running");
         if (live()) throw std::runtime_error("a run is live: stop it first");
-        const auto port = str_arg(req, "port");
+        const auto dev = resolve_serial(device_arg(req));
         std::string project_id;
         const auto settings = settings_arg(req);
         fs::path project_dir, elf = !settings.elf.empty() ? settings.elf : os::from_utf8(opt_str_arg(req, "elf").value_or(""));
@@ -243,10 +252,15 @@ private:
             project_dir = project.dir;
             if (elf.empty()) elf = project.elf; // a project without code may still have been given its ELF
         }
-        auto source = open_source(port);
+        auto source = open_source(dev.path);
         remember_settings(project_id, settings);
         return start_live(std::move(source),
-                          {.name = str_arg(req, "name"), .project = os::to_utf8(project_dir), .port = port, .project_id = project_id, .settings = settings},
+                          {.name = str_arg(req, "name"),
+                           .project = os::to_utf8(project_dir),
+                           .port = dev.name.empty() ? dev.path : dev.name,
+                           .device_id = dev.id,
+                           .project_id = project_id,
+                           .settings = settings},
                           std::move(elf), std::move(project_dir));
     }
 
@@ -375,42 +389,51 @@ private:
 
     // Gives this user access to a serial port that belongs to a group they are not in.
     json grant_access(const json& req) {
-        const auto port = str_arg(req, "port");
-        const auto known = os::list_serial_ports();
-        if (std::ranges::none_of(known, [&](const os::PortInfo& p) { return p.path == port; }))
-            throw std::runtime_error("not a serial port of this computer: " + port);
-        const auto before = os::port_access(port);
+        const auto dev = resolve_serial(device_arg(req));
+        const auto before = os::port_access(dev.path);
         if (before.ok) return {{"ok_now", true}, {"relogin", false}}; // nothing to do
         const auto user = os::current_user();
-        const auto command = os::grant_access_command(port, user, before.group);
+        const auto command = os::grant_access_command(dev.path, user, before.group);
         if (!command) {
             if (!os::can_grant_access())
                 throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" +
-                                         os::manual_access_commands(port, user, before.group));
+                                         os::manual_access_commands(dev.path, user, before.group));
             throw std::runtime_error("cannot build the command for this user or port");
         }
         const int code = os::run_lines(command->argv, command->env, build_line());
         if (code == 126 || code == 127) throw std::runtime_error("the password prompt was cancelled, or the password was wrong");
         if (code != 0) throw std::runtime_error(std::format("granting access failed (exit code {})", code));
-        const auto after = os::port_access(port);
+        const auto after = os::port_access(dev.path);
         return {{"ok_now", after.ok}, {"relogin", !after.in_group}}; // relogin: the group applies from the next login, the ACL until the board is replugged
     }
 
-    json boards() {
-        auto ports = json::array();
-        for (const auto& p : os::list_serial_ports()) {
-            const auto access = os::port_access(p.path);
-            ports.push_back({{"port", p.path},
-                             {"adapter", p.usb ? adapter_name(*p.usb) : ""},
-                             {"vid", p.usb ? p.usb->vid : ""},
-                             {"pid", p.usb ? p.usb->pid : ""},
-                             {"serial", p.usb ? p.usb->serial : ""},
-                             {"location", p.usb ? p.usb->location : ""},
-                             {"access", {{"ok", access.ok}, {"group", access.group}, {"in_group", access.in_group}, {"fixable", access.fixable}}}});
+    json devices_command() const {
+        const auto now = options_.devices ? options_.devices() : list_devices();
+        auto list = json::array();
+        for (const auto& d : now) {
+            json usb = nullptr;
+            if (d.usb) {
+                usb = {{"vid", d.usb->vid},
+                       {"pid", d.usb->pid},
+                       {"serial", d.usb->serial},
+                       {"location", d.usb->location},
+                       {"product", d.usb->product},
+                       {"manufacturer", d.usb->manufacturer}};
+            }
+            list.push_back({{"id", d.id},
+                            {"kind", d.kind == DeviceKind::Probe ? "probe" : "serial"},
+                            {"path", d.path},
+                            {"name", d.name},
+                            {"title", d.title},
+                            {"usb", std::move(usb)},
+                            {"access",
+                             {{"ok", d.access.ok},
+                              {"group", d.access.group},
+                              {"in_group", d.access.in_group},
+                              {"fixable", d.access.fixable}}},
+                            {"family_hint", d.family_hint}});
         }
-        auto probes = json::array();
-        for (const auto& p : find_probes()) probes.push_back({{"name", p.name}, {"vid", p.vid}, {"pid", p.pid}});
-        return {{"ports", std::move(ports)}, {"probes", std::move(probes)}};
+        return {{"devices", std::move(list)}, {"can_grant_access", os::can_grant_access()}};
     }
 
     // ---- slow commands, one at a time, on a worker thread ------------------------------------------------------------
@@ -428,29 +451,43 @@ private:
         });
     }
 
+    struct PreparedDevice {
+        Prepared prepared;
+        Device device;
+    };
+
     // The project the request names, checked and ready to build (trusted, with source).
-    Prepared prepare(const json& req) {
+    PreparedDevice prepare(const json& req) {
         const auto project = project_of(str_arg(req, "project"));
         require_buildable(project);
-        return prepare_project(options_.home, project.dir, opt_str_arg(req, "env").value_or(project.env), str_arg(req, "port"));
+        auto dev = resolve_serial(device_arg(req));
+        auto p = prepare_project(options_.home, project.dir, opt_str_arg(req, "env").value_or(project.env), dev.path);
+        return {std::move(p), std::move(dev)};
     }
     LineFn build_line() {
         return [this](std::string_view line) { send({{"event", "build"}, {"line", std::string(line)}}); };
     }
 
     json new_run(const json& req) {
-        const auto p = prepare(req);
+        const auto pd = prepare(req);
+        const auto& p = pd.prepared;
+        const auto& dev = pd.device;
         if (live()) throw std::runtime_error("stop the live run first");
         const auto settings = settings_arg(req);
         // every setting is checked before the board is touched; a typo in a field costs nothing
         const auto plan = make_plan(p, options_.agent_dir, settings);
         write_plan_files(p, options_.agent_dir, plan);
         flash_agent(p, options_.home, options_.backup_dir, plan.build, plan.upload, build_line());
-        auto source = open_after_upload(p.port);
+        auto source = open_after_upload(dev.id, options_.devices ? options_.devices : list_devices);
         remember_settings(str_arg(req, "project"), settings);
         return start_live(std::move(source),
-                          {.name = str_arg(req, "name"), .project = os::to_utf8(p.project.dir), .env = plan.env, .port = p.port,
-                           .project_id = str_arg(req, "project"), .settings = settings},
+                          {.name = str_arg(req, "name"),
+                           .project = os::to_utf8(p.project.dir),
+                           .env = plan.env,
+                           .port = dev.name.empty() ? dev.path : dev.name,
+                           .device_id = dev.id,
+                           .project_id = str_arg(req, "project"),
+                           .settings = settings},
                           settings.elf.empty() ? agent_elf(p.project, plan.env) : settings.elf, p.project.dir);
     }
 
@@ -484,7 +521,8 @@ private:
             return result;
         }
         require_buildable(project);
-        const auto p = prepare_project(options_.home, project.dir, project.env, str_arg(req, "port"));
+        const auto dev = resolve_serial(device_arg(req));
+        const auto p = prepare_project(options_.home, project.dir, project.env, dev.path);
         detected.env = p.env;
         detected.rate_hz = kDefaultRateHz;
         detected.elf.clear(); // a new run finds its ELF after the build: nothing to offer here
@@ -511,15 +549,16 @@ private:
         const auto how = opt_str_arg(req, "how").value_or("restore");
         if (how != "restore" && how != "rebuild") throw std::runtime_error("how must be \"restore\" or \"rebuild\"");
         if (how == "rebuild") {
-            const auto p = prepare(req);
+            const auto pd = prepare(req);
             set_session(nullptr); // the port must be free for the upload
-            run_pio(plain_flash(p.pio, p.project, p.env, p.port), build_line());
+            run_pio(plain_flash(pd.prepared.pio, pd.prepared.project, pd.prepared.env, pd.prepared.port), build_line());
             return json::object();
         }
         const auto pio = find_pio(options_.home);
         if (!pio) throw std::runtime_error(kNoPio);
+        const auto dev = resolve_serial(device_arg(req));
         set_session(nullptr);
-        restore_flash(*pio, options_.home, str_arg(req, "port"), options_.backup_dir, build_line());
+        restore_flash(*pio, options_.home, dev.path, options_.backup_dir, build_line());
         return json::object();
     }
 
@@ -527,7 +566,8 @@ private:
         if (live()) throw std::runtime_error("stop the live run first");
         const auto pio = find_pio(options_.home);
         if (!pio) throw std::runtime_error(kNoPio);
-        const auto chip = chip_id(*pio, str_arg(req, "port"), options_.home);
+        const auto dev = resolve_serial(device_arg(req));
+        const auto chip = chip_id(*pio, dev.path, options_.home);
         if (!chip) throw std::runtime_error("esptool could not identify the chip");
         return {{"chip", *chip}};
     }

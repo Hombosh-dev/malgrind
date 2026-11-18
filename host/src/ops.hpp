@@ -2,6 +2,7 @@
 
 // Steps that both front-ends need: the app's JSON protocol (serve.cpp) and the terminal commands (cli.cpp).
 
+#include "devices.hpp"
 #include "github.hpp"
 #include "malgrind/target_info.hpp"
 #include "os/serial.hpp"
@@ -28,8 +29,9 @@ inline constexpr const char* kNoPio =
 // Opens the port exclusively. Throws open_error.
 [[nodiscard]] Source open_source(const std::string& port);
 
-// After an upload the board resets and its USB port can vanish for a moment: keeps trying for about 5 s.
-[[nodiscard]] Source open_after_upload(const std::string& port);
+// After an upload the board resets and its USB port can vanish or renumber for a moment: keeps trying for about 5 s.
+[[nodiscard]] Source open_after_upload(const std::string& device_ref,
+                                       const std::function<std::vector<Device>()>& devices_fn = list_devices);
 
 struct Prepared {
     std::filesystem::path pio;

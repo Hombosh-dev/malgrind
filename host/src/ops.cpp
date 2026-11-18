@@ -32,12 +32,20 @@ Source open_source(const std::string& port) {
     throw open_error(port, std::get<os::OpenFailure>(res));
 }
 
-Source open_after_upload(const std::string& port) {
+Source open_after_upload(const std::string& device_ref, const std::function<std::vector<Device>()>& devices_fn) {
     for (int attempt = 0;; ++attempt) {
-        auto res = Source::open_result(port, kBaud);
+        const auto now = devices_fn ? devices_fn() : list_devices();
+        const auto dev = resolve_device(device_ref, now);
+        if (!dev || dev->kind != DeviceKind::Serial) {
+            if (attempt >= 20) throw std::runtime_error("device " + device_ref + " is not plugged in");
+            // The USB device may still be re-enumerating after reset.
+            std::this_thread::sleep_for(250ms);
+            continue;
+        }
+        auto res = Source::open_result(dev->path, kBaud);
         if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
         const auto& failure = std::get<os::OpenFailure>(res);
-        if (!failure.transient || attempt >= 20) throw open_error(port, failure);
+        if (!failure.transient || attempt >= 20) throw open_error(dev->path, failure);
         std::this_thread::sleep_for(250ms);
     }
 }

@@ -606,7 +606,7 @@ struct Device {
   may renumber `ttyACM0 → ttyACM1`; a board's native USB re-enumerates after reset).
 - `RunMeta` gains `device_id` (old runs: empty), set by `new_run`/`attach`; `port` stays as the human label.
 - Update the protocol comment at the top of `serve.hpp`.
-- [ ] Tests in `test_serve.cpp`: `devices` shape (with a fake list injected through a `std::function` in `ServeOptions`,
+- [x] Tests in `test_serve.cpp`: `devices` shape (with a fake list injected through a `std::function` in `ServeOptions`,
       default `list_devices`), `attach {device: "<id>"}` resolves. Commit `feat(serve): devices command; runs remember the device id`.
 
 ### T2.3 UI: tiles keyed by device id 🟢

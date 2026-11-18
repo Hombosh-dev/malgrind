@@ -26,7 +26,7 @@ namespace malgrind::host {
 [[nodiscard]] std::string utc_now(const char* fmt);
 
 struct RunMeta {
-    std::string id{}, name{}, notes{}, project{}, env{}, port{};
+    std::string id{}, name{}, notes{}, project{}, env{}, port{}, device_id{};
     std::string project_id{}; // the malgrind project (projects.hpp) this run belongs to; empty for runs made without one
     std::string started{}; // ISO-8601 UTC, "2026-11-15T20:01:02Z"
     std::optional<Arch> arch{};
