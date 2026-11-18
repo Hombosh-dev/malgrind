@@ -1,6 +1,6 @@
 #include "setup.hpp"
 
-#include "process.hpp"
+#include "os/process.hpp"
 
 #include <format>
 #include <stdexcept>
@@ -14,8 +14,8 @@ fs::path env_dir(const fs::path& home) { return home / ".platformio/penv"; }
 } // namespace
 
 std::optional<fs::path> find_python() {
-    if (auto python = find_in_path("python3")) return python;
-    return find_in_path("python");
+    if (auto python = os::find_in_path("python3")) return python;
+    return os::find_in_path("python");
 }
 
 std::vector<Invocation> install_pio_steps(const fs::path& python, const fs::path& home) {
@@ -33,7 +33,7 @@ void install_pio(const fs::path& python, const fs::path& home, const LineFn& on_
     const auto steps = install_pio_steps(python, home);
     for (const auto& step : steps) {
         std::string output;
-        const int code = run_lines(step.argv, step.env, [&](std::string_view line) {
+        const int code = os::run_lines(step.argv, step.env, [&](std::string_view line) {
             output.append(line).append("\n");
             on_line(line);
         });

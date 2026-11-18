@@ -1,7 +1,7 @@
 // PlatformIO integration self-check: project parsing, the sdkconfig merge, the build invocation and process output.
 #include "ops.hpp"
+#include "os/process.hpp"
 #include "pio.hpp"
-#include "process.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -67,6 +67,7 @@ void unsupported_projects_are_refused() {
         write(dir / "platformio.ini", ini);
         fs::create_directories(dir / "bin");
         write(dir / "bin/pio", "#!/bin/sh\n");
+        fs::permissions(dir / "bin/pio", fs::perms::owner_exec, fs::perm_options::add);
         setenv("PATH", (dir / "bin").c_str(), 1);
         try {
             (void)prepare_project(dir, dir, env, "/dev/ttyUSB0");
@@ -183,10 +184,10 @@ void find_pio_fallback() {
 
 void run_lines_streams() {
     std::vector<std::string> lines;
-    const int code = run_lines({"/bin/sh", "-c", "echo $X; echo a; echo b >&2; printf 'p1\\rp2\\n'; exit 3"}, {"X=1"},
-                               [&](std::string_view line) { lines.emplace_back(line); });
+    const int code = os::run_lines({"/bin/sh", "-c", "echo $X; echo a; echo b >&2; printf 'p1\\rp2\\n'; exit 3"}, {"X=1"},
+                                   [&](std::string_view line) { lines.emplace_back(line); });
     assert(code == 3 && lines == (std::vector<std::string>{"1", "a", "b", "p1", "p2"})); // \r splits progress lines too
-    assert(run_lines({"/no/such/program"}, {}, [](std::string_view) {}) != 0);
+    assert(os::run_lines({"/no/such/program"}, {}, [](std::string_view) {}) != 0);
 }
 
 void esptool_command_line() {

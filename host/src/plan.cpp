@@ -1,6 +1,7 @@
 #include "plan.hpp"
 
 #include "os/paths.hpp"
+#include "os/process.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -23,7 +24,7 @@ void override_command(Invocation& inv, const std::string& line, const char* what
     const auto& program = words->front();
     const bool has_sep = program.find('/') != std::string::npos ||
                          (os::kind() == os::Kind::Windows && program.find('\\') != std::string::npos);
-    const bool found = has_sep ? fs::exists(os::from_utf8(program)) : find_in_path(program).has_value();
+    const bool found = has_sep ? fs::exists(os::from_utf8(program)) : os::find_in_path(program).has_value();
     if (!found) throw std::runtime_error(std::format("{}: '{}' was not found", what, program));
     inv.argv = std::move(*words);
 }

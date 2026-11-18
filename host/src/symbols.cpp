@@ -1,7 +1,7 @@
 #include "symbols.hpp"
 
 #include "os/paths.hpp"
-#include "process.hpp"
+#include "os/process.hpp"
 
 #include <algorithm>
 #include <format>
@@ -84,7 +84,7 @@ void Symbolizer::prepare(const Frame& frame) {
                 argv.push_back(std::format("0x{:x}", todo[i]));
                 argv.push_back(kSentinel);
             }
-            std::istringstream out(capture(argv));
+            std::istringstream out(os::capture(argv));
             std::string func, location; // addr2line prints "function" then "file:line" per frame
             for (auto i = first; i < last; ++i) {
                 bool first_pair = true;

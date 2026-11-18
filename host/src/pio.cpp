@@ -1,7 +1,7 @@
 #include "pio.hpp"
 
 #include "os/paths.hpp"
-#include "process.hpp"
+#include "os/process.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -56,17 +56,8 @@ std::optional<std::string> sdkconfig_key(const std::string& line) {
 
 } // namespace
 
-std::optional<fs::path> find_in_path(const std::string& name) {
-    const auto path = os::get_env("PATH");
-    if (!path) return std::nullopt;
-    const auto bin = os::exe_name(name);
-    for (const auto& dir : os::split_path_list(*path))
-        if (std::error_code ec; fs::exists(dir / bin, ec)) return dir / bin;
-    return std::nullopt;
-}
-
 std::optional<fs::path> find_pio(const fs::path& home) {
-    if (auto found = find_in_path("pio")) return found;
+    if (auto found = os::find_in_path("pio")) return found;
     const auto bin = os::exe_name("pio");
     for (const auto& rel : {fs::path(".platformio/penv/bin") / bin,
                             fs::path(".platformio/penv/Scripts") / bin,
@@ -250,7 +241,7 @@ std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, con
 std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
     const auto inv = esptool(pio, home, port, {"chip_id"});
     if (!inv) return std::nullopt;
-    const auto out = capture(inv->argv);
+    const auto out = os::capture(inv->argv);
     const auto at = out.find("Chip is ");
     if (at == std::string::npos) return std::nullopt;
     return out.substr(at + 8, out.find('\n', at) - at - 8);

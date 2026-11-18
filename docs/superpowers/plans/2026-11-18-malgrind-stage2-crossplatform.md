@@ -304,11 +304,11 @@ Windows implementation rules:
 
 POSIX: unchanged, except that `run_lines` and `capture` must not leak fds (already `addclose`d) — add a test.
 
-- [ ] 1. Tests (all OS): `windows_command_line({"a b", "c\"d", "e\\\\"})` equals the documented MSVCRT form; `run_lines`
+- [x] 1. Tests (all OS): `windows_command_line({"a b", "c\"d", "e\\\\"})` equals the documented MSVCRT form; `run_lines`
       on a tiny helper program built by CMake (`host/tests/helper_echo.cpp`: prints its args one per line and the value of
       `$HELPER_VAR`) receives the args unchanged, including spaces and non-ASCII, and sees the added variable.
-- [ ] 2. Implement POSIX move, then Windows.
-- [ ] 3. Commit `refactor(os): process spawning for POSIX and Windows`.
+- [x] 2. Implement POSIX move, then Windows.
+- [x] 3. Commit `refactor(os): process spawning for POSIX and Windows`.
 
 ### T1.3 Serial port 🟡
 

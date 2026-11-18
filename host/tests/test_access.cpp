@@ -1,6 +1,6 @@
 // Port access self-check: reading permissions, and that the privileged command can only carry plain names.
 #include "access.hpp"
-#include "process.hpp"
+#include "os/process.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -82,7 +82,7 @@ struct Tools {
         fs::remove(log);
         const auto inv = grant_access_command(bin / "pkexec", "/dev/ttyUSB0", "partum", group);
         assert(inv);
-        return malgrind::host::run_lines(inv->argv, inv->env, [](std::string_view) {});
+        return malgrind::host::os::run_lines(inv->argv, inv->env, [](std::string_view) {});
     }
     [[nodiscard]] std::string calls() const {
         std::ifstream in(log);

@@ -6,9 +6,9 @@
 #include "github.hpp"
 #include "ops.hpp"
 #include "os/paths.hpp"
+#include "os/process.hpp"
 #include "plan.hpp"
 #include "pio.hpp"
-#include "process.hpp"
 #include "projects.hpp"
 #include "setup.hpp"
 #include "session.hpp"
@@ -354,8 +354,8 @@ private:
         auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(os::to_utf8(*p)) : json(nullptr); };
         return {{"pio", path_or_null(find_pio(options_.home))},
                 {"python", path_or_null(find_python())},
-                {"git", path_or_null(find_in_path("git"))},
-                {"pkexec", find_in_path("pkexec").has_value()},
+                {"git", path_or_null(os::find_in_path("git"))},
+                {"pkexec", os::find_in_path("pkexec").has_value()},
                 {"user", os::current_user()}};
     }
 
@@ -375,12 +375,12 @@ private:
         const auto before = port_access(port);
         if (before.ok) return {{"ok_now", true}, {"relogin", false}}; // nothing to do
         const auto user = os::current_user();
-        const auto pkexec = find_in_path("pkexec");
+        const auto pkexec = os::find_in_path("pkexec");
         if (!pkexec)
             throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" + manual_commands(port, user, before.group));
         const auto command = grant_access_command(*pkexec, port, user, before.group);
         if (!command) throw std::runtime_error("cannot build the command for this user or port");
-        const int code = run_lines(command->argv, command->env, build_line());
+        const int code = os::run_lines(command->argv, command->env, build_line());
         if (code == 126 || code == 127) throw std::runtime_error("the password prompt was cancelled, or the password was wrong");
         if (code != 0) throw std::runtime_error(std::format("granting access failed (exit code {})", code));
         const auto after = port_access(port);

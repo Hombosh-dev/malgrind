@@ -2,7 +2,7 @@
 
 #include "backup.hpp"
 #include "discover.hpp"
-#include "process.hpp"
+#include "os/process.hpp"
 #include "store.hpp"
 #include "wire.hpp"
 
@@ -64,7 +64,7 @@ Prepared prepare_project(const std::filesystem::path& home, const std::filesyste
 }
 
 void run_pio(const Invocation& invocation, const std::function<void(std::string_view line)>& on_line) {
-    const int code = run_lines(invocation.argv, invocation.env, on_line);
+    const int code = os::run_lines(invocation.argv, invocation.env, on_line);
     if (code != 0) throw std::runtime_error(code < 0 ? "cannot start pio" : std::format("build or upload failed (pio exit code {})", code));
 }
 
@@ -96,7 +96,7 @@ std::string run_esptool(const fs::path& pio, const fs::path& home, const std::st
     const auto inv = esptool(pio, home, port, std::move(args));
     if (!inv) throw std::runtime_error("esptool was not found: PlatformIO has not downloaded it yet (build any ESP32 project once)");
     std::string all;
-    const int code = run_lines(inv->argv, inv->env, [&](std::string_view line) {
+    const int code = os::run_lines(inv->argv, inv->env, [&](std::string_view line) {
         all.append(line).append("\n");
         on_line(line);
     });
@@ -165,10 +165,10 @@ void restore_flash(const fs::path& pio, const fs::path& home, const std::string&
 }
 
 fs::path clone_project(const GithubRepo& repo, const fs::path& dest, const LineFn& on_line) {
-    const auto git = find_in_path("git");
+    const auto git = os::find_in_path("git");
     if (!git) throw std::runtime_error("git was not found: install git to open a project from GitHub");
     // protocol.allow=never then https only: whatever the link says, git speaks nothing but https here
-    const int code = run_lines({git->string(), "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "clone", "--depth", "1",
+    const int code = os::run_lines({git->string(), "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "clone", "--depth", "1",
                                 "--progress", "--", repo.url, dest.string()},
                                {"GIT_TERMINAL_PROMPT=0"}, on_line);
     std::error_code ec;
