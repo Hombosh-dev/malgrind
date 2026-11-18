@@ -33,3 +33,5 @@ jobs:
       # one version everywhere: VERSION, the app and the Rust shell
       - run: node scripts/version.mjs check
       - run: node --test scripts/version.test.mjs
+      - run: node scripts/check-portability.mjs
+      - run: node --test scripts/check-portability.test.mjs
