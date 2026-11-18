@@ -55,6 +55,9 @@ target_link_libraries(test_os_paths PRIVATE malgrind_host)
 add_executable(helper_echo tests/helper_echo.cpp)
 target_link_libraries(helper_echo PRIVATE malgrind_host)
 
+add_executable(fake_tool tests/fake_tool.cpp)
+target_link_libraries(fake_tool PRIVATE malgrind_host)
+
 malgrind_add_test(os_process tests/test_os_process.cpp)
 target_link_libraries(test_os_process PRIVATE malgrind_host)
 target_compile_definitions(test_os_process PRIVATE MALGRIND_HELPER_ECHO="$<TARGET_FILE:helper_echo>")
@@ -86,13 +89,25 @@ target_link_libraries(test_boards PRIVATE malgrind_host)
 
 malgrind_add_test(setup tests/test_setup.cpp)
 target_link_libraries(test_setup PRIVATE malgrind_host)
+target_compile_definitions(test_setup PRIVATE MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_setup fake_tool)
+
+malgrind_add_test(github tests/test_github.cpp)
+target_link_libraries(test_github PRIVATE malgrind_host)
+target_compile_definitions(test_github PRIVATE MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_github fake_tool)
+
+malgrind_add_test(pio tests/test_pio.cpp)
+target_link_libraries(test_pio PRIVATE malgrind_host)
+target_compile_definitions(test_pio PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}" MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_pio fake_tool)
 
 malgrind_add_test(settings tests/test_settings.cpp)
 target_link_libraries(test_settings PRIVATE malgrind_host)
 target_compile_definitions(test_settings PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 if(NOT WIN32)
-    # POSIX-pty/shell-dependent test targets wait for P1/T1.10 and P4/T4.2.
+    # POSIX-pty/shell-dependent test targets wait for P4/T4.2.
     malgrind_add_test(access tests/test_access.cpp)
     target_link_libraries(test_access PRIVATE malgrind_host)
 
@@ -102,13 +117,6 @@ if(NOT WIN32)
     malgrind_add_test(flash tests/test_flash.cpp)
     target_link_libraries(test_flash PRIVATE malgrind_host)
     target_compile_definitions(test_flash PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-
-    malgrind_add_test(github tests/test_github.cpp)
-    target_link_libraries(test_github PRIVATE malgrind_host)
-
-    malgrind_add_test(pio tests/test_pio.cpp)
-    target_link_libraries(test_pio PRIVATE malgrind_host)
-    target_compile_definitions(test_pio PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
     malgrind_add_test(serve tests/test_serve.cpp)
     target_link_libraries(test_serve PRIVATE malgrind_host)

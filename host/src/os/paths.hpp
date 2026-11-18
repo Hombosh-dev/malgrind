@@ -34,6 +34,10 @@ void unset_env(std::string_view name);
 [[nodiscard]] std::filesystem::path home_dir();
 // Base directory for per-user application data, without a trailing "malgrind" component.
 [[nodiscard]] std::filesystem::path user_data_dir();
+// Per-user projects root avoiding spaces/non-ASCII where PlatformIO's ESP-IDF builder forbids them.
+[[nodiscard]] std::filesystem::path safe_projects_root_for(Kind os_kind, const std::filesystem::path& user_data,
+                                                             const std::filesystem::path& home, std::string_view system_drive);
+[[nodiscard]] std::filesystem::path safe_projects_root();
 [[nodiscard]] std::filesystem::path executable_path();
 [[nodiscard]] std::string current_user();
 

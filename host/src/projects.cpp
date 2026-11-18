@@ -64,8 +64,7 @@ void to_json(nlohmann::json& j, const ProjectMeta& p) {
 ProjectStore::ProjectStore(fs::path root) : root_(std::move(root)) { fs::create_directories(root_); }
 
 fs::path ProjectStore::default_root() {
-    // macOS avoids "Application Support": PlatformIO's ESP-IDF builder refuses a project path with a space, and clones live here
-    return os::kind() == os::Kind::MacOS ? os::home_dir() / ".malgrind/projects" : os::user_data_dir() / "malgrind/projects";
+    return os::safe_projects_root();
 }
 
 std::optional<fs::path> ProjectStore::dir_of(std::string_view id) const {

@@ -542,15 +542,15 @@ namespace malgrind::host::os {
 
 **Files:** `projects.cpp`, `os/paths*.cpp`, new `host/tests/env.hpp`, new `host/tests/fake_tool.cpp`, tests that used `setenv`/`#!/bin/sh` fakes, `host/CMakeLists.txt`.
 
-1. `os::safe_projects_root()`: Linux `user_data_dir()/malgrind/projects`; macOS `~/.malgrind/projects` (as today);
-   Windows `%LOCALAPPDATA%\malgrind\projects` if that path is ASCII and has no space, else `<SystemDrive>\.malgrind\projects`
-   (PlatformIO's ESP-IDF builder refuses spaces). `ProjectStore::default_root()` uses it.
-2. `tests/env.hpp`: `ScopedEnv` (sets and restores a variable through `os::set_env`), `path_with(dir)` (prepends a dir with `os::kPathListSep`).
-3. `fake_tool.cpp`: one C++ executable that impersonates `pio`, `git`, `esptool`, `pkexec` according to
-   `FAKE_TOOL_ROLE` and the existing `FAKE_*` variables (append argv to `$FAKE_LOG`, fail when `$FAKE_FAIL` matches,
-   print the canned output the shell fakes print today). CMake copies it as `pio[.exe]`, `git[.exe]`, ... into a test
-   bin dir and passes the dir to tests via a compile definition. Replace the `#!/bin/sh` fakes with it, test by test.
-4. Move every test back out of `if(NOT WIN32)` that no longer needs a pty or shell (pty ones wait for T4.2).
+- [x] 1. `os::safe_projects_root()`: Linux `user_data_dir()/malgrind/projects`; macOS `~/.malgrind/projects` (as today);
+       Windows `%LOCALAPPDATA%\malgrind\projects` if that path is ASCII and has no space, else `<SystemDrive>\.malgrind\projects`
+       (PlatformIO's ESP-IDF builder refuses spaces). `ProjectStore::default_root()` uses it.
+- [x] 2. `tests/env.hpp`: `ScopedEnv` (sets and restores a variable through `os::set_env`), `path_with(dir)` (prepends a dir with `os::kPathListSep`).
+- [x] 3. `fake_tool.cpp`: one C++ executable that impersonates `pio`, `git`, `esptool`, `pkexec` according to
+       `FAKE_TOOL_ROLE` and the existing `FAKE_*` variables (append argv to `$FAKE_LOG`, fail when `$FAKE_FAIL` matches,
+       print the canned output the shell fakes print today). CMake copies it as `pio[.exe]`, `git[.exe]`, ... into a test
+       bin dir and passes the dir to tests via a compile definition. Replace the `#!/bin/sh` fakes with it, test by test.
+- [x] 4. Move every test back out of `if(NOT WIN32)` that no longer needs a pty or shell (pty ones wait for T4.2).
 
 Commit `test: portable env helpers and a C++ fake tool instead of shell scripts`.
 

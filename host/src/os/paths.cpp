@@ -1,5 +1,6 @@
 #include "os/paths.hpp"
 
+#include <algorithm>
 #include <cctype>
 
 namespace fs = std::filesystem;
@@ -42,6 +43,25 @@ std::string exe_name(std::string_view base) {
         return std::string(base) + ".exe";
     }
     return std::string(base);
+}
+
+fs::path safe_projects_root_for(Kind os_kind, const fs::path& user_data, const fs::path& home, std::string_view system_drive) {
+    if (os_kind == Kind::MacOS) return home / ".malgrind/projects";
+    const fs::path candidate = user_data / "malgrind/projects";
+    if (os_kind == Kind::Windows) {
+        const std::string utf8 = to_utf8(candidate);
+        const bool safe = !user_data.empty() && !utf8.empty() &&
+                          std::ranges::all_of(utf8, [](unsigned char c) { return c < 0x80 && c != ' '; });
+        if (safe) return candidate;
+        std::string drive = system_drive.empty() ? "C:" : std::string(system_drive);
+        if (drive.back() != '/' && drive.back() != '\\') drive.push_back('/');
+        return from_utf8(drive + ".malgrind/projects");
+    }
+    return candidate;
+}
+
+fs::path safe_projects_root() {
+    return safe_projects_root_for(kind(), user_data_dir(), home_dir(), get_env("SystemDrive").value_or("C:"));
 }
 
 } // namespace malgrind::host::os

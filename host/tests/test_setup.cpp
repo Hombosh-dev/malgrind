@@ -1,4 +1,5 @@
 // Installing PlatformIO and locating Python, PlatformIO core directories, virtual environments and toolchains.
+#include "env.hpp"
 #include "os/paths.hpp"
 #include "os/tools.hpp"
 #include "pio.hpp"
@@ -9,7 +10,6 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,19 +20,6 @@ namespace {
 
 bool contains(const std::string& s, std::string_view part) { return s.find(part) != std::string::npos; }
 
-class ScopedEnv {
-public:
-    explicit ScopedEnv(std::string name) : name_(std::move(name)), saved_(os::get_env(name_)) {}
-    ~ScopedEnv() {
-        if (saved_) os::set_env(name_, *saved_);
-        else os::unset_env(name_);
-    }
-
-private:
-    std::string name_;
-    std::optional<std::string> saved_;
-};
-
 fs::path fresh_dir(const char* name) {
     const auto p = fs::canonical(fs::temp_directory_path()) / name;
     fs::remove_all(p);
@@ -42,37 +29,21 @@ fs::path fresh_dir(const char* name) {
 
 struct Fake {
     ScopedEnv save_path{"PATH"};
-    ScopedEnv save_core{"PLATFORMIO_CORE_DIR"};
+    ScopedEnv save_core{"PLATFORMIO_CORE_DIR", std::nullopt};
+    ScopedEnv save_drive{"SystemDrive", std::nullopt};
     ScopedEnv save_log{"FAKE_LOG"};
-    ScopedEnv save_fail{"FAKE_FAIL"};
+    ScopedEnv save_fail{"FAKE_FAIL", std::nullopt};
     fs::path root = fs::canonical(fs::temp_directory_path()) / "malgrind_setup";
-    fs::path home = root / "home", bin = root / "bin", python = bin / "python3";
+    fs::path home = root / "home", bin = root / "bin", python = bin / os::exe_name("python3");
 
     Fake() {
         fs::remove_all(root);
         fs::create_directories(bin);
         fs::create_directories(home);
-        // "-m venv DIR" makes DIR/bin/python (a copy of this script); "-m pip install ..." makes the pio next to it
-        std::ofstream(python) << R"(#!/bin/sh
-echo "python $*" >> "$FAKE_LOG"
-case "$2" in
-venv)
-  # like Ubuntu without python3-venv: the interpreter is copied, then the missing ensurepip stops it (so there is no pip)
-  mkdir -p "$3/bin" && cp "$0" "$3/bin/python"
-  [ "$FAKE_FAIL" = venv ] && { echo "The virtual environment was not created successfully because ensurepip is not available." >&2; exit 1; }
-  touch "$3/bin/pip" ;;
-pip)
-  [ "$FAKE_FAIL" = pip ] && { echo "ERROR: connection failed" >&2; exit 1; }
-  [ "$FAKE_FAIL" = nopio ] && exit 0
-  printf '#!/bin/sh\n' > "$(dirname "$0")/pio"; chmod +x "$(dirname "$0")/pio" ;;
-esac
-exit 0
-)";
-        fs::permissions(python, fs::perms::owner_exec | fs::perms::owner_read, fs::perm_options::add);
-        os::set_env("PATH", os::to_utf8(bin) + ":/usr/bin:/bin");
-        os::unset_env("PLATFORMIO_CORE_DIR");
+        // "-m venv DIR" creates venv_bin/python; "-m pip install ..." creates venv_bin/pio next to it.
+        fs::copy_file(MALGRIND_FAKE_TOOL, python, fs::copy_options::overwrite_existing);
+        os::set_env("PATH", os::to_utf8(bin));
         os::set_env("FAKE_LOG", os::to_utf8(root / "log"));
-        os::unset_env("FAKE_FAIL");
     }
     ~Fake() { fs::remove_all(root); }
 };
@@ -121,14 +92,14 @@ void install_pio_steps_for_both_layouts() {
 }
 
 void platformio_core_dirs_checks() {
-    ScopedEnv save_core("PLATFORMIO_CORE_DIR");
+    ScopedEnv save_core("PLATFORMIO_CORE_DIR", std::nullopt);
+    ScopedEnv save_drive("SystemDrive", std::nullopt);
     const auto root = fresh_dir("malgrind_setup_cores");
     const auto home = root / "home";
     const auto custom = root / "custom_core";
     const auto missing = root / "missing_core";
     fs::create_directories(home);
 
-    os::unset_env("PLATFORMIO_CORE_DIR");
     assert(os::platformio_core_dirs(home).empty());
 
     fs::create_directories(home / ".platformio");
@@ -152,8 +123,7 @@ void platformio_core_dirs_checks() {
 
     // find_addr2line searches <core>/packages/toolchain-*/bin across platformio_core_dirs
     {
-        ScopedEnv save_path("PATH");
-        os::set_env("PATH", "/nonexistent");
+        ScopedEnv save_path("PATH", os::to_utf8(root / "nonexistent"));
         os::set_env("PLATFORMIO_CORE_DIR", os::to_utf8(custom));
         const auto tool_dir = custom / "packages/toolchain-xtensa-esp32/bin";
         fs::create_directories(tool_dir);
@@ -166,8 +136,8 @@ void platformio_core_dirs_checks() {
 }
 
 void pio_python_checks() {
-    ScopedEnv save_core("PLATFORMIO_CORE_DIR");
-    os::unset_env("PLATFORMIO_CORE_DIR");
+    ScopedEnv save_core("PLATFORMIO_CORE_DIR", std::nullopt);
+    ScopedEnv save_drive("SystemDrive", std::nullopt);
     const auto root = fresh_dir("malgrind_setup_piopy");
     const auto home = root / "home";
     const auto custom = root / "custom_core";
@@ -213,13 +183,16 @@ void installs_into_the_place_find_pio_looks() {
     const auto py = os::find_python();
     assert(py && (*py == std::vector<std::string>{os::to_utf8(fake.python)}));
     assert(!find_pio(fake.home)); // nothing installed yet
+    const auto venv_dir = fake.home / ".platformio/penv";
+    const auto venv_bin = os::venv_bin(venv_dir);
     const auto steps = install_pio_steps(*py, fake.home);
-    assert(steps.size() == 2 && steps[0].argv[2] == "venv" && steps[0].argv[3] == os::to_utf8(fake.home / ".platformio/penv"));
-    assert(steps[1].argv.back() == "platformio" && steps[1].argv[0] == os::to_utf8(fake.home / ".platformio/penv/bin/python"));
+    assert(steps.size() == 2 && steps[0].argv[2] == "venv" && steps[0].argv[3] == os::to_utf8(venv_dir));
+    assert(steps[1].argv.back() == "platformio" && steps[1].argv[0] == os::to_utf8(venv_bin / os::exe_name("python")));
     std::string lines;
     install_pio(*py, fake.home, [&](std::string_view l) { lines.append(l); });
-    assert(fs::exists(fake.home / ".platformio/penv/bin/pio"));
-    assert(find_pio(fake.home) == fake.home / ".platformio/penv/bin/pio"); // exactly where find_pio looks
+    const auto expected_pio = venv_bin / os::exe_name("pio");
+    assert(fs::exists(expected_pio));
+    assert(find_pio(fake.home) == expected_pio); // exactly where find_pio looks
     // a second run reuses the environment: only pip runs
     assert(install_pio_steps(*py, fake.home).size() == 1);
 }
@@ -238,10 +211,12 @@ void a_missing_venv_module_says_what_to_install() {
     // the half-made environment is gone, so after installing venv support a second click installs (a stale one made pip fail forever)
     assert(!fs::exists(fake.home / ".platformio/penv"));
 
-    // Multi-element python_cmd (e.g. `env python3` or Windows `py -3`) also detects venv failure cleanly
+    // Multi-element python_cmd (e.g. Windows `py -3`) also detects venv failure cleanly
+    const auto py_launcher = fake.bin / os::exe_name("py");
+    fs::copy_file(MALGRIND_FAKE_TOOL, py_launcher, fs::copy_options::overwrite_existing);
     bool multi_threw = false;
     try {
-        install_pio({"/usr/bin/env", os::to_utf8(fake.python)}, fake.home, [](std::string_view) {});
+        install_pio({os::to_utf8(py_launcher), "-3"}, fake.home, [](std::string_view) {});
     } catch (const std::exception& e) {
         multi_threw = contains(e.what(), os::python_hint());
     }
@@ -249,15 +224,16 @@ void a_missing_venv_module_says_what_to_install() {
 
     os::unset_env("FAKE_FAIL");
     install_pio({os::to_utf8(fake.python)}, fake.home, [](std::string_view) {});
-    assert(fs::exists(fake.home / ".platformio/penv/bin/pio"));
+    assert(fs::exists(os::venv_bin(fake.home / ".platformio/penv") / os::exe_name("pio")));
 }
 
 void a_broken_environment_from_an_older_try_is_rebuilt() {
     Fake fake;
-    fs::create_directories(fake.home / ".platformio/penv/bin");
-    std::ofstream(fake.home / ".platformio/penv/bin/python") << "#!/bin/sh\n"; // an interpreter, but no pip
+    const auto venv_bin = os::venv_bin(fake.home / ".platformio/penv");
+    fs::create_directories(venv_bin);
+    std::ofstream(venv_bin / os::exe_name("python")) << ""; // an interpreter, but no pip
     assert(install_pio_steps({os::to_utf8(fake.python)}, fake.home).size() == 2); // so the venv step runs again
-    std::ofstream(fake.home / ".platformio/penv/bin/pip") << "";
+    std::ofstream(venv_bin / os::exe_name("pip")) << "";
     assert(install_pio_steps({os::to_utf8(fake.python)}, fake.home).size() == 1); // a working one is reused
 }
 
@@ -287,14 +263,13 @@ void success_without_pio_is_not_success() {
 
 void no_python_means_no_python() {
     Fake fake;
-    os::set_env("PATH", "/nonexistent");
+    os::set_env("PATH", os::to_utf8(fake.root / "nonexistent"));
     assert(!os::find_python());
 
     // Falls back to `python` when `python3` is missing
     fs::remove(fake.python);
-    const auto py2 = fake.bin / "python";
-    std::ofstream(py2) << "#!/bin/sh\n";
-    fs::permissions(py2, fs::perms::owner_exec | fs::perms::owner_read, fs::perm_options::add);
+    const auto py2 = fake.bin / os::exe_name("python");
+    fs::copy_file(MALGRIND_FAKE_TOOL, py2, fs::copy_options::overwrite_existing);
     os::set_env("PATH", os::to_utf8(fake.bin));
     assert((os::find_python() == std::vector<std::string>{os::to_utf8(py2)}));
 }

@@ -64,6 +64,26 @@ void env_and_user_data_dir_checks() {
     }
 }
 
+void safe_projects_root_checks() {
+    assert(os::safe_projects_root_for(os::Kind::Linux, "/home/u/.local/share", "/home/u", "C:") ==
+           fs::path("/home/u/.local/share/malgrind/projects"));
+    assert(os::safe_projects_root_for(os::Kind::MacOS, "/Users/u/Library/Application Support", "/Users/u", "C:") ==
+           fs::path("/Users/u/.malgrind/projects"));
+
+    const auto win_ascii = os::from_utf8("C:\\Users\\Alice\\AppData\\Local");
+    assert(os::safe_projects_root_for(os::Kind::Windows, win_ascii, {}, "C:") == win_ascii / "malgrind/projects");
+
+    const auto win_space = os::from_utf8("C:\\Users\\Ivan Petrenko\\AppData\\Local");
+    assert(os::safe_projects_root_for(os::Kind::Windows, win_space, {}, "C:") == os::from_utf8("C:/.malgrind/projects"));
+    assert(os::safe_projects_root_for(os::Kind::Windows, win_space, {}, "D:") == os::from_utf8("D:/.malgrind/projects"));
+    assert(os::safe_projects_root_for(os::Kind::Windows, win_space, {}, "") == os::from_utf8("C:/.malgrind/projects"));
+
+    const auto win_nonascii = os::from_utf8("C:\\Users\\Іван\\AppData\\Local");
+    assert(os::safe_projects_root_for(os::Kind::Windows, win_nonascii, {}, "C:") == os::from_utf8("C:/.malgrind/projects"));
+
+    assert(!os::safe_projects_root().empty());
+}
+
 void executable_and_time_checks() {
     const auto exe = os::executable_path();
     assert(!exe.empty() && fs::exists(exe));
@@ -84,6 +104,7 @@ int main() {
     exe_name_checks();
     utf8_roundtrip_checks();
     env_and_user_data_dir_checks();
+    safe_projects_root_checks();
     executable_and_time_checks();
     std::puts("os_paths ok");
 }
