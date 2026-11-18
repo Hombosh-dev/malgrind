@@ -396,8 +396,7 @@ private:
         const auto command = os::grant_access_command(dev.path, user, before.group);
         if (!command) {
             if (!os::can_grant_access())
-                throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" +
-                                         os::manual_access_commands(dev.path, user, before.group));
+                throw std::runtime_error(os::grant_access_unavailable(dev.path, user, before.group));
             throw std::runtime_error("cannot build the command for this user or port");
         }
         const int code = os::run_lines(command->argv, command->env, build_line());
@@ -478,7 +477,8 @@ private:
         const auto plan = make_plan(p, options_.agent_dir, settings);
         write_plan_files(p, options_.agent_dir, plan);
         flash_agent(p, options_.home, options_.backup_dir, plan.build, plan.upload, build_line());
-        auto source = open_after_upload(dev.id, options_.devices ? options_.devices : list_devices, options_.open_source);
+        auto source = open_after_upload(dev.id, options_.devices ? options_.devices : list_devices, options_.open_source,
+                                        p.family->agent_baud());
         remember_settings(str_arg(req, "project"), settings);
         return start_live(std::move(source),
                           {.name = str_arg(req, "name"),
@@ -488,7 +488,7 @@ private:
                            .device_id = dev.id,
                            .project_id = str_arg(req, "project"),
                            .settings = settings},
-                          settings.elf.empty() ? agent_elf(p.project, plan.env) : settings.elf, p.project.dir);
+                          settings.elf.empty() ? plan.elf : settings.elf, p.project.dir);
     }
 
     // ---- run settings -------------------------------------------------------------------------------------------------
@@ -528,8 +528,8 @@ private:
         detected.elf.clear(); // a new run finds its ELF after the build: nothing to offer here
         result["detected"] = detected;
         result["envs"] = p.project.envs;
-        result["elf_hint"] = os::to_utf8(agent_elf(p.project, p.env)); // where the build puts it; used when no ELF is chosen
         const auto detected_plan = make_plan(p, options_.agent_dir, {});
+        result["elf_hint"] = os::to_utf8(detected_plan.elf); // where the build puts it; used when no ELF is chosen
         result["detected_commands"] = {{"build", detected_plan.build_text}, {"upload", detected_plan.upload_text}};
         result["warning"] = "";
         try {
@@ -567,9 +567,9 @@ private:
         const auto pio = find_pio(options_.home);
         if (!pio) throw std::runtime_error(kNoPio);
         const auto dev = resolve_serial(device_arg(req));
-        const auto chip = chip_id(*pio, dev.path, options_.home);
-        if (!chip) throw std::runtime_error("esptool could not identify the chip");
-        return {{"chip", *chip}};
+        const auto id = identify_board({options_.home, *pio, options_.agent_dir}, dev.path, {}, dev.family_hint);
+        if (id.chip.empty()) throw std::runtime_error("could not identify the board on " + dev.path);
+        return {{"chip", id.chip}};
     }
 
     std::ostream& out_;

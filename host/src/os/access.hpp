@@ -23,5 +23,6 @@ struct PortAccess {
 [[nodiscard]] std::optional<Invocation> grant_access_command(const std::string& path, const std::string& user,
                                                              const std::string& group);   // Linux only, else nullopt
 [[nodiscard]] std::string manual_access_commands(const std::string& path, const std::string& user, const std::string& group);
+[[nodiscard]] std::string grant_access_unavailable(const std::string& path, const std::string& user, const std::string& group);
 
 } // namespace malgrind::host::os

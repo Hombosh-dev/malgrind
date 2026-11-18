@@ -29,6 +29,14 @@ void override_command(Invocation& inv, const std::string& line, const char* what
     inv.argv = std::move(*words);
 }
 
+const Family* resolve_family(const Prepared& p, const std::string& env) {
+    if (p.family) return p.family;
+    std::string why;
+    const Family* family = family_for_project(p.project, env, why);
+    if (!family) throw std::runtime_error(why);
+    return family;
+}
+
 } // namespace
 
 std::optional<std::vector<std::string>> split_command(std::string_view line) {
@@ -94,7 +102,9 @@ Plan make_plan(const Prepared& p, const fs::path& agent_dir, const RunSettings& 
     const auto extra = split_command(s.extra_args);
     if (!extra) throw std::runtime_error("extra arguments: a quote is left open");
 
-    Plan plan{agent_command(p.pio, p.project, env, p.port, agent_dir, false), agent_command(p.pio, p.project, env, p.port, agent_dir, true), {}, {}};
+    const Family* family = resolve_family(p, env);
+    auto cmds = family->agent_commands(ToolContext{{}, p.pio, agent_dir}, p.project, env, p.port, s, false);
+    Plan plan{std::move(cmds.build), std::move(cmds.upload), std::move(cmds.elf), {}, {}, env, s.rate_hz};
     for (auto* inv : {&plan.build, &plan.upload}) {
         inv->argv.insert(inv->argv.end(), extra->begin(), extra->end());
         if (!s.build_flags.empty()) inv->env.push_back("PLATFORMIO_BUILD_FLAGS=" + s.build_flags);
@@ -103,13 +113,15 @@ Plan make_plan(const Prepared& p, const fs::path& agent_dir, const RunSettings& 
     override_command(plan.upload, s.upload_command, "upload command");
     plan.build_text = join_command(plan.build.argv);
     plan.upload_text = join_command(plan.upload.argv);
-    plan.env = env;
-    plan.rate_hz = s.rate_hz;
     return plan;
 }
 
 void write_plan_files(const Prepared& p, const fs::path& agent_dir, const Plan& plan) {
-    write_agent_sdkconfig(p.project, plan.env, agent_dir, plan.rate_hz);
+    const Family* family = resolve_family(p, plan.env);
+    RunSettings s;
+    s.env = plan.env;
+    s.rate_hz = plan.rate_hz;
+    (void)family->agent_commands(ToolContext{{}, p.pio, agent_dir}, p.project, plan.env, p.port, s, true);
 }
 
 } // namespace malgrind::host

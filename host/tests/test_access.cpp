@@ -146,6 +146,8 @@ void manual_commands_name_the_fix() {
     const auto text = manual_access_commands("/dev/ttyUSB0", "partum", "dialout");
     assert(text.find("sudo setfacl -m u:partum:rw /dev/ttyUSB0") != std::string::npos);
     assert(text.find("sudo usermod -aG dialout partum") != std::string::npos);
+    const auto unavail = grant_access_unavailable("/dev/ttyUSB0", "partum", "dialout");
+    assert(unavail.find("pkexec") != std::string::npos && unavail.find("setfacl") != std::string::npos);
 }
 
 } // namespace

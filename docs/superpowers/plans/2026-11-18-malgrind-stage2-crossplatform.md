@@ -689,9 +689,9 @@ public:
   the ESP32 key *is* the MAC in the same format).
 - `kBaud` is removed; callers use `family->agent_baud()` or, before a family is known (probe/attach), a list of bauds to
   try from `all_families()` (only 921600 today).
-- [ ] 1. Move code, no behaviour change: all existing tests (`test_pio`, `test_flash`, `test_settings`, `test_serve`) pass unchanged except include paths.
-- [ ] 2. `test_families.cpp`: registry lookups; `family_for_project` on an ESP-IDF ini, an Arduino-ESP32 ini (problem text), an STM32 ini (no family → combined why).
-- [ ] 3. Remove cleaned files from the `chip` allow list. Commit `refactor: chip families behind one interface; ESP32 is the first`.
+- [x] 1. Move code, no behaviour change: all existing tests (`test_pio`, `test_flash`, `test_settings`, `test_serve`) pass unchanged except include paths.
+- [x] 2. `test_families.cpp`: registry lookups; `family_for_project` on an ESP-IDF ini, an Arduino-ESP32 ini (problem text), an STM32 ini (no family → combined why).
+- [x] 3. Remove cleaned files from the `chip` allow list. Commit `refactor: chip families behind one interface; ESP32 is the first`.
 
 ### T3.2 Agent directory per family 🟢
 

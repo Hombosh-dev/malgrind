@@ -58,9 +58,9 @@ namespace malgrind::host {
 
 struct ServeOptions {
     std::filesystem::path data_dir;  // where runs are stored
-    std::filesystem::path agent_dir; // contains agent/esp32/ (the app's resources, or the repository)
-    std::filesystem::path home;      // for finding PlatformIO and esptool
-    std::filesystem::path backup_dir; // flash backups, <dir>/<board MAC>/<time>.bin (see backup.hpp)
+    std::filesystem::path agent_dir; // contains agent/<family>/ (the app's resources, or the repository)
+    std::filesystem::path home;      // for finding PlatformIO and target flash tools
+    std::filesystem::path backup_dir; // flash backups, <dir>/<board key>/<time>.bin (see backup.hpp)
     std::filesystem::path projects_dir; // projects and clones of GitHub projects (see projects.hpp)
     std::function<std::vector<Device>()> devices = list_devices;
     SourceFactory open_source{};

@@ -8,6 +8,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DI
 
 add_library(malgrind_host STATIC
     src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/families/registry.cpp src/families/esp32.cpp
     src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
     target_sources(malgrind_host PRIVATE
@@ -80,6 +81,10 @@ target_link_libraries(test_store PRIVATE malgrind_host)
 
 malgrind_add_test(backup tests/test_backup.cpp)
 target_link_libraries(test_backup PRIVATE malgrind_host)
+
+malgrind_add_test(families tests/test_families.cpp)
+target_link_libraries(test_families PRIVATE malgrind_host)
+target_compile_definitions(test_families PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 malgrind_add_test(projects tests/test_projects.cpp)
 target_link_libraries(test_projects PRIVATE malgrind_host)

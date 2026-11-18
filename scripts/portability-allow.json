@@ -1,19 +1,8 @@
 {
   "os": [],
   "chip": [
-    "host/src/backup.hpp",
-    "host/src/boards.cpp",
     "host/src/cli.cpp",
     "host/src/main.cpp",
-    "host/src/ops.cpp",
-    "host/src/ops.hpp",
-    "host/src/pio.cpp",
-    "host/src/pio.hpp",
-    "host/src/plan.cpp",
-    "host/src/plan.hpp",
-    "host/src/serve.cpp",
-    "host/src/serve.hpp",
-    "host/src/settings.hpp",
     "host/src/symbols.cpp"
   ]
 }

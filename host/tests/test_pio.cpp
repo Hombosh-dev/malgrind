@@ -1,5 +1,6 @@
 // PlatformIO integration self-check: project parsing, the sdkconfig merge, the build invocation and process output.
 #include "env.hpp"
+#include "families/esp32.hpp"
 #include "ops.hpp"
 #include "os/paths.hpp"
 #include "os/process.hpp"
@@ -55,9 +56,10 @@ void read_envs() {
     write(dir / "empty/platformio.ini", "[platformio]\n");
     assert(!read_project(dir / "empty", why) && contains(why, "[env:"));
 
-    // PlatformIO's ESP-IDF builder stops with "whitespace in project paths": say so before it does
+    // PlatformIO project reading itself allows spaces; chip families (such as ESP-IDF) reject them if required
     write(dir / "my proj/platformio.ini", "[env:a]\n");
-    assert(!read_project(dir / "my proj", why) && contains(why, "space"));
+    const auto with_space = read_project(dir / "my proj", why);
+    assert(with_space && with_space->dir == dir / "my proj");
     fs::remove_all(dir);
 }
 
@@ -70,10 +72,11 @@ void unsupported_projects_are_refused() {
     ScopedEnv save_drive("SystemDrive", std::nullopt);
     fs::create_directories(dir / "bin");
     fs::copy_file(MALGRIND_FAKE_TOOL, dir / "bin" / os::exe_name("pio"), fs::copy_options::overwrite_existing);
-    const auto prepare = [&](const char* ini, const char* env) {
-        write(dir / "platformio.ini", ini);
+    const auto prepare = [&](const char* ini, const char* env, const fs::path& proj_dir = {}) {
+        const fs::path target = proj_dir.empty() ? dir : proj_dir;
+        write(target / "platformio.ini", ini);
         try {
-            (void)prepare_project(dir, dir, env, "/dev/ttyUSB0");
+            (void)prepare_project(dir, target, env, "/dev/ttyUSB0");
             return std::string("ok");
         } catch (const std::exception& e) {
             return std::string(e.what());
@@ -87,6 +90,7 @@ void unsupported_projects_are_refused() {
     assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = arduino\n[env:b]\nframework = espidf\n", "a"), "espidf")); // per env
     assert(contains(prepare("[env:a]\nplatform = ststm32\nframework = stm32cube\n", "a"), "ESP32"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\n", "missing"), "no environment"));
+    assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = espidf\n", "a", dir / "my proj"), "space"));
     fs::remove_all(dir);
 }
 

@@ -1,4 +1,5 @@
 #include "boards.hpp"
+#include "families/family.hpp"
 #include "os/usb.hpp"
 
 #include <algorithm>
@@ -11,8 +12,10 @@ std::string adapter_name(const UsbInfo& info) {
     if (info.vid == "10c4") return "Silicon Labs CP210x USB-UART";
     if (info.vid == "0403") return "FTDI USB-UART";
     if (info.vid == "067b") return "Prolific PL2303 USB-UART";
-    if (info.vid == "303a") return "Espressif USB-Serial/JTAG (built-in debug port)";
     if (info.vid == "2e8a") return "Raspberry Pi USB serial";
+    for (const Family* f : all_families()) {
+        if (auto name = f->usb_adapter_name(info.vid, info.pid); !name.empty()) return name;
+    }
     return info.product.empty() ? "USB serial adapter" : info.product;
 }
 

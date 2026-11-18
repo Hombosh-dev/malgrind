@@ -1,4 +1,5 @@
 // OS serial port and ByteSource self-check: exclusive open, raw I/O, timeouts, hangup, error mapping, StdinSource, MemorySource.
+#include "families/family.hpp"
 #include "ops.hpp"
 #include "os/paths.hpp"
 #include "os/serial.hpp"
@@ -136,7 +137,7 @@ void source_factory_and_probe_checks() {
 
     const auto opened = open_device_source(dev, [](const Device& d, unsigned baud) {
         assert(d.id == "usb-10c4-ea60-sn-0001");
-        assert(baud == kBaud);
+        assert(baud == family_by_id("esp32")->agent_baud());
         auto src = std::make_unique<MemorySource>(d.name);
         src->push("hi");
         src->close();

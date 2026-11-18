@@ -60,4 +60,9 @@ std::string manual_access_commands(const std::string& path, const std::string& u
     return std::format("sudo setfacl -m u:{0}:rw {1}\nsudo usermod -aG {2} {0}   # then log out and in again", user, path, group);
 }
 
+std::string grant_access_unavailable(const std::string& path, const std::string& user, const std::string& group) {
+    return "pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" +
+           manual_access_commands(path, user, group);
+}
+
 } // namespace malgrind::host::os

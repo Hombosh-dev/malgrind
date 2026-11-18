@@ -17,4 +17,8 @@ std::string manual_access_commands(const std::string& /*path*/, const std::strin
     return {};
 }
 
+std::string grant_access_unavailable(const std::string& /*path*/, const std::string& /*user*/, const std::string& /*group*/) {
+    return "granting serial port access automatically is not supported on this OS";
+}
+
 } // namespace malgrind::host::os

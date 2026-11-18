@@ -251,9 +251,10 @@ int run_command(const Options& o, const ServeOptions& defaults) {
     Options with = o;
     with.values["env"] = p.env;
     auto source = dev->id.empty()
-        ? open_after_upload(dev->path, [&] { return std::vector<Device>{*dev}; }, defaults.open_source)
-        : open_after_upload(dev->id, defaults.devices ? defaults.devices : list_devices, defaults.open_source);
-    return watch(std::move(source), *dev, with, defaults, p.project.dir, agent_elf(p.project, p.env));
+        ? open_after_upload(dev->path, [&] { return std::vector<Device>{*dev}; }, defaults.open_source, p.family->agent_baud())
+        : open_after_upload(dev->id, defaults.devices ? defaults.devices : list_devices, defaults.open_source,
+                            p.family->agent_baud());
+    return watch(std::move(source), *dev, with, defaults, p.project.dir, plan.elf);
 }
 
 int restore(const Options& o, const ServeOptions& defaults) {
@@ -270,12 +271,15 @@ int detect(const Options& o, const ServeOptions& defaults) {
     const auto dev = resolve_serial_device(o, defaults);
     if (!dev) return 2;
     if (const auto pio = find_pio(defaults.home)) {
-        if (const auto chip = chip_id(*pio, dev->path, defaults.home)) { // resets the board
-            std::cout << "esptool: " << *chip << "\n";
-            return 0;
-        }
+        try {
+            const auto id = identify_board({defaults.home, *pio, defaults.agent_dir}, dev->path, {}, dev->family_hint);
+            if (!id.chip.empty()) { // resets the board
+                std::cout << "board: " << id.chip << "\n";
+                return 0;
+            }
+        } catch (const std::exception&) {}
     }
-    std::cout << "esptool could not identify the chip; listening for a malgrind frame...\n";
+    std::cout << "could not identify the board; listening for a malgrind frame...\n";
     const auto probe = probe_device(*dev, defaults.open_source);
     if (!probe.agent) {
         std::cerr << (probe.busy ? "the port is busy\n" : probe.denied ? "no permission to open the port\n" : "no chip found\n");
