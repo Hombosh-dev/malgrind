@@ -535,22 +535,22 @@ namespace malgrind::host::os {
 - `setup` protocol adds `python_hint`; `Setup.svelte` shows it instead of the hard-coded `sudo apt install ...` line, and
   "downloads the toolchain for your board (about 1 GB)" instead of naming ESP32.
 
-- [x] Tests: `venv_bin`, `install_pio_steps` on a fake home for both layouts (pass the layout as a parameter to a pure
+- [ ] Tests: `venv_bin`, `install_pio_steps` on a fake home for both layouts (pass the layout as a parameter to a pure
       helper so both run on Linux CI), `platformio_core_dirs` with `PLATFORMIO_CORE_DIR`. Commit `feat(os): find Python and PlatformIO on every OS`.
 
 ### T1.10 Data directories without spaces, portable test helpers 🟡
 
 **Files:** `projects.cpp`, `os/paths*.cpp`, new `host/tests/env.hpp`, new `host/tests/fake_tool.cpp`, tests that used `setenv`/`#!/bin/sh` fakes, `host/CMakeLists.txt`.
 
-- [x] 1. `os::safe_projects_root()`: Linux `user_data_dir()/malgrind/projects`; macOS `~/.malgrind/projects` (as today);
-       Windows `%LOCALAPPDATA%\malgrind\projects` if that path is ASCII and has no space, else `<SystemDrive>\.malgrind\projects`
-       (PlatformIO's ESP-IDF builder refuses spaces). `ProjectStore::default_root()` uses it.
-- [x] 2. `tests/env.hpp`: `ScopedEnv` (sets and restores a variable through `os::set_env`), `path_with(dir)` (prepends a dir with `os::kPathListSep`).
-- [x] 3. `fake_tool.cpp`: one C++ executable that impersonates `pio`, `git`, `esptool`, `pkexec` according to
-       `FAKE_TOOL_ROLE` and the existing `FAKE_*` variables (append argv to `$FAKE_LOG`, fail when `$FAKE_FAIL` matches,
-       print the canned output the shell fakes print today). CMake copies it as `pio[.exe]`, `git[.exe]`, ... into a test
-       bin dir and passes the dir to tests via a compile definition. Replace the `#!/bin/sh` fakes with it, test by test.
-- [x] 4. Move every test back out of `if(NOT WIN32)` that no longer needs a pty or shell (pty ones wait for T4.2).
+1. `os::safe_projects_root()`: Linux `user_data_dir()/malgrind/projects`; macOS `~/.malgrind/projects` (as today);
+   Windows `%LOCALAPPDATA%\malgrind\projects` if that path is ASCII and has no space, else `<SystemDrive>\.malgrind\projects`
+   (PlatformIO's ESP-IDF builder refuses spaces). `ProjectStore::default_root()` uses it.
+2. `tests/env.hpp`: `ScopedEnv` (sets and restores a variable through `os::set_env`), `path_with(dir)` (prepends a dir with `os::kPathListSep`).
+3. `fake_tool.cpp`: one C++ executable that impersonates `pio`, `git`, `esptool`, `pkexec` according to
+   `FAKE_TOOL_ROLE` and the existing `FAKE_*` variables (append argv to `$FAKE_LOG`, fail when `$FAKE_FAIL` matches,
+   print the canned output the shell fakes print today). CMake copies it as `pio[.exe]`, `git[.exe]`, ... into a test
+   bin dir and passes the dir to tests via a compile definition. Replace the `#!/bin/sh` fakes with it, test by test.
+4. Move every test back out of `if(NOT WIN32)` that no longer needs a pty or shell (pty ones wait for T4.2).
 
 Commit `test: portable env helpers and a C++ fake tool instead of shell scripts`.
 
@@ -589,7 +589,7 @@ struct Device {
 [[nodiscard]] std::optional<Device> resolve_device(std::string_view ref, const std::vector<Device>& now);
 }
 ```
-- [x] Tests: id rules (serial with spaces and slashes, location only, no USB), `resolve_device` by id, by path, by name, ambiguity. Commit `feat: devices with stable OS-neutral ids`.
+- [ ] Tests: id rules (serial with spaces and slashes, location only, no USB), `resolve_device` by id, by path, by name, ambiguity. Commit `feat: devices with stable OS-neutral ids`.
 
 ### T2.2 Protocol: `devices`, and every `port` argument accepts a device 🟡
 
@@ -606,7 +606,7 @@ struct Device {
   may renumber `ttyACM0 → ttyACM1`; a board's native USB re-enumerates after reset).
 - `RunMeta` gains `device_id` (old runs: empty), set by `new_run`/`attach`; `port` stays as the human label.
 - Update the protocol comment at the top of `serve.hpp`.
-- [x] Tests in `test_serve.cpp`: `devices` shape (with a fake list injected through a `std::function` in `ServeOptions`,
+- [ ] Tests in `test_serve.cpp`: `devices` shape (with a fake list injected through a `std::function` in `ServeOptions`,
       default `list_devices`), `attach {device: "<id>"}` resolves. Commit `feat(serve): devices command; runs remember the device id`.
 
 ### T2.3 UI: tiles keyed by device id 🟢
@@ -627,7 +627,7 @@ struct Device {
   device: `id  name  title  [agent?]` (no probing unless `--probe`).
 - "no serial port found" message lists what was searched through `os::serial_search_hint()` (add to `os/ports.hpp`:
   Linux "/dev/ttyUSB*, /dev/ttyACM*", macOS "/dev/cu.usb*", Windows "COM ports of USB devices").
-- [x] Commit `feat(cli): --device and a devices command`.
+- [ ] Commit `feat(cli): --device and a devices command`.
 
 ---
 
@@ -750,7 +750,7 @@ public: void push(std::span<const std::uint8_t>); void close(); std::vector<std:
 ```
 `Session::live(std::unique_ptr<ByteSource>, ...)`. `open_source`/`open_after_upload` return `std::unique_ptr<ByteSource>`.
 
-- [x] Commit `refactor: ByteSource interface (serial, stdin, memory)`.
+- [ ] Commit `refactor: ByteSource interface (serial, stdin, memory)`.
 
 ### T4.2 Tests without a pty 🟢
 
@@ -759,7 +759,7 @@ public: void push(std::span<const std::uint8_t>); void close(); std::vector<std:
 - Every test that only needs "bytes arrive, then the stream ends" uses `MemorySource` (inject through a factory
   `std::function<std::unique_ptr<ByteSource>(const Device&)>` in `ServeOptions`, default `SerialSource::open`).
 - Keep **one** pty test per suite (POSIX only) that proves the real serial path; everything else runs on Windows too.
-- [ ] Remove the remaining `if(NOT WIN32)` around these suites. Commit `test: drive sessions through MemorySource`.
+- [x] Remove the remaining `if(NOT WIN32)` around these suites. Commit `test: drive sessions through MemorySource`.
 
 ---
 

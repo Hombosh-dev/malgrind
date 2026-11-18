@@ -109,22 +109,22 @@ malgrind_add_test(settings tests/test_settings.cpp)
 target_link_libraries(test_settings PRIVATE malgrind_host)
 target_compile_definitions(test_settings PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+malgrind_add_test(cli tests/test_cli.cpp)
+target_link_libraries(test_cli PRIVATE malgrind_host)
+
+malgrind_add_test(serve tests/test_serve.cpp)
+target_link_libraries(test_serve PRIVATE malgrind_host)
+target_compile_definitions(test_serve PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}" MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_serve fake_tool)
+
+malgrind_add_test(session tests/test_session.cpp)
+target_link_libraries(test_session PRIVATE malgrind_host)
+
 if(NOT WIN32)
-    # POSIX-pty/shell-dependent test targets wait for P4/T4.2.
     malgrind_add_test(access tests/test_access.cpp)
     target_link_libraries(test_access PRIVATE malgrind_host)
-
-    malgrind_add_test(cli tests/test_cli.cpp)
-    target_link_libraries(test_cli PRIVATE malgrind_host)
 
     malgrind_add_test(flash tests/test_flash.cpp)
     target_link_libraries(test_flash PRIVATE malgrind_host)
     target_compile_definitions(test_flash PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-
-    malgrind_add_test(serve tests/test_serve.cpp)
-    target_link_libraries(test_serve PRIVATE malgrind_host)
-    target_compile_definitions(test_serve PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
-
-    malgrind_add_test(session tests/test_session.cpp)
-    target_link_libraries(test_session PRIVATE malgrind_host)
 endif()
