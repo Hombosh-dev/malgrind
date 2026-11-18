@@ -179,10 +179,10 @@ Two rule sets:
 Generate it by running the checker once and listing every violating file. **Each later task removes the files it cleans
 from this list**; P1 ends with `"os": []`, P3 ends with `"chip": []`.
 
-- [ ] 1. Write the test first: fixtures as strings, assert each rule fires and that allow-listed files and `os/` are skipped.
-- [ ] 2. Implement with `node:fs` recursive `readdirSync`, no dependencies.
-- [ ] 3. Run it, fill the allow list, run again: exit 0.
-- [ ] 4. Commit `chore: portability checker (os and chip rules) with a shrinking allow list`.
+- [x] 1. Write the test first: fixtures as strings, assert each rule fires and that allow-listed files and `os/` are skipped.
+- [x] 2. Implement with `node:fs` recursive `readdirSync`, no dependencies.
+- [x] 3. Run it, fill the allow list, run again: exit 0.
+- [x] 4. Commit `chore: portability checker (os and chip rules) with a shrinking allow list`.
 
 **Done when:** CI runs it; `node scripts/check-portability.mjs` is green on the current tree.
 
@@ -190,23 +190,23 @@ from this list**; P1 ends with `"os": []`, P3 ends with `"chip": []`.
 
 **Files:** `CMakeLists.txt`, `core/CMakeLists.txt`, `host/CMakeLists.txt`.
 
-- [ ] 1. Root: add `function(malgrind_add_test name)` that does `add_executable(test_${name} ${ARGN})`,
+- [x] 1. Root: add `function(malgrind_add_test name)` that does `add_executable(test_${name} ${ARGN})`,
       `target_compile_options(test_${name} PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/UNDEBUG,-UNDEBUG>)`, `add_test(NAME ${name} COMMAND test_${name})`.
       Replace every hand-written test block in `core/` and `host/` with it (keep the `target_link_libraries` lines).
-- [ ] 2. Replace `-Wall -Wextra` with `$<IF:$<CXX_COMPILER_ID:MSVC>,/W3 /permissive- /Zc:__cplusplus /utf-8 /EHsc,-Wall -Wextra>`.
-- [ ] 3. `if(WIN32) add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 UNICODE _UNICODE) endif()` in the root.
-- [ ] 4. Tests that need a POSIX pty or `#!/bin/sh` fakes (`test_access test_cli test_flash test_github test_pio test_serve test_session`)
+- [x] 2. Replace `-Wall -Wextra` with `$<IF:$<CXX_COMPILER_ID:MSVC>,/W3 /permissive- /Zc:__cplusplus /utf-8 /EHsc,-Wall -Wextra>`.
+- [x] 3. `if(WIN32) add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00 UNICODE _UNICODE) endif()` in the root.
+- [x] 4. Tests that need a POSIX pty or `#!/bin/sh` fakes (`test_access test_cli test_flash test_github test_pio test_serve test_session`)
       are registered inside `if(NOT WIN32)` **for now**; P1/T1.10 and P4/T4.2 bring them back.
-- [ ] 5. Linux and macOS build and ctest still pass. Commit `build: portable compiler flags and malgrind_add_test`.
+- [x] 5. Linux and macOS build and ctest still pass. Commit `build: portable compiler flags and malgrind_add_test`.
 
 ### T0.3 Spec update 🟢
 
 **Files:** `docs/superpowers/specs/2026-11-15-malgrind-app-design.md`.
 
-- [ ] Section 2: move "Windows" from non-goals to goals ("`.exe` installer built by CI, verified by the user").
-- [ ] Add section **5b "Devices and families (added 2026-11-18)"**: copy decisions 2–4 of this plan's section 2 and the
+- [x] Section 2: move "Windows" from non-goals to goals ("`.exe` installer built by CI, verified by the user").
+- [x] Add section **5b "Devices and families (added 2026-11-18)"**: copy decisions 2–4 of this plan's section 2 and the
       device-id rules of T2.1.
-- [ ] Section 12: replace the staging list with a pointer to this plan. Commit `docs(spec): windows, devices and families`.
+- [x] Section 12: replace the staging list with a pointer to this plan. Commit `docs(spec): windows, devices and families`.
 
 ---
 
