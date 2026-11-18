@@ -1,5 +1,7 @@
 #include "plan.hpp"
 
+#include "os/paths.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <format>
@@ -19,7 +21,9 @@ void override_command(Invocation& inv, const std::string& line, const char* what
     auto words = split_command(line);
     if (!words || words->empty()) throw std::runtime_error(std::format("{}: this is not a command line (is a quote left open?)", what));
     const auto& program = words->front();
-    const bool found = program.find('/') != std::string::npos ? fs::exists(program) : find_in_path(program).has_value();
+    const bool has_sep = program.find('/') != std::string::npos ||
+                         (os::kind() == os::Kind::Windows && program.find('\\') != std::string::npos);
+    const bool found = has_sep ? fs::exists(os::from_utf8(program)) : find_in_path(program).has_value();
     if (!found) throw std::runtime_error(std::format("{}: '{}' was not found", what, program));
     inv.argv = std::move(*words);
 }
@@ -85,7 +89,7 @@ Plan make_plan(const Prepared& p, const fs::path& agent_dir, const RunSettings& 
         throw std::runtime_error(std::format("platformio.ini has no environment '{}'", env));
     if (s.rate_hz != 0 && (s.rate_hz < kMinRateHz || s.rate_hz > kMaxRateHz))
         throw std::runtime_error(std::format("the sampling rate must be between {} and {} Hz", kMinRateHz, kMaxRateHz));
-    if (!s.elf.empty() && !fs::exists(s.elf)) throw std::runtime_error("the firmware ELF does not exist: " + s.elf.string());
+    if (!s.elf.empty() && !fs::exists(s.elf)) throw std::runtime_error("the firmware ELF does not exist: " + os::to_utf8(s.elf));
     const auto extra = split_command(s.extra_args);
     if (!extra) throw std::runtime_error("extra arguments: a quote is left open");
 

@@ -5,6 +5,7 @@
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
+#include "os/paths.hpp"
 #include "plan.hpp"
 #include "pio.hpp"
 #include "process.hpp"
@@ -118,15 +119,15 @@ private:
     json command(const std::string& cmd, const json& req) {
         if (cmd == "hello") {
             const auto pio = find_pio(options_.home);
-            return {{"version", kVersion}, {"data_dir", options_.data_dir.string()}, {"pio", pio ? json(pio->string()) : json(nullptr)}};
+            return {{"version", kVersion}, {"data_dir", os::to_utf8(options_.data_dir)}, {"pio", pio ? json(os::to_utf8(*pio)) : json(nullptr)}};
         }
         if (cmd == "ports") return json(find_serial_ports());
         if (cmd == "probe") return probe(req);
         if (cmd == "project") {
             std::string why;
-            const auto project = read_project(str_arg(req, "dir"), why);
+            const auto project = read_project(os::from_utf8(str_arg(req, "dir")), why);
             if (!project) throw std::runtime_error(why);
-            return {{"dir", project->dir.string()}, {"envs", project->envs}, {"default_env", project->default_env}};
+            return {{"dir", os::to_utf8(project->dir)}, {"envs", project->envs}, {"default_env", project->default_env}};
         }
         if (cmd == "boards") return boards();
         if (cmd == "run_plan") return run_plan(req);
@@ -231,8 +232,8 @@ private:
         const auto port = str_arg(req, "port");
         std::string project_id;
         const auto settings = settings_arg(req);
-        fs::path project_dir, elf = !settings.elf.empty() ? settings.elf : fs::path(opt_str_arg(req, "elf").value_or(""));
-        if (!elf.empty() && !fs::exists(elf)) throw std::runtime_error("the firmware ELF does not exist: " + elf.string());
+        fs::path project_dir, elf = !settings.elf.empty() ? settings.elf : os::from_utf8(opt_str_arg(req, "elf").value_or(""));
+        if (!elf.empty() && !fs::exists(elf)) throw std::runtime_error("the firmware ELF does not exist: " + os::to_utf8(elf));
         if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
             const auto project = project_of(*id);
             project_id = project.id;
@@ -242,7 +243,7 @@ private:
         auto source = open_source(port);
         remember_settings(project_id, settings);
         return start_live(std::move(source),
-                          {.name = str_arg(req, "name"), .project = project_dir.string(), .port = port, .project_id = project_id, .settings = settings},
+                          {.name = str_arg(req, "name"), .project = os::to_utf8(project_dir), .port = port, .project_id = project_id, .settings = settings},
                           std::move(elf), std::move(project_dir));
     }
 
@@ -313,13 +314,13 @@ private:
         const auto source = str_arg(req, "source");
         auto name = opt_str_arg(req, "name").value_or("");
         if (source == "folder") {
-            const fs::path chosen = str_arg(req, "dir");
+            const fs::path chosen = os::from_utf8(str_arg(req, "dir"));
             std::string why;
             const auto found = find_project(chosen, why);
             if (!found) throw std::runtime_error(why);
             const auto info = read_project(*found, why);
             if (!info) throw std::runtime_error(why);
-            if (name.empty()) name = fs::absolute(chosen).lexically_normal().parent_path().empty() ? "project" : info->dir.filename().string();
+            if (name.empty()) name = fs::absolute(chosen).lexically_normal().parent_path().empty() ? "project" : os::to_utf8(info->dir.filename());
             // the user picked their own folder, so it is trusted; they are not asked again
             return project_json(projects_.create({.name = name, .origin = Origin::Folder, .dir = info->dir, .env = info->default_env, .trusted = true}));
         }
@@ -340,9 +341,9 @@ private:
             return project_json(project); // not trusted yet
         }
         if (source == "none") {
-            const auto elf = opt_str_arg(req, "elf").value_or("");
+            const auto elf = os::from_utf8(opt_str_arg(req, "elf").value_or(""));
             if (!elf.empty() && !elf_machine(elf)) throw std::runtime_error("that file is not an ELF (a firmware .elf)");
-            if (name.empty()) name = elf.empty() ? "Board" : fs::path(elf).stem().string();
+            if (name.empty()) name = elf.empty() ? "Board" : os::to_utf8(elf.stem());
             return project_json(projects_.create({.name = name, .origin = Origin::None}, elf));
         }
         throw std::runtime_error("source must be \"folder\", \"git\" or \"none\"");
@@ -350,12 +351,12 @@ private:
 
     // What the machine has for the jobs the app needs done: PlatformIO to build, git for GitHub links, pkexec to ask for access.
     json setup_info() {
-        auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(p->string()) : json(nullptr); };
+        auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(os::to_utf8(*p)) : json(nullptr); };
         return {{"pio", path_or_null(find_pio(options_.home))},
                 {"python", path_or_null(find_python())},
                 {"git", path_or_null(find_in_path("git"))},
                 {"pkexec", find_in_path("pkexec").has_value()},
-                {"user", current_user()}};
+                {"user", os::current_user()}};
     }
 
     json install_pio_command() {
@@ -363,7 +364,7 @@ private:
         const auto python = find_python();
         if (!python) throw std::runtime_error("Python 3 was not found: install it (on Ubuntu: sudo apt install python3 python3-venv) and try again");
         install_pio(*python, options_.home, build_line());
-        return {{"pio", find_pio(options_.home)->string()}};
+        return {{"pio", os::to_utf8(*find_pio(options_.home))}};
     }
 
     // Gives this user access to a serial port that belongs to a group they are not in: one system password prompt (pkexec).
@@ -373,7 +374,7 @@ private:
         if (std::ranges::find(known, port) == known.end()) throw std::runtime_error("not a serial port of this computer: " + port);
         const auto before = port_access(port);
         if (before.ok) return {{"ok_now", true}, {"relogin", false}}; // nothing to do
-        const auto user = current_user();
+        const auto user = os::current_user();
         const auto pkexec = find_in_path("pkexec");
         if (!pkexec)
             throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" + manual_commands(port, user, before.group));
@@ -440,7 +441,7 @@ private:
         auto source = open_after_upload(p.port);
         remember_settings(str_arg(req, "project"), settings);
         return start_live(std::move(source),
-                          {.name = str_arg(req, "name"), .project = p.project.dir.string(), .env = plan.env, .port = p.port,
+                          {.name = str_arg(req, "name"), .project = os::to_utf8(p.project.dir), .env = plan.env, .port = p.port,
                            .project_id = str_arg(req, "project"), .settings = settings},
                           settings.elf.empty() ? agent_elf(p.project, plan.env) : settings.elf, p.project.dir);
     }
@@ -481,7 +482,7 @@ private:
         detected.elf.clear(); // a new run finds its ELF after the build: nothing to offer here
         result["detected"] = detected;
         result["envs"] = p.project.envs;
-        result["elf_hint"] = agent_elf(p.project, p.env).string(); // where the build puts it; used when no ELF is chosen
+        result["elf_hint"] = os::to_utf8(agent_elf(p.project, p.env)); // where the build puts it; used when no ELF is chosen
         const auto detected_plan = make_plan(p, options_.agent_dir, {});
         result["detected_commands"] = {{"build", detected_plan.build_text}, {"upload", detected_plan.upload_text}};
         result["warning"] = "";

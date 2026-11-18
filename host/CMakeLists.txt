@@ -7,7 +7,14 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/access.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/process.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/access.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/os/paths.cpp)
+if(WIN32)
+    target_sources(malgrind_host PRIVATE src/os/paths_win.cpp)
+    target_link_libraries(malgrind_host PUBLIC setupapi cfgmgr32 ws2_32 shell32 ole32 advapi32)
+else()
+    target_sources(malgrind_host PRIVATE src/os/paths_posix.cpp)
+endif()
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
 target_compile_features(malgrind_host PUBLIC cxx_std_20)
@@ -32,6 +39,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # the packaged sidecar must not need a newer libstdc++ than the user's distribution has
     target_link_options(malgrind-cli PRIVATE -static-libstdc++ -static-libgcc)
 endif()
+
+malgrind_add_test(os_paths tests/test_os_paths.cpp)
+target_link_libraries(test_os_paths PRIVATE malgrind_host)
 
 malgrind_add_test(host tests/test_host.cpp)
 target_link_libraries(test_host PRIVATE malgrind_host)

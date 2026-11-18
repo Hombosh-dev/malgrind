@@ -68,7 +68,7 @@ private:
 class RunStore {
 public:
     explicit RunStore(std::filesystem::path root); // created if missing
-    // $XDG_DATA_HOME/malgrind/runs, else ~/.local/share/malgrind/runs; macOS: ~/Library/Application Support/malgrind/runs
+    // Per-user data directory (os::user_data_dir()) + "/malgrind/runs".
     [[nodiscard]] static std::filesystem::path default_root();
 
     [[nodiscard]] RunWriter create(RunMeta meta); // assigns id ("yyyymmdd-hhmmss", "-2"... on a clash) and `started`

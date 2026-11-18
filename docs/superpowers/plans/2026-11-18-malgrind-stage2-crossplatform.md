@@ -261,14 +261,14 @@ inline constexpr char kPathListSep = /* ';' on Windows, ':' elsewhere */;
 }
 ```
 
-- [ ] 1. Test: `split_path_list("a::b", ':') == {a,b}`; `exe_name`; `to_utf8(from_utf8("проєкт/ü")) == "проєкт/ü"`; `user_data_dir()` honours `XDG_DATA_HOME` on Linux (set via `set_env`).
-- [ ] 2. Implement. Windows `home_dir`/`user_data_dir` use `SHGetKnownFolderPath(FOLDERID_Profile / FOLDERID_LocalAppData)`.
-- [ ] 3. Replace: `main.cpp` `executable_dir()` → `os::executable_path().parent_path()`, `std::getenv("HOME")` → `os::home_dir()`;
+- [x] 1. Test: `split_path_list("a::b", ':') == {a,b}`; `exe_name`; `to_utf8(from_utf8("проєкт/ü")) == "проєкт/ü"`; `user_data_dir()` honours `XDG_DATA_HOME` on Linux (set via `set_env`).
+- [x] 2. Implement. Windows `home_dir`/`user_data_dir` use `SHGetKnownFolderPath(FOLDERID_Profile / FOLDERID_LocalAppData)`.
+- [x] 3. Replace: `main.cpp` `executable_dir()` → `os::executable_path().parent_path()`, `std::getenv("HOME")` → `os::home_dir()`;
       `RunStore::default_root()` → `os::user_data_dir() / "malgrind/runs"`; `ProjectStore::default_root()` keeps its macOS
       `~/.malgrind/projects` special case through `os::kind()` (T1.10 refines Windows); `gmtime_r` → `os::utc_tm`;
       `find_in_path` and `find_addr2line` split `PATH` with `os::split_path_list`.
-- [ ] 4. Sweep: in `serve.cpp`, `store.cpp`, `projects.cpp`, `settings.cpp`, `plan.cpp`, every path that goes into JSON or argv uses `os::to_utf8`, every JSON string that becomes a path uses `os::from_utf8`.
-- [ ] 5. Remove cleaned files from `portability-allow.json` (`os`). Commit `refactor(os): paths, environment and UTF-8 in one place`.
+- [x] 4. Sweep: in `serve.cpp`, `store.cpp`, `projects.cpp`, `settings.cpp`, `plan.cpp`, every path that goes into JSON or argv uses `os::to_utf8`, every JSON string that becomes a path uses `os::from_utf8`.
+- [x] 5. Remove cleaned files from `portability-allow.json` (`os`). Commit `refactor(os): paths, environment and UTF-8 in one place`.
 
 ### T1.2 Processes 🟡
 

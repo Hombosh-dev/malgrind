@@ -1,19 +1,15 @@
 // malgrind-cli: the engine of the malgrind app. `serve` speaks JSON lines to the app (serve.hpp); `run`, `attach` and
 // `detect` are the terminal mode with a live page in the browser (cli.hpp).
 #include "cli.hpp"
+#include "os/paths.hpp"
 #include "serve.hpp"
 #include "projects.hpp"
 #include "store.hpp"
 
 #include <csignal>
-#include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string_view>
-#ifdef __APPLE__
-#include <mach-o/dyld.h>
-#endif
 
 namespace {
 
@@ -21,30 +17,19 @@ namespace {
 #define MALGRIND_DEFAULT_AGENT_DIR ""
 #endif
 
-std::filesystem::path executable_dir() {
-#ifdef __APPLE__
-    char buf[4096];
-    std::uint32_t size = sizeof buf;
-    if (_NSGetExecutablePath(buf, &size) == 0) return std::filesystem::path(buf).parent_path();
-#else
-    std::error_code ec;
-    if (const auto exe = std::filesystem::read_symlink("/proc/self/exe", ec); !ec) return exe.parent_path();
-#endif
-    return {};
-}
-
 // Where agent/esp32/ is: $MALGRIND_AGENT_DIR, else the app's resources next to this executable (.deb: /usr/lib/malgrind,
 // .app: Contents/Resources), else the repository this binary was built from.
-std::string default_agent_dir() {
+std::filesystem::path default_agent_dir() {
     namespace fs = std::filesystem;
-    if (const char* env = std::getenv("MALGRIND_AGENT_DIR"); env && *env) return env;
-    if (const auto exe = executable_dir(); !exe.empty()) {
+    namespace os = malgrind::host::os;
+    if (const auto env = os::get_env("MALGRIND_AGENT_DIR"); env && !env->empty()) return os::from_utf8(*env);
+    if (const auto exe = os::executable_path().parent_path(); !exe.empty()) {
         for (const char* rel : {"agent-src", "../lib/malgrind/agent-src", "../Resources/agent-src"}) {
             const auto candidate = (exe / rel).lexically_normal();
-            if (std::error_code ec; fs::exists(candidate / "agent/esp32/inject.py", ec)) return candidate.string();
+            if (std::error_code ec; fs::exists(candidate / "agent/esp32/inject.py", ec)) return candidate;
         }
     }
-    return MALGRIND_DEFAULT_AGENT_DIR;
+    return os::from_utf8(MALGRIND_DEFAULT_AGENT_DIR);
 }
 
 constexpr std::string_view kServeUsage = "malgrind-cli serve [--data-dir DIR] [--agent-dir DIR]\n";
@@ -63,9 +48,8 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const char* home = std::getenv("HOME");
     // backups belong to boards, not to a runs directory: --data-dir does not move them
-    ServeOptions options{RunStore::default_root(), default_agent_dir(), home ? home : "",
+    ServeOptions options{RunStore::default_root(), default_agent_dir(), os::home_dir(),
                          RunStore::default_root().parent_path() / "backups", ProjectStore::default_root()};
 
     std::signal(SIGPIPE, SIG_IGN); // a closed browser connection or app must not kill us before the run is saved
@@ -81,7 +65,7 @@ int main(int argc, char** argv) {
             std::cerr << kServeUsage;
             return 2;
         }
-        (args[i] == "--data-dir" ? options.data_dir : options.agent_dir) = args[i + 1];
+        (args[i] == "--data-dir" ? options.data_dir : options.agent_dir) = os::from_utf8(args[i + 1]);
     }
     return serve(std::cin, std::cout, options);
 }

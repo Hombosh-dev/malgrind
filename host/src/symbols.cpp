@@ -1,9 +1,9 @@
 #include "symbols.hpp"
 
+#include "os/paths.hpp"
 #include "process.hpp"
 
 #include <algorithm>
-#include <cstdlib>
 #include <format>
 #include <sstream>
 
@@ -45,18 +45,17 @@ std::string short_name(std::string name) {
 
 fs::path find_addr2line(Arch arch) {
     std::vector<fs::path> dirs;
-    if (const char* path = std::getenv("PATH")) {
-        std::istringstream in(path);
-        for (std::string d; std::getline(in, d, ':');) dirs.emplace_back(d);
-    }
-    if (const char* home = std::getenv("HOME")) {
+    if (const auto path = os::get_env("PATH")) dirs = os::split_path_list(*path);
+    if (const auto home = os::home_dir(); !home.empty()) {
         std::error_code ec;
-        for (const auto& pkg : fs::directory_iterator(fs::path(home) / ".platformio/packages", ec))
-            if (pkg.path().filename().string().starts_with("toolchain-")) dirs.push_back(pkg.path() / "bin");
+        for (const auto& pkg : fs::directory_iterator(home / ".platformio/packages", ec))
+            if (os::to_utf8(pkg.path().filename()).starts_with("toolchain-")) dirs.push_back(pkg.path() / "bin");
     }
-    for (const auto& name : tool_names(arch))
+    for (const auto& name : tool_names(arch)) {
+        const auto bin = os::exe_name(name);
         for (const auto& dir : dirs)
-            if (std::error_code ec; fs::exists(dir / name, ec)) return dir / name;
+            if (std::error_code ec; fs::exists(dir / bin, ec)) return dir / bin;
+    }
     return {};
 }
 
@@ -80,7 +79,7 @@ void Symbolizer::prepare(const Frame& frame) {
         constexpr const char* kSentinel = "0xffffffff";
         for (std::size_t first = 0; first < todo.size(); first += kChunk) {
             const auto last = std::min(first + kChunk, todo.size());
-            std::vector<std::string> argv{tool_.string(), "-i", "-f", "-C", "-e", elf_.string()};
+            std::vector<std::string> argv{os::to_utf8(tool_), "-i", "-f", "-C", "-e", os::to_utf8(elf_)};
             for (auto i = first; i < last; ++i) {
                 argv.push_back(std::format("0x{:x}", todo[i]));
                 argv.push_back(kSentinel);

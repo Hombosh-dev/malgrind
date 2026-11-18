@@ -4,18 +4,11 @@
     "host/src/boards.hpp",
     "host/src/cli.cpp",
     "host/src/http.cpp",
-    "host/src/main.cpp",
     "host/src/ops.cpp",
-    "host/src/pio.cpp",
     "host/src/process.cpp",
-    "host/src/projects.cpp",
-    "host/src/projects.hpp",
     "host/src/serve.hpp",
     "host/src/source.cpp",
-    "host/src/source.hpp",
-    "host/src/store.cpp",
-    "host/src/store.hpp",
-    "host/src/symbols.cpp"
+    "host/src/source.hpp"
   ],
   "chip": [
     "app/src/components/RunSettings.svelte",
