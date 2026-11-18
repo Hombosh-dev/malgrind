@@ -102,6 +102,7 @@ export interface BoardPort {
 export interface SetupInfo {
   pio: string | null;
   python: string | null;
+  python_hint: string;
   git: string | null;
   can_grant_access: boolean; // whether the engine can ask the system to grant port access
   os?: string;

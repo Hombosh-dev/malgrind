@@ -535,7 +535,7 @@ namespace malgrind::host::os {
 - `setup` protocol adds `python_hint`; `Setup.svelte` shows it instead of the hard-coded `sudo apt install ...` line, and
   "downloads the toolchain for your board (about 1 GB)" instead of naming ESP32.
 
-- [ ] Tests: `venv_bin`, `install_pio_steps` on a fake home for both layouts (pass the layout as a parameter to a pure
+- [x] Tests: `venv_bin`, `install_pio_steps` on a fake home for both layouts (pass the layout as a parameter to a pure
       helper so both run on Linux CI), `platformio_core_dirs` with `PLATFORMIO_CORE_DIR`. Commit `feat(os): find Python and PlatformIO on every OS`.
 
 ### T1.10 Data directories without spaces, portable test helpers 🟡

@@ -8,6 +8,7 @@
 #include "os/paths.hpp"
 #include "os/ports.hpp"
 #include "os/process.hpp"
+#include "os/tools.hpp"
 #include "plan.hpp"
 #include "pio.hpp"
 #include "projects.hpp"
@@ -354,8 +355,10 @@ private:
     // What the machine has for the jobs the app needs done: PlatformIO to build, git for GitHub links, and port access helpers.
     json setup_info() {
         auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(os::to_utf8(*p)) : json(nullptr); };
+        const auto py = os::find_python();
         return {{"pio", path_or_null(find_pio(options_.home))},
-                {"python", path_or_null(find_python())},
+                {"python", py && !py->empty() ? json((*py)[0]) : json(nullptr)},
+                {"python_hint", os::python_hint()},
                 {"git", path_or_null(os::find_in_path("git"))},
                 {"can_grant_access", os::can_grant_access()},
                 {"os", std::string(os::kind_name())},
@@ -364,8 +367,8 @@ private:
 
     json install_pio_command() {
         if (find_pio(options_.home)) throw std::runtime_error("PlatformIO is already installed");
-        const auto python = find_python();
-        if (!python) throw std::runtime_error("Python 3 was not found: install it (on Ubuntu: sudo apt install python3 python3-venv) and try again");
+        const auto python = os::find_python();
+        if (!python) throw std::runtime_error("Python 3 was not found: " + os::python_hint() + ", then try again");
         install_pio(*python, options_.home, build_line());
         return {{"pio", os::to_utf8(*find_pio(options_.home))}};
     }

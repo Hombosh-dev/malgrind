@@ -2,6 +2,7 @@
 
 #include "os/paths.hpp"
 #include "os/process.hpp"
+#include "os/tools.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -59,10 +60,16 @@ std::optional<std::string> sdkconfig_key(const std::string& line) {
 std::optional<fs::path> find_pio(const fs::path& home) {
     if (auto found = os::find_in_path("pio")) return found;
     const auto bin = os::exe_name("pio");
-    for (const auto& rel : {fs::path(".platformio/penv/bin") / bin,
-                            fs::path(".platformio/penv/Scripts") / bin,
-                            fs::path(".local/bin") / bin})
-        if (std::error_code ec; fs::exists(home / rel, ec)) return home / rel;
+    for (const auto& core : os::platformio_core_dirs(home)) {
+        const fs::path candidate = os::venv_bin(core / "penv") / bin;
+        if (std::error_code ec; fs::exists(candidate, ec)) return candidate;
+    }
+    if constexpr (os::kind() != os::Kind::Windows) {
+        if (!home.empty()) {
+            const fs::path local = home / ".local/bin" / bin;
+            if (std::error_code ec; fs::exists(local, ec)) return local;
+        }
+    }
     return std::nullopt;
 }
 
@@ -224,15 +231,23 @@ fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
 }
 
 std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
-    const fs::path script_path = home / ".platformio/packages/tool-esptoolpy/esptool.py";
-    // PlatformIO's own Python has pyserial; its launcher script names it in the shebang line
-    std::ifstream script(pio);
-    std::string shebang;
-    std::getline(script >> std::ws, shebang);
-    if (!shebang.starts_with("#!") || !fs::exists(script_path)) return std::nullopt;
-    Invocation inv; // "#!/usr/bin/env python3" is two words
-    std::istringstream words(shebang.substr(2));
-    for (std::string w; words >> w;) inv.argv.push_back(w);
+    fs::path script_path;
+    for (const auto& core : os::platformio_core_dirs(home)) {
+        const fs::path candidate = core / "packages/tool-esptoolpy/esptool.py";
+        if (std::error_code ec; fs::exists(candidate, ec)) {
+            script_path = candidate;
+            break;
+        }
+    }
+    if (script_path.empty() && !home.empty()) {
+        const fs::path fallback = home / ".platformio/packages/tool-esptoolpy/esptool.py";
+        if (std::error_code ec; fs::exists(fallback, ec)) script_path = fallback;
+    }
+    if (script_path.empty()) return std::nullopt;
+    auto python_cmd = os::pio_python(home, pio);
+    if (!python_cmd) return std::nullopt;
+    Invocation inv;
+    inv.argv = std::move(*python_cmd);
     for (auto& a : std::vector<std::string>{os::to_utf8(script_path), "--port", port, "--baud", "921600"}) inv.argv.push_back(std::move(a));
     for (auto& a : args) inv.argv.push_back(std::move(a));
     return inv;

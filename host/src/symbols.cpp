@@ -2,6 +2,7 @@
 
 #include "os/paths.hpp"
 #include "os/process.hpp"
+#include "os/tools.hpp"
 
 #include <algorithm>
 #include <format>
@@ -46,9 +47,9 @@ std::string short_name(std::string name) {
 fs::path find_addr2line(Arch arch) {
     std::vector<fs::path> dirs;
     if (const auto path = os::get_env("PATH")) dirs = os::split_path_list(*path);
-    if (const auto home = os::home_dir(); !home.empty()) {
+    for (const auto& core : os::platformio_core_dirs(os::home_dir())) {
         std::error_code ec;
-        for (const auto& pkg : fs::directory_iterator(home / ".platformio/packages", ec))
+        for (const auto& pkg : fs::directory_iterator(core / "packages", ec))
             if (os::to_utf8(pkg.path().filename()).starts_with("toolchain-")) dirs.push_back(pkg.path() / "bin");
     }
     for (const auto& name : tool_names(arch)) {

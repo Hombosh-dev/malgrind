@@ -319,6 +319,7 @@ void setup_reports_the_machine() {
     assert(setup["ok"] && setup["result"]["pio"].is_null() && setup["result"]["can_grant_access"].is_boolean() &&
            setup["result"]["os"].is_string() && !setup["result"]["user"].get<std::string>().empty());
     assert(setup["result"].contains("python") && setup["result"].contains("git"));
+    assert(setup["result"]["python_hint"].is_string() && !setup["result"]["python_hint"].get<std::string>().empty());
     fake_pio(h);
     assert(h.call({{"cmd", "setup"}})["result"]["pio"].is_string()); // found in the home's PlatformIO folder now
 }

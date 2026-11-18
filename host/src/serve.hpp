@@ -15,7 +15,7 @@
 //   chip_id {port}                         -> {chip}                                    resets the board
 //   boards                                 -> {ports: [{port, adapter, vid, pid, serial, location, access: {ok, group, in_group, fixable}}],
 //                                              probes: [{name, vid, pid}]}   what USB and file permissions say, nothing is opened
-//   setup                                  -> {pio, python, git (paths or null), can_grant_access (bool), os, user}   what the app needs from the machine
+//   setup                                  -> {pio, python, python_hint, git (paths or null), can_grant_access (bool), os, user}   what the app needs from the machine
 //   install_pio {}                         -> {pio}   python -m venv ~/.platformio/penv + pip install platformio; streams `build` events
 //   grant_access {port}                    -> {ok_now, relogin}   prompts to grant device access on Linux (ACL + group)
 //   projects                               -> [Project + run_count + last_run]

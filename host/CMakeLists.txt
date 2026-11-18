@@ -8,7 +8,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DI
 
 add_library(malgrind_host STATIC
     src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
-    src/os/paths.cpp src/os/process.cpp src/os/ports.cpp)
+    src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
     target_sources(malgrind_host PRIVATE
         src/os/paths_win.cpp src/os/process_win.cpp src/os/socket_win.cpp src/os/serial_win.cpp
