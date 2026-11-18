@@ -7,7 +7,7 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
     src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
     target_sources(malgrind_host PRIVATE
@@ -86,6 +86,9 @@ target_link_libraries(test_projects PRIVATE malgrind_host)
 
 malgrind_add_test(boards tests/test_boards.cpp)
 target_link_libraries(test_boards PRIVATE malgrind_host)
+
+malgrind_add_test(devices tests/test_devices.cpp)
+target_link_libraries(test_devices PRIVATE malgrind_host)
 
 malgrind_add_test(setup tests/test_setup.cpp)
 target_link_libraries(test_setup PRIVATE malgrind_host)

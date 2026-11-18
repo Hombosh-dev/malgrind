@@ -589,7 +589,7 @@ struct Device {
 [[nodiscard]] std::optional<Device> resolve_device(std::string_view ref, const std::vector<Device>& now);
 }
 ```
-- [ ] Tests: id rules (serial with spaces and slashes, location only, no USB), `resolve_device` by id, by path, by name, ambiguity. Commit `feat: devices with stable OS-neutral ids`.
+- [x] Tests: id rules (serial with spaces and slashes, location only, no USB), `resolve_device` by id, by path, by name, ambiguity. Commit `feat: devices with stable OS-neutral ids`.
 
 ### T2.2 Protocol: `devices`, and every `port` argument accepts a device 🟡
 
