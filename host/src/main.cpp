@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
         std::cout << "malgrind-cli " << MALGRIND_VERSION << "\n";
         return 0;
     }
-    if (args.empty() || (args[0] != "serve" && args[0] != "run" && args[0] != "attach" && args[0] != "detect" && args[0] != "restore")) {
+    if (args.empty() || (args[0] != "serve" && args[0] != "run" && args[0] != "attach" && args[0] != "detect" && args[0] != "restore" && args[0] != "devices")) {
         std::cerr << kCliUsage;
         return 2;
     }

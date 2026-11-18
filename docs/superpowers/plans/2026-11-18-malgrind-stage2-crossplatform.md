@@ -627,7 +627,7 @@ struct Device {
   device: `id  name  title  [agent?]` (no probing unless `--probe`).
 - "no serial port found" message lists what was searched through `os::serial_search_hint()` (add to `os/ports.hpp`:
   Linux "/dev/ttyUSB*, /dev/ttyACM*", macOS "/dev/cu.usb*", Windows "COM ports of USB devices").
-- [ ] Commit `feat(cli): --device and a devices command`.
+- [x] Commit `feat(cli): --device and a devices command`.
 
 ---
 

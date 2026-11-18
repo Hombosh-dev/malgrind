@@ -1,4 +1,5 @@
 #include "os/ports.hpp"
+#include "os/paths.hpp"
 
 #include <cctype>
 #include <cstddef>
@@ -66,6 +67,15 @@ std::vector<std::string_view> split_sv(std::string_view s, char delim) {
 }
 
 } // namespace
+
+std::string_view serial_search_hint() noexcept {
+    switch (kind()) {
+        case Kind::Linux: return "/dev/ttyUSB*, /dev/ttyACM*";
+        case Kind::MacOS: return "/dev/cu.usb*";
+        case Kind::Windows: return "COM ports of USB devices";
+    }
+    return {};
+}
 
 std::optional<VidPid> parse_vid_pid(std::string_view hardware_id) {
     auto vid = find_hex4_tag(hardware_id, "vid_");

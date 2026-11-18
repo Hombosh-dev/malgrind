@@ -23,6 +23,7 @@ struct PortInfo {
 };
 
 [[nodiscard]] std::vector<PortInfo> list_serial_ports();     // USB ports only, sorted by name
+[[nodiscard]] std::string_view serial_search_hint() noexcept;
 [[nodiscard]] std::vector<PortInfo> list_serial_ports_linux(const std::filesystem::path& dev_root,
                                                             const std::filesystem::path& sys_root);
 

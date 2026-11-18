@@ -56,7 +56,7 @@ std::string http_get(unsigned port, const std::string& path) {
 
 bool contains(const std::string& s, const char* part) { return s.find(part) != std::string::npos; }
 
-void attach_shows_the_live_page_and_records() {
+void attach_shows_the_live_page_and_records(const std::string& device_flag) {
     const auto root = fs::temp_directory_path() / "malgrind_cli_a";
     fs::remove_all(root);
     fs::create_directories(root / "project");
@@ -64,7 +64,7 @@ void attach_shows_the_live_page_and_records() {
     const unsigned port = free_port();
     int code = -1;
     std::thread cli([&] {
-        code = run_cli({"attach", "--port", pty.slave, "--no-open", "--http-port", std::to_string(port), "--data-dir",
+        code = run_cli({"attach", device_flag, pty.slave, "--no-open", "--http-port", std::to_string(port), "--data-dir",
                         (root / "runs").string(), "--project", (root / "project").string(), "--folded", (root / "out.folded").string(),
                         "--name", "terminal run"},
                        {root / "runs", {}, root});
@@ -93,6 +93,9 @@ void attach_shows_the_live_page_and_records() {
 void exit_codes() {
     assert(run_cli({}, {}) == 2 && run_cli({"bogus"}, {}) == 2);
     assert(run_cli({"attach", "--bogus"}, {}) == 2 && run_cli({"attach", "--port"}, {}) == 2); // unknown option, missing value
+    assert(run_cli({"attach", "--device"}, {}) == 2);
+    assert(run_cli({"devices"}, {}) == 0);
+    assert(run_cli({"attach", "--device", "usb-missing-device-123"}, {}) != 0);
     Pty pty;
     if (!exclusive_open_is_enforced()) return void(std::puts("exit_codes: busy-port check skipped, this platform does not enforce exclusive open on a pty"));
     auto other_program = Source::open(pty.slave, 921600); // the port is taken
@@ -104,7 +107,8 @@ void exit_codes() {
 } // namespace
 
 int main() {
-    attach_shows_the_live_page_and_records();
+    attach_shows_the_live_page_and_records("--port");
+    attach_shows_the_live_page_and_records("--device");
     exit_codes();
     std::puts("cli ok");
 }
