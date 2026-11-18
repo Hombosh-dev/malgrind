@@ -1,88 +1,136 @@
 #include "source.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/ioctl.h>
-#include <sys/select.h>
-#include <termios.h>
-#include <unistd.h>
+#include <chrono>
+#include <condition_variable>
+#include <deque>
+#include <iostream>
+#include <mutex>
+#include <streambuf>
+#include <thread>
+#include <utility>
 
 namespace malgrind::host {
 
-std::vector<std::string> find_serial_ports(const std::filesystem::path& dev_dir) {
-    auto lower = [](std::string s) {
-        std::ranges::transform(s, s.begin(), [](unsigned char ch) { return std::tolower(ch); });
-        return s;
-    };
-    std::vector<std::string> ports;
-    std::error_code ec;
-    for (const auto& entry : std::filesystem::directory_iterator(dev_dir, ec)) {
-        const auto name = entry.path().filename().string();
-        const bool linux_usb = name.starts_with("ttyUSB") || name.starts_with("ttyACM");
-        // macOS: call-out devices of USB adapters (cu.usbserial-*, cu.usbmodem*, cu.SLAB_USBtoUART, cu.wchusbserial*);
-        // this skips cu.Bluetooth-Incoming-Port and friends
-        const bool mac_usb = name.starts_with("cu.") && lower(name).find("usb") != std::string::npos;
-        if (linux_usb || mac_usb) ports.push_back(entry.path().string());
-    }
-    std::ranges::sort(ports);
-    return ports;
-}
+struct Source::StdinState {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::uint8_t> buf;
+    bool eof = false;
+    bool closed = false;
 
-namespace {
-speed_t speed_for(unsigned baud) {
-#ifdef __APPLE__
-    return baud; // macOS: speed_t is the baud rate itself, and it has no B460800... constants
-#else
-    switch (baud) {
-        case 9600: return B9600;
-        case 115200: return B115200;
-        case 230400: return B230400;
-        case 460800: return B460800;
-        case 921600: return B921600;
-        case 1000000: return B1000000;
-        case 1500000: return B1500000;
-        case 2000000: return B2000000;
-        default: return B0;
+    static std::shared_ptr<StdinState> start() {
+        auto state = std::make_shared<StdinState>();
+        std::thread([state]() {
+            std::streambuf* sb = std::cin.rdbuf();
+            if (!sb) {
+                std::scoped_lock lock(state->mutex);
+                state->eof = true;
+                state->cv.notify_all();
+                return;
+            }
+            constexpr auto kEof = std::char_traits<char>::eof();
+            for (;;) {
+                {
+                    std::scoped_lock lock(state->mutex);
+                    if (state->closed) break;
+                }
+                const int ch = sb->sbumpc();
+                if (ch == kEof) {
+                    std::scoped_lock lock(state->mutex);
+                    state->eof = true;
+                    state->cv.notify_all();
+                    break;
+                }
+                std::array<char, 4096> tmp;
+                tmp[0] = static_cast<char>(ch);
+                std::size_t count = 1;
+                const std::streamsize avail = sb->in_avail();
+                if (avail > 0) {
+                    const std::streamsize extra = std::min<std::streamsize>(avail, static_cast<std::streamsize>(tmp.size() - 1));
+                    const std::streamsize got = sb->sgetn(tmp.data() + 1, extra);
+                    if (got > 0) count += static_cast<std::size_t>(got);
+                }
+                {
+                    std::scoped_lock lock(state->mutex);
+                    if (state->closed) break;
+                    for (std::size_t i = 0; i < count; ++i) {
+                        state->buf.push_back(static_cast<std::uint8_t>(tmp[i]));
+                    }
+                    state->cv.notify_one();
+                }
+            }
+        }).detach();
+        return state;
     }
-#endif
+};
+
+std::variant<Source, os::OpenFailure> Source::open_result(const std::string& port, unsigned baud) {
+    if (port == "-") return Source(StdinState::start());
+    auto res = os::SerialPort::open(port, baud);
+    if (auto* serial = std::get_if<os::SerialPort>(&res)) return Source(std::move(*serial));
+    return std::get<os::OpenFailure>(std::move(res));
 }
-} // namespace
 
 std::optional<Source> Source::open(const std::string& port, unsigned baud) {
-    if (port == "-") return Source(STDIN_FILENO, false);
-    const speed_t speed = speed_for(baud);
-    if (speed == B0) return std::nullopt;
-    const int fd = ::open(port.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-    if (fd < 0) return std::nullopt;
-    termios tty{};
-    if (tcgetattr(fd, &tty) != 0) { ::close(fd); return std::nullopt; }
-    cfmakeraw(&tty);
-    cfsetspeed(&tty, speed);
-    tty.c_cflag |= CLOCAL | CREAD;
-    if (tcsetattr(fd, TCSANOW, &tty) != 0) { ::close(fd); return std::nullopt; }
-    ioctl(fd, TIOCEXCL); // exclusive: a second program opening the port gets EBUSY instead of stealing bytes
-    return Source(fd, true);
+    auto res = open_result(port, baud);
+    if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
+    return std::nullopt;
+}
+
+Source::Source(Source&&) noexcept = default;
+
+Source& Source::operator=(Source&& other) noexcept {
+    if (this != &other) {
+        if (auto* st = std::get_if<std::shared_ptr<StdinState>>(&impl_); st && *st) {
+            std::scoped_lock lock((*st)->mutex);
+            (*st)->closed = true;
+            (*st)->cv.notify_all();
+        }
+        impl_ = std::move(other.impl_);
+    }
+    return *this;
 }
 
 Source::~Source() {
-    if (owns_ && fd_ >= 0) ::close(fd_);
+    if (auto* st = std::get_if<std::shared_ptr<StdinState>>(&impl_); st && *st) {
+        std::scoped_lock lock((*st)->mutex);
+        (*st)->closed = true;
+        (*st)->cv.notify_all();
+    }
 }
 
 std::optional<std::size_t> Source::read(std::span<std::uint8_t> out, int timeout_ms) {
-    // select(), not poll(): macOS poll() does not work on device files such as serial ports
-    fd_set readable;
-    FD_ZERO(&readable);
-    FD_SET(fd_, &readable);
-    timeval timeout{timeout_ms / 1000, (timeout_ms % 1000) * 1000};
-    const int ready = select(fd_ + 1, &readable, nullptr, nullptr, &timeout);
-    if (ready < 0) return errno == EINTR ? std::optional<std::size_t>(0) : std::nullopt;
-    if (ready == 0) return 0;
-    const ssize_t n = ::read(fd_, out.data(), out.size());
-    if (n > 0) return static_cast<std::size_t>(n);
-    if (n < 0 && (errno == EAGAIN || errno == EINTR)) return 0;
-    return std::nullopt; // EOF or device gone
+    if (auto* serial = std::get_if<os::SerialPort>(&impl_)) {
+        return serial->read(out, timeout_ms);
+    }
+    auto& state = std::get<std::shared_ptr<StdinState>>(impl_);
+    if (!state) return std::nullopt;
+    if (out.empty()) return std::size_t{0};
+
+    std::unique_lock lock(state->mutex);
+    if (state->buf.empty() && !state->eof) {
+        const auto wait = std::chrono::milliseconds(std::max(0, timeout_ms));
+        state->cv.wait_for(lock, wait, [&] { return !state->buf.empty() || state->eof; });
+    }
+    if (state->buf.empty()) {
+        return state->eof ? std::nullopt : std::optional<std::size_t>(0);
+    }
+    const std::size_t n = std::min(out.size(), state->buf.size());
+    for (std::size_t i = 0; i < n; ++i) {
+        out[i] = state->buf.front();
+        state->buf.pop_front();
+    }
+    return n;
+}
+
+bool Source::write(std::span<const std::uint8_t> data) {
+    if (auto* serial = std::get_if<os::SerialPort>(&impl_)) {
+        return serial->write(data);
+    }
+    return false;
 }
 
 } // namespace malgrind::host

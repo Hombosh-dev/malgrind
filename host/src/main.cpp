@@ -1,12 +1,12 @@
 // malgrind-cli: the engine of the malgrind app. `serve` speaks JSON lines to the app (serve.hpp); `run`, `attach` and
 // `detect` are the terminal mode with a live page in the browser (cli.hpp).
 #include "cli.hpp"
+#include "os/console.hpp"
 #include "os/paths.hpp"
 #include "serve.hpp"
 #include "projects.hpp"
 #include "store.hpp"
 
-#include <csignal>
 #include <filesystem>
 #include <iostream>
 #include <string_view>
@@ -52,12 +52,8 @@ int main(int argc, char** argv) {
     ServeOptions options{RunStore::default_root(), default_agent_dir(), os::home_dir(),
                          RunStore::default_root().parent_path() / "backups", ProjectStore::default_root()};
 
-    std::signal(SIGPIPE, SIG_IGN); // a closed browser connection or app must not kill us before the run is saved
-    // SIGINT/SIGTERM end the blocking read of `serve` (no SA_RESTART) and make attach/run finish: the live run is closed properly
-    struct sigaction stop{};
-    stop.sa_handler = [](int) { cli_request_stop(); };
-    sigaction(SIGINT, &stop, nullptr);
-    sigaction(SIGTERM, &stop, nullptr);
+    os::binary_stdio();
+    os::install_stop_handler([] { cli_request_stop(); });
 
     if (args[0] != "serve") return run_cli(args, options);
     for (std::size_t i = 1; i < args.size(); i += 2) {

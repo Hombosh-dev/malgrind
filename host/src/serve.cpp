@@ -1,11 +1,12 @@
 #include "serve.hpp"
 
-#include "access.hpp"
 #include "boards.hpp"
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
+#include "os/access.hpp"
 #include "os/paths.hpp"
+#include "os/ports.hpp"
 #include "os/process.hpp"
 #include "plan.hpp"
 #include "pio.hpp"
@@ -21,11 +22,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <map>
-#include <cstring>
-#include <format>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -121,7 +119,11 @@ private:
             const auto pio = find_pio(options_.home);
             return {{"version", kVersion}, {"data_dir", os::to_utf8(options_.data_dir)}, {"pio", pio ? json(os::to_utf8(*pio)) : json(nullptr)}};
         }
-        if (cmd == "ports") return json(find_serial_ports());
+        if (cmd == "ports") {
+            std::vector<std::string> paths;
+            for (const auto& p : os::list_serial_ports()) paths.push_back(p.path);
+            return json(paths);
+        }
         if (cmd == "probe") return probe(req);
         if (cmd == "project") {
             std::string why;
@@ -349,13 +351,14 @@ private:
         throw std::runtime_error("source must be \"folder\", \"git\" or \"none\"");
     }
 
-    // What the machine has for the jobs the app needs done: PlatformIO to build, git for GitHub links, pkexec to ask for access.
+    // What the machine has for the jobs the app needs done: PlatformIO to build, git for GitHub links, and port access helpers.
     json setup_info() {
         auto path_or_null = [](const std::optional<fs::path>& p) { return p ? json(os::to_utf8(*p)) : json(nullptr); };
         return {{"pio", path_or_null(find_pio(options_.home))},
                 {"python", path_or_null(find_python())},
                 {"git", path_or_null(os::find_in_path("git"))},
-                {"pkexec", os::find_in_path("pkexec").has_value()},
+                {"can_grant_access", os::can_grant_access()},
+                {"os", std::string(os::kind_name())},
                 {"user", os::current_user()}};
     }
 
@@ -367,38 +370,40 @@ private:
         return {{"pio", os::to_utf8(*find_pio(options_.home))}};
     }
 
-    // Gives this user access to a serial port that belongs to a group they are not in: one system password prompt (pkexec).
+    // Gives this user access to a serial port that belongs to a group they are not in.
     json grant_access(const json& req) {
         const auto port = str_arg(req, "port");
-        const auto known = find_serial_ports();
-        if (std::ranges::find(known, port) == known.end()) throw std::runtime_error("not a serial port of this computer: " + port);
-        const auto before = port_access(port);
+        const auto known = os::list_serial_ports();
+        if (std::ranges::none_of(known, [&](const os::PortInfo& p) { return p.path == port; }))
+            throw std::runtime_error("not a serial port of this computer: " + port);
+        const auto before = os::port_access(port);
         if (before.ok) return {{"ok_now", true}, {"relogin", false}}; // nothing to do
         const auto user = os::current_user();
-        const auto pkexec = os::find_in_path("pkexec");
-        if (!pkexec)
-            throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" + manual_commands(port, user, before.group));
-        const auto command = grant_access_command(*pkexec, port, user, before.group);
-        if (!command) throw std::runtime_error("cannot build the command for this user or port");
+        const auto command = os::grant_access_command(port, user, before.group);
+        if (!command) {
+            if (!os::can_grant_access())
+                throw std::runtime_error("pkexec (polkit) was not found. Run these two lines in a terminal, then press Rescan:\n" +
+                                         os::manual_access_commands(port, user, before.group));
+            throw std::runtime_error("cannot build the command for this user or port");
+        }
         const int code = os::run_lines(command->argv, command->env, build_line());
         if (code == 126 || code == 127) throw std::runtime_error("the password prompt was cancelled, or the password was wrong");
         if (code != 0) throw std::runtime_error(std::format("granting access failed (exit code {})", code));
-        const auto after = port_access(port);
+        const auto after = os::port_access(port);
         return {{"ok_now", after.ok}, {"relogin", !after.in_group}}; // relogin: the group applies from the next login, the ACL until the board is replugged
     }
 
     json boards() {
         auto ports = json::array();
-        for (const auto& port : find_serial_ports()) {
-            const auto usb = usb_info_for_port(port);
-            const auto access = port_access(port);
-            ports.push_back({{"port", port},
-                             {"adapter", usb ? adapter_name(*usb) : ""},
-                             {"vid", usb ? usb->vid : ""},
-                             {"pid", usb ? usb->pid : ""},
-                             {"serial", usb ? usb->serial : ""},
-                             {"location", usb ? usb->location : ""},
-                             {"access", {{"ok", access.ok}, {"group", access.group}, {"in_group", access.in_group}}}});
+        for (const auto& p : os::list_serial_ports()) {
+            const auto access = os::port_access(p.path);
+            ports.push_back({{"port", p.path},
+                             {"adapter", p.usb ? adapter_name(*p.usb) : ""},
+                             {"vid", p.usb ? p.usb->vid : ""},
+                             {"pid", p.usb ? p.usb->pid : ""},
+                             {"serial", p.usb ? p.usb->serial : ""},
+                             {"location", p.usb ? p.usb->location : ""},
+                             {"access", {{"ok", access.ok}, {"group", access.group}, {"in_group", access.in_group}, {"fixable", access.fixable}}}});
         }
         auto probes = json::array();
         for (const auto& p : find_probes()) probes.push_back({{"name", p.name}, {"vid", p.vid}, {"pid", p.pid}});

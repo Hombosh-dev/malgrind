@@ -1,23 +1,12 @@
 {
-  "os": [
-    "host/src/access.cpp",
-    "host/src/boards.hpp",
-    "host/src/cli.cpp",
-    "host/src/ops.cpp",
-    "host/src/serve.hpp",
-    "host/src/source.cpp",
-    "host/src/source.hpp"
-  ],
+  "os": [],
   "chip": [
     "app/src/components/RunSettings.svelte",
     "app/src/components/Setup.svelte",
     "app/src/lib/types.ts",
     "app/src/screens/Profile.svelte",
-    "host/src/access.cpp",
-    "host/src/access.hpp",
     "host/src/backup.hpp",
     "host/src/boards.cpp",
-    "host/src/boards.hpp",
     "host/src/cli.cpp",
     "host/src/main.cpp",
     "host/src/ops.cpp",
@@ -31,8 +20,6 @@
     "host/src/settings.hpp",
     "host/src/setup.cpp",
     "host/src/setup.hpp",
-    "host/src/source.cpp",
-    "host/src/source.hpp",
     "host/src/symbols.cpp"
   ]
 }

@@ -316,7 +316,8 @@ void setup_reports_the_machine() {
     Harness h("malgrind_serve_t");
     setenv("PATH", "/usr/bin:/bin", 1); // no pio there, and the harness home is empty
     const auto setup = h.call({{"cmd", "setup"}});
-    assert(setup["ok"] && setup["result"]["pio"].is_null() && setup["result"]["pkexec"].is_boolean() && !setup["result"]["user"].get<std::string>().empty());
+    assert(setup["ok"] && setup["result"]["pio"].is_null() && setup["result"]["can_grant_access"].is_boolean() &&
+           setup["result"]["os"].is_string() && !setup["result"]["user"].get<std::string>().empty());
     assert(setup["result"].contains("python") && setup["result"].contains("git"));
     fake_pio(h);
     assert(h.call({{"cmd", "setup"}})["result"]["pio"].is_string()); // found in the home's PlatformIO folder now
@@ -336,7 +337,8 @@ void install_pio_refuses_what_it_cannot_do() {
 void boards_tell_access_and_identity() {
     Harness h("malgrind_serve_v");
     for (const auto& p : h.call({{"cmd", "boards"}})["result"]["ports"]) {
-        assert(p["access"]["ok"].is_boolean() && p["access"].contains("group") && p["access"]["in_group"].is_boolean());
+        assert(p["access"]["ok"].is_boolean() && p["access"].contains("group") && p["access"]["in_group"].is_boolean() &&
+               p["access"]["fixable"].is_boolean());
         assert(p.contains("serial") && p.contains("location"));
     }
     const auto unknown = h.call({{"cmd", "grant_access"}, {"port", "/dev/ttyUSB99"}});

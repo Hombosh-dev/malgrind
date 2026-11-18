@@ -358,9 +358,9 @@ Windows:
 Replace in `ops.cpp`: `open_error(port, int err)` → `open_error(port, const os::OpenFailure&)`; `probe_port` uses
 `kind == Busy/Denied`; `open_after_upload` retries while `transient`. No `errno` left outside `os/`.
 
-- [ ] 1. Test (POSIX only, guarded in CMake): open a pty pair with `tests/pty.hpp`, write through `SerialPort::write`, read on the other side; open twice → second is `Busy`; nonexistent path → `NotFound`, `transient`.
-- [ ] 2. Implement; keep `Source::open("-")` (stdin) working as before.
-- [ ] 3. Commit `refactor(os): serial port with typed open errors; Windows and macOS speed handling`.
+- [x] 1. Test (POSIX only, guarded in CMake): open a pty pair with `tests/pty.hpp`, write through `SerialPort::write`, read on the other side; open twice → second is `Busy`; nonexistent path → `NotFound`, `transient`.
+- [x] 2. Implement; keep `Source::open("-")` (stdin) working as before.
+- [x] 3. Commit `refactor(os): serial port with typed open errors; Windows and macOS speed handling`.
 
 ### T1.4 Serial port enumeration with USB details 🟡
 
@@ -411,11 +411,11 @@ Backends:
   device, e.g. CDC-ACM), take the serial from the parent: `CM_Get_Parent` + `CM_Get_Device_IDW`.
   Product/manufacturer: `SPDRP_DEVICEDESC` / `SPDRP_MFG`.
 
-- [ ] 1. Port `test_boards.cpp` cases to `list_serial_ports_linux` (fake tree); add parser tests with real-world strings:
+- [x] 1. Port `test_boards.cpp` cases to `list_serial_ports_linux` (fake tree); add parser tests with real-world strings:
       `USB\VID_1A86&PID_7523&REV_0264`, `USB\VID_303A&PID_1001&MI_00`, `FTDIBUS\COMPORT&VID_0403&PID_6001`, the instance ids above.
-- [ ] 2. Implement three backends. Linux/macOS must pass CI; Windows compiles (T5.1).
-- [ ] 3. `serve.cpp` `ports`/`boards` and `cli.cpp` use `os::list_serial_ports()` (P2 replaces these commands; keep output identical here).
-- [ ] 4. Commit `feat(os): serial port enumeration with USB details on Linux, macOS and Windows`.
+- [x] 2. Implement three backends. Linux/macOS must pass CI; Windows compiles (T5.1).
+- [x] 3. `serve.cpp` `ports`/`boards` and `cli.cpp` use `os::list_serial_ports()` (P2 replaces these commands; keep output identical here).
+- [x] 4. Commit `feat(os): serial port enumeration with USB details on Linux, macOS and Windows`.
 
 ### T1.5 USB device enumeration (debug probes) 🟢
 
@@ -435,7 +435,7 @@ macOS: `IOServiceMatching("IOUSBHostDevice")`, read the same keys directly. Wind
 `SetupDiGetClassDevsW(nullptr, L"USB", nullptr, DIGCF_PRESENT | DIGCF_ALLCLASSES)`, hardware id → `parse_vid_pid`.
 `DebugProbe` gains `serial` and `location` (needed for device ids).
 
-- [ ] Test `probe_name` table and the Linux backend with a fake tree. Commit `feat(os): USB device list for probe detection`.
+- [x] Test `probe_name` table and the Linux backend with a fake tree. Commit `feat(os): USB device list for probe detection`.
 
 ### T1.6 Port access and the "grant access" fix 🟢
 
@@ -463,7 +463,7 @@ Protocol: `setup` returns `can_grant_access` instead of `pkexec`, plus `os` (`os
 button is shown when `access.fixable`; texts never say `pkexec`/`sudo` themselves (the engine's error text carries the
 manual commands). Keep the Linux script and its tests as they are.
 
-- [ ] Commit `refactor(os): port access behind os/, UI asks the engine whether a fix exists`.
+- [x] Commit `refactor(os): port access behind os/, UI asks the engine whether a fix exists`.
 
 ### T1.7 Signals, stdio, opening a URL 🟢
 

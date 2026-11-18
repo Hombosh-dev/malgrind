@@ -3,13 +3,13 @@ import { accessProblem, boardDetail } from './boards';
 
 describe('accessProblem', () => {
   it('is null when the port can be opened', () => {
-    expect(accessProblem({ access: { ok: true, group: 'dialout', in_group: true } })).toBeNull();
+    expect(accessProblem({ access: { ok: true, group: 'dialout', in_group: true, fixable: false } })).toBeNull();
   });
   it('names the group the user is missing', () => {
-    expect(accessProblem({ access: { ok: false, group: 'dialout', in_group: false } })).toContain('"dialout"');
+    expect(accessProblem({ access: { ok: false, group: 'dialout', in_group: false, fixable: true } })).toContain('"dialout"');
   });
-  it('still says something when the group is unknown', () => {
-    expect(accessProblem({ access: { ok: false, group: '', in_group: false } })).toMatch(/^No permission/);
+  it('still says something when the group is unknown or not fixable', () => {
+    expect(accessProblem({ access: { ok: false, group: '', in_group: false, fixable: false } })).toMatch(/^No permission/);
   });
 });
 

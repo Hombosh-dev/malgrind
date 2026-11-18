@@ -4,6 +4,7 @@
 
 #include "github.hpp"
 #include "malgrind/target_info.hpp"
+#include "os/serial.hpp"
 #include "pio.hpp"
 #include "source.hpp"
 
@@ -21,8 +22,8 @@ inline constexpr unsigned kBaud = 921600; // what the agent uses
 inline constexpr const char* kNoPio =
     "PlatformIO (pio) was not found: install it with `pip install platformio` (attaching to a running board works without it)";
 
-// The error for a port that could not be opened; EBUSY becomes "busy: ...".
-[[nodiscard]] std::runtime_error open_error(const std::string& port, int err);
+// The error for a port that could not be opened; Busy becomes "busy: ...".
+[[nodiscard]] std::runtime_error open_error(const std::string& port, const os::OpenFailure& failure);
 
 // Opens the port exclusively. Throws open_error.
 [[nodiscard]] Source open_source(const std::string& port);

@@ -72,7 +72,7 @@
     if (lines.length > 200) lines.splice(0, lines.length - 200);
   }));
 
-  // One system password prompt (pkexec) gives this user the port; then the boards are looked at again.
+  // Asks the engine to grant port access, then rescans the boards.
   async function grant(tile: Tile) {
     tile.granting = true;
     tile.grantError = '';
@@ -203,7 +203,7 @@
                 {:else}No malgrind agent detected{/if}
               </span>
             </button>
-            {#if !tile.access.ok}
+            {#if !tile.access.ok && tile.access.fixable}
               <div class="grant">
                 <button class="btn small" onclick={() => grant(tile)} disabled={tile.granting}>{tile.granting ? 'Waiting for your password…' : 'Grant access…'}</button>
                 <span class="muted small">asks for your password once, in the system's own window</span>

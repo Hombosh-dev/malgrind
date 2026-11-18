@@ -3,7 +3,9 @@
 #include "discover.hpp"
 #include "http.hpp"
 #include "ops.hpp"
-#include "os/process.hpp"
+#include "os/console.hpp"
+#include "os/paths.hpp"
+#include "os/ports.hpp"
 #include "plan.hpp"
 #include "session.hpp"
 #include "source.hpp"
@@ -17,7 +19,6 @@
 #include <atomic>
 #include <charconv>
 #include <chrono>
-#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iostream>
@@ -81,16 +82,16 @@ std::optional<Options> parse(const std::vector<std::string>& args) {
 // --port if given, otherwise the only serial port found. Says why when it cannot decide.
 std::optional<std::string> resolve_port(const Options& o) {
     if (auto port = o.get("port"); !port.empty()) return port;
-    const auto ports = find_serial_ports();
+    const auto ports = os::list_serial_ports();
     if (ports.size() == 1) {
-        std::cerr << "port: " << ports[0] << " (auto-detected, --port chooses another)\n";
-        return ports[0];
+        std::cerr << "port: " << ports[0].path << " (auto-detected, --port chooses another)\n";
+        return ports[0].path;
     }
     if (ports.empty()) {
         std::cerr << "no serial port found (looked for /dev/ttyUSB* and /dev/ttyACM*): connect the board or pass --port\n";
     } else {
         std::cerr << "several serial ports found, pass --port with one of:\n";
-        for (const auto& p : ports) std::cerr << "  " << p << "\n";
+        for (const auto& p : ports) std::cerr << "  " << p.path << "\n";
     }
     return std::nullopt;
 }
@@ -125,23 +126,10 @@ void start_server(std::optional<HttpServer>& http, const std::shared_ptr<Session
     throw std::runtime_error("no free port for the viewer, pass --http-port");
 }
 
-void open_browser(const std::string& url) {
-#ifdef __APPLE__
-    const bool has_display = std::getenv("SSH_CONNECTION") == nullptr;
-    const char* opener = "open";
-#else
-    const bool has_display = std::getenv("DISPLAY") || std::getenv("WAYLAND_DISPLAY");
-    const char* opener = "xdg-open";
-#endif
-    if (has_display) {
-        [[maybe_unused]] const int started = std::system((std::string(opener) + " " + url + " >/dev/null 2>&1 &").c_str());
-    }
-}
-
 std::string today() {
-    const std::time_t t = std::time(nullptr);
+    const auto tm = os::local_tm(std::time(nullptr));
     std::array<char, 32> buf{};
-    std::strftime(buf.data(), buf.size(), "%Y-%m-%d %H:%M", std::localtime(&t));
+    std::strftime(buf.data(), buf.size(), "%Y-%m-%d %H:%M", &tm);
     return buf.data();
 }
 
@@ -167,7 +155,7 @@ int watch(Source source, const Options& o, const ServeOptions& defaults, const f
     start_server(http, session, o.get_uint("http-port", 8000), !o.get("http-port").empty(), used);
     const auto url = "http://127.0.0.1:" + std::to_string(used);
     std::cerr << "malgrind: live flamegraph at " << url << "  (Ctrl-C to stop)\n";
-    if (o.get("no-open").empty()) open_browser(url);
+    if (o.get("no-open").empty() && os::has_display()) os::open_url(url);
 
     while (!g_stop && session->live()) std::this_thread::sleep_for(100ms);
     if (const auto folded = session->folded(); folded && !o.get("folded").empty()) std::ofstream(o.get("folded")) << *folded;

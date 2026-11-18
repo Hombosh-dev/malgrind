@@ -7,13 +7,22 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/access.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
-    src/os/paths.cpp src/os/process.cpp)
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/os/paths.cpp src/os/process.cpp src/os/ports.cpp)
 if(WIN32)
-    target_sources(malgrind_host PRIVATE src/os/paths_win.cpp src/os/process_win.cpp src/os/socket_win.cpp)
+    target_sources(malgrind_host PRIVATE
+        src/os/paths_win.cpp src/os/process_win.cpp src/os/socket_win.cpp src/os/serial_win.cpp
+        src/os/ports_win.cpp src/os/usb_win.cpp src/os/access_other.cpp src/os/console_win.cpp)
     target_link_libraries(malgrind_host PUBLIC setupapi cfgmgr32 ws2_32 shell32 ole32 advapi32)
+elseif(APPLE)
+    target_sources(malgrind_host PRIVATE
+        src/os/paths_posix.cpp src/os/process_posix.cpp src/os/socket_posix.cpp src/os/serial_posix.cpp
+        src/os/ports_macos.cpp src/os/usb_macos.cpp src/os/access_other.cpp src/os/console_posix.cpp)
+    target_link_libraries(malgrind_host PUBLIC "-framework IOKit" "-framework CoreFoundation")
 else()
-    target_sources(malgrind_host PRIVATE src/os/paths_posix.cpp src/os/process_posix.cpp src/os/socket_posix.cpp)
+    target_sources(malgrind_host PRIVATE
+        src/os/paths_posix.cpp src/os/process_posix.cpp src/os/socket_posix.cpp src/os/serial_posix.cpp
+        src/os/ports_linux.cpp src/os/usb_linux.cpp src/os/access_linux.cpp src/os/console_posix.cpp)
 endif()
 target_include_directories(malgrind_host PUBLIC src)
 target_link_libraries(malgrind_host PUBLIC malgrind_core nlohmann_json::nlohmann_json)
@@ -53,6 +62,12 @@ add_dependencies(test_os_process helper_echo)
 
 malgrind_add_test(os_socket tests/test_os_socket.cpp)
 target_link_libraries(test_os_socket PRIVATE malgrind_host)
+
+malgrind_add_test(os_serial tests/test_os_serial.cpp)
+target_link_libraries(test_os_serial PRIVATE malgrind_host)
+
+malgrind_add_test(os_ports tests/test_os_ports.cpp)
+target_link_libraries(test_os_ports PRIVATE malgrind_host)
 
 malgrind_add_test(host tests/test_host.cpp)
 target_link_libraries(test_host PRIVATE malgrind_host)

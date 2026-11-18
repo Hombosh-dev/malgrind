@@ -1,34 +1,41 @@
 #pragma once
 
+#include "os/serial.hpp"
+
+#include <cstddef>
 #include <cstdint>
-#include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
-#include <vector>
 #include <utility>
+#include <variant>
 
 namespace malgrind::host {
-
-// USB serial adapters and native USB CDC ports (ttyUSB*, ttyACM*) in dev_dir, sorted.
-[[nodiscard]] std::vector<std::string> find_serial_ports(const std::filesystem::path& dev_dir = "/dev");
 
 // Byte stream from a serial port, or from stdin when the port is "-".
 class Source {
 public:
+    [[nodiscard]] static std::variant<Source, os::OpenFailure> open_result(const std::string& port, unsigned baud);
     [[nodiscard]] static std::optional<Source> open(const std::string& port, unsigned baud);
 
-    Source(Source&& other) noexcept : fd_(std::exchange(other.fd_, -1)), owns_(other.owns_) {}
+    Source(Source&&) noexcept;
+    Source& operator=(Source&&) noexcept;
     Source(const Source&) = delete;
+    Source& operator=(const Source&) = delete;
     ~Source();
 
     // Bytes read; 0 if nothing arrived within the timeout; nullopt at end of stream or on error.
     [[nodiscard]] std::optional<std::size_t> read(std::span<std::uint8_t> out, int timeout_ms = 200);
+    // All bytes or false (returns false on stdin).
+    [[nodiscard]] bool write(std::span<const std::uint8_t> data);
 
 private:
-    Source(int fd, bool owns) : fd_(fd), owns_(owns) {}
-    int fd_;
-    bool owns_;
+    struct StdinState;
+    explicit Source(os::SerialPort serial) noexcept : impl_(std::move(serial)) {}
+    explicit Source(std::shared_ptr<StdinState> stdin_state) noexcept : impl_(std::move(stdin_state)) {}
+
+    std::variant<os::SerialPort, std::shared_ptr<StdinState>> impl_;
 };
 
 } // namespace malgrind::host

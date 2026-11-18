@@ -95,7 +95,7 @@ export interface BoardPort {
   pid: string;
   serial: string; // the adapter's serial number, if it has one
   location: string; // where it is plugged in, "3-3"
-  access: { ok: boolean; group: string; in_group: boolean }; // whether this user may open the port
+  access: { ok: boolean; group: string; in_group: boolean; fixable: boolean }; // whether this user may open the port
 }
 
 // What the machine has for the jobs the app needs done (`setup`): paths, or null when missing.
@@ -103,7 +103,8 @@ export interface SetupInfo {
   pio: string | null;
   python: string | null;
   git: string | null;
-  pkexec: boolean; // the system's graphical password prompt, used to grant port access
+  can_grant_access: boolean; // whether the engine can ask the system to grant port access
+  os?: string;
   user: string;
 }
 

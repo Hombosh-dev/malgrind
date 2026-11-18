@@ -8,38 +8,36 @@
 
 #include <algorithm>
 #include <array>
-#include <cerrno>
 #include <chrono>
-#include <cstring>
 #include <format>
 #include <thread>
 #include <system_error>
+#include <variant>
 
 namespace malgrind::host {
 
 using namespace std::chrono_literals;
 
-std::runtime_error open_error(const std::string& port, int err) {
-    if (err == EBUSY)
+std::runtime_error open_error(const std::string& port, const os::OpenFailure& failure) {
+    if (failure.kind == os::OpenError::Busy)
         return std::runtime_error("busy: another program (maybe another malgrind, or a serial monitor) is using " + port);
-    if (err == EACCES)
+    if (failure.kind == os::OpenError::Denied)
         return std::runtime_error(std::format("no permission to use {}: choose Grant access on the board's tile (this user is not allowed to open the port)", port));
-    return std::runtime_error(std::format("cannot open {}: {}", port, std::strerror(err)));
+    return std::runtime_error(std::format("cannot open {}: {}", port, failure.detail));
 }
 
 Source open_source(const std::string& port) {
-    auto source = Source::open(port, kBaud);
-    if (!source) throw open_error(port, errno);
-    return std::move(*source);
+    auto res = Source::open_result(port, kBaud);
+    if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
+    throw open_error(port, std::get<os::OpenFailure>(res));
 }
 
 Source open_after_upload(const std::string& port) {
     for (int attempt = 0;; ++attempt) {
-        auto source = Source::open(port, kBaud);
-        if (source) return std::move(*source);
-        const int err = errno;
-        const bool transient = err == ENOENT || err == ENODEV || err == EIO || err == ENXIO;
-        if (!transient || attempt >= 20) throw open_error(port, err);
+        auto res = Source::open_result(port, kBaud);
+        if (auto* source = std::get_if<Source>(&res)) return std::move(*source);
+        const auto& failure = std::get<os::OpenFailure>(res);
+        if (!failure.transient || attempt >= 20) throw open_error(port, failure);
         std::this_thread::sleep_for(250ms);
     }
 }
@@ -69,11 +67,13 @@ void run_pio(const Invocation& invocation, const std::function<void(std::string_
 }
 
 ProbeResult probe_port(const std::string& port) {
-    auto source = Source::open(port, kBaud);
+    auto res = Source::open_result(port, kBaud);
+    auto* source = std::get_if<Source>(&res);
     if (!source) {
-        if (errno == EBUSY) return {.busy = true};
-        if (errno == EACCES) return {.denied = true};
-        throw open_error(port, errno);
+        const auto& failure = std::get<os::OpenFailure>(res);
+        if (failure.kind == os::OpenError::Busy) return {.busy = true};
+        if (failure.kind == os::OpenError::Denied) return {.denied = true};
+        throw open_error(port, failure);
     }
     FrameReader reader;
     std::array<std::uint8_t, 4096> buf;
@@ -122,8 +122,8 @@ Board identify(const fs::path& pio, const fs::path& home, const std::string& por
 void flash_agent(const Prepared& p, const fs::path& home, const fs::path& backup_dir, const Invocation& build, const Invocation& upload,
                  const LineFn& on_line) {
     const auto probe = probe_port(p.port);
-    if (probe.busy) throw open_error(p.port, EBUSY);
-    if (probe.denied) throw open_error(p.port, EACCES);
+    if (probe.busy) throw open_error(p.port, {os::OpenError::Busy, false, {}});
+    if (probe.denied) throw open_error(p.port, {os::OpenError::Denied, false, {}});
     // Build first: a compile error then costs the board neither a reset nor a backup, and PlatformIO has downloaded esptool
     // by the time the backup needs it (on a fresh machine it is not there before the first build).
     run_pio(build, on_line);
