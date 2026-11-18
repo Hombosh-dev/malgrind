@@ -23,7 +23,7 @@
     "macOS": { "minimumSystemVersion": "13.3", "signingIdentity": "-" },
     "resources": {
       "../../core/": "agent-src/core/",
-      "../../platforms/esp32/": "agent-src/platforms/esp32/",
+      "../../platforms/": "agent-src/platforms/",
       "../../agent/": "agent-src/agent/"
     }
   }

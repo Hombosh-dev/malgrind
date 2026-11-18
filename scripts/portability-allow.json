@@ -1,8 +1,6 @@
 {
   "os": [],
   "chip": [
-    "host/src/cli.cpp",
-    "host/src/main.cpp",
     "host/src/symbols.cpp"
   ]
 }

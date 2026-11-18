@@ -701,7 +701,7 @@ public:
   `family.json` (new, tiny: `{"id":"esp32"}`), instead of looking for `agent/esp32/inject.py`.
 - Each family finds its files at `agent_root / "agent" / id()`.
 - Tauri resources: ship `../../platforms/` whole (STM32/RP2040 ports later) instead of only `platforms/esp32/`.
-- [ ] Commit `refactor: agent sources per family`.
+- [x] Commit `refactor: agent sources per family`.
 
 ### T3.3 Family hints, symbols, methods report 🟢
 

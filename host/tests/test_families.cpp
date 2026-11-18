@@ -3,6 +3,8 @@
 #include "families/family.hpp"
 #include "os/paths.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cassert>
 #include <cstdio>
@@ -66,6 +68,13 @@ void registry_lookups() {
     assert(family_for_arch(Arch::RiscV32) == esp);
     assert(family_for_arch(Arch::Host) == nullptr);
     assert(family_for_arch(Arch::ArmV7M) == nullptr);
+
+    for (const Family* f : families) {
+        const auto manifest = fs::path(MALGRIND_SOURCE_DIR) / "agent" / f->id() / "family.json";
+        assert(fs::exists(manifest));
+        const auto parsed = nlohmann::json::parse(slurp(manifest));
+        assert(parsed.at("id").get<std::string>() == f->id());
+    }
 }
 
 void base_family_defaults() {

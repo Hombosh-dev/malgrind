@@ -1,6 +1,7 @@
 // malgrind-cli: the engine of the malgrind app. `serve` speaks JSON lines to the app (serve.hpp); `run`, `attach` and
 // `detect` are the terminal mode with a live page in the browser (cli.hpp).
 #include "cli.hpp"
+#include "families/family.hpp"
 #include "os/console.hpp"
 #include "os/paths.hpp"
 #include "serve.hpp"
@@ -17,8 +18,17 @@ namespace {
 #define MALGRIND_DEFAULT_AGENT_DIR ""
 #endif
 
-// Where agent/esp32/ is: $MALGRIND_AGENT_DIR, else the app's resources next to this executable (.deb: /usr/lib/malgrind,
+// Where agent/<family>/ is: $MALGRIND_AGENT_DIR, else the app's resources next to this executable (.deb: /usr/lib/malgrind,
 // .app: Contents/Resources), else the repository this binary was built from.
+bool has_agent_family(const std::filesystem::path& candidate) {
+    for (const auto* f : malgrind::host::all_families()) {
+        if (std::error_code ec; std::filesystem::exists(candidate / "agent" / f->id() / "family.json", ec)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path default_agent_dir() {
     namespace fs = std::filesystem;
     namespace os = malgrind::host::os;
@@ -26,7 +36,7 @@ std::filesystem::path default_agent_dir() {
     if (const auto exe = os::executable_path().parent_path(); !exe.empty()) {
         for (const char* rel : {"agent-src", "../lib/malgrind/agent-src", "../Resources/agent-src"}) {
             const auto candidate = (exe / rel).lexically_normal();
-            if (std::error_code ec; fs::exists(candidate / "agent/esp32/inject.py", ec)) return candidate;
+            if (has_agent_family(candidate)) return candidate;
         }
     }
     return os::from_utf8(MALGRIND_DEFAULT_AGENT_DIR);

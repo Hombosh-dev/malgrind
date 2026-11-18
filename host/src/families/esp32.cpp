@@ -51,7 +51,7 @@ struct AgentPaths {
 
 AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir) {
     AgentPaths p;
-    p.files = absolute_path(agent_dir) / "agent/esp32";
+    p.files = absolute_path(agent_dir) / "agent" / esp32_family().id();
     if (!fs::exists(p.files / "sdkconfig.agent") || !fs::exists(p.files / "inject.py"))
         throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
     p.out = project.dir / ".pio/malgrind";

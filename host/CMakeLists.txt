@@ -38,8 +38,8 @@ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/flame_html.inc "R\"malgrind_html(${FLAME_
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS web/flame.html)
 target_include_directories(malgrind_host PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
-# Where `malgrind-cli run` finds agent/esp32/ unless told otherwise. A source build uses the repository; packaging sets its own.
-set(MALGRIND_DEFAULT_AGENT_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "directory that contains agent/esp32/")
+# Where `malgrind-cli run` finds agent/<family>/ unless told otherwise. A source build uses the repository; packaging sets its own.
+set(MALGRIND_DEFAULT_AGENT_DIR "${CMAKE_SOURCE_DIR}" CACHE PATH "directory that contains agent/<family>/")
 
 # Named malgrind-cli: the app's own executable is called malgrind, and both end up in /usr/bin.
 add_executable(malgrind-cli src/main.cpp)

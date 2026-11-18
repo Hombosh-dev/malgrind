@@ -309,7 +309,7 @@ Everything is detected automatically. Override only when needed:
   --http-port N   viewer port (default: 8000, or the next free one)
   --no-open       do not open the browser
   --folded FILE   write folded stacks (flamegraph.pl, speedscope) when stopped
-  --data-dir DIR  where runs are stored        --agent-dir DIR  where agent/esp32/ is
+  --data-dir DIR  where runs are stored        --agent-dir DIR  where agent/<family>/ is
 )";
 
 void cli_request_stop() noexcept { g_stop = true; }

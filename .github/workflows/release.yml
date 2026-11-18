@@ -68,12 +68,14 @@ jobs:
             dpkg-deb -I "$deb" | grep -q "Version: $version"
             dpkg-deb -x "$deb" /tmp/pkg
             /tmp/pkg/usr/bin/malgrind-cli --version | grep -q "$version"
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/esp32/family.json
             test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/esp32/inject.py
           else
             dmg=$(ls "$bundle_dir"/*.dmg)
             hdiutil attach -nobrowse -readonly -mountpoint /tmp/dmg "$dmg"
             app=/tmp/dmg/malgrind.app
             "$app/Contents/MacOS/malgrind-cli" --version | grep -q "$version"
+            test -f "$app/Contents/Resources/agent-src/agent/esp32/family.json"
             test -f "$app/Contents/Resources/agent-src/agent/esp32/inject.py"
             hdiutil detach /tmp/dmg
           fi
