@@ -9,6 +9,7 @@
 #include "esp_cpu.h"
 #include "esp_cpu_utils.h"
 #include "esp_debug_helpers.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_memory_utils.h"
 #include "freertos/FreeRTOS.h"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -25,12 +27,16 @@ using namespace malgrind;
 constexpr const char* kTag = "malgrind";
 constexpr uart_port_t kUart = UART_NUM_0;
 constexpr std::uint32_t kFlushMs = 250;
+constexpr std::uint32_t kStatsMs = 1000;
 constexpr std::uint32_t kHelloMs = 1000;
 constexpr std::uint32_t kPollMs = 50;
 constexpr std::uint16_t kAgentVersion = 2;
 constexpr std::uint16_t kMinRateHz = 10;
 constexpr std::uint16_t kMaxRateHz = 5000;
 constexpr std::uint16_t kDefaultRateHz = 997;
+constexpr std::uint32_t kSupportedCaps = kCapSamples | kCapHeap | kCapTasks;
+constexpr std::size_t kMaxRawTasks = 64;
+constexpr std::size_t kMaxEncodedTasks = 32;
 
 #ifdef __riscv
 constexpr Arch kArch = Arch::RiscV32;
@@ -141,13 +147,152 @@ void send_hello(std::uint16_t seq, bool sampling, std::uint32_t analyses) {
         .ncores = info.num_cores,
         .cpu_hz = info.cpu_hz,
         .agent_ver = kAgentVersion,
-        .caps = kCapSamples,
+        .caps = kSupportedCaps,
         .state = static_cast<std::uint8_t>(sampling ? 1 : 0),
         .rate_hz = g_profiler->rate_hz(),
         .analyses = analyses,
     };
     const std::size_t n = encode_hello(buf, sizeof(buf), hello);
     if (n > 0) uart_write_bytes(kUart, buf, n);
+}
+
+// Called from flusher_task only (never from the timer ISR).
+void send_heap_stats(std::uint16_t seq, std::uint32_t t_ms) {
+    HeapRegion regions[3]{};
+    std::size_t count = 0;
+
+    auto add_region = [&](std::uint8_t id, std::uint32_t caps, bool required) {
+        multi_heap_info_t info{};
+        heap_caps_get_info(&info, caps);
+        const std::size_t total = info.total_free_bytes + info.total_allocated_bytes;
+        if (!required && total == 0) return;
+        regions[count++] = {
+            .region = id,
+            .total = static_cast<std::uint32_t>(total),
+            .free = static_cast<std::uint32_t>(info.total_free_bytes),
+            .min_free = static_cast<std::uint32_t>(info.minimum_free_bytes),
+            .largest = static_cast<std::uint32_t>(info.largest_free_block),
+        };
+    };
+
+    add_region(kHeapInternal, MALLOC_CAP_INTERNAL, true);
+    add_region(kHeapExternal, MALLOC_CAP_SPIRAM, false);
+    add_region(kHeapIram, MALLOC_CAP_EXEC, false);
+
+    std::uint8_t buf[96];
+    const std::size_t n = encode_heap(buf, sizeof(buf), seq, t_ms, regions, count);
+    if (n > 0) uart_write_bytes(kUart, buf, n);
+}
+
+struct PrevTaskRuntime {
+    TaskHandle_t handle = nullptr;
+    std::uint32_t runtime = 0;
+};
+
+void copy_task_name(char (&dst)[kTaskNameLen], const char* src) noexcept {
+    std::memset(dst, 0, kTaskNameLen);
+    if (!src) return;
+    for (std::size_t i = 0; i < kTaskNameLen && src[i] != '\0'; ++i) {
+        dst[i] = src[i];
+    }
+}
+
+std::uint8_t task_core(const TaskStatus_t& st) noexcept {
+#ifdef CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID
+    if (st.xCoreID == static_cast<BaseType_t>(tskNO_AFFINITY) || st.xCoreID < 0) return 0xffu;
+    return static_cast<std::uint8_t>(st.xCoreID);
+#else
+    (void)st;
+    return 0xffu;
+#endif
+}
+
+// Called from flusher_task only (not thread-safe, never from the timer ISR).
+// Captures up to kMaxRawTasks (64) tasks and caps encoded output at kMaxEncodedTasks (32),
+// keeping the highest-delta tasks if more than 32 exist.
+void send_task_stats(std::uint16_t seq, std::uint32_t t_ms, bool reset_history) {
+    static TaskStatus_t raw[kMaxRawTasks]{};
+    static PrevTaskRuntime prev[kMaxRawTasks]{};
+    static std::size_t prev_count = 0;
+    static bool has_prev_total = false;
+    static std::uint32_t prev_total_rt = 0;
+    static TaskSample out[kMaxEncodedTasks]{};
+    static std::uint8_t task_buf[1280]{};
+    static_assert(sizeof(task_buf) >= 12 + 11 + kMaxEncodedTasks * 33);
+
+    if (reset_history) {
+        prev_count = 0;
+        has_prev_total = false;
+        prev_total_rt = 0;
+    }
+
+    using RunTimeCounter = decltype(raw[0].ulRunTimeCounter);
+    RunTimeCounter raw_total_rt = 0;
+    const UBaseType_t got = uxTaskGetSystemState(raw, static_cast<UBaseType_t>(kMaxRawTasks), &raw_total_rt);
+    if (got == 0) return;
+
+    std::size_t n_raw = static_cast<std::size_t>(got);
+    if (n_raw > kMaxRawTasks) n_raw = kMaxRawTasks;
+
+    const std::uint32_t total_rt = static_cast<std::uint32_t>(raw_total_rt);
+    const std::uint32_t total_delta = has_prev_total ? static_cast<std::uint32_t>(total_rt - prev_total_rt) : 0u;
+
+    std::uint32_t deltas[kMaxRawTasks]{};
+    std::size_t order[kMaxRawTasks]{};
+    for (std::size_t i = 0; i < n_raw; ++i) {
+        order[i] = i;
+        const std::uint32_t now_rt = static_cast<std::uint32_t>(raw[i].ulRunTimeCounter);
+        for (std::size_t j = 0; j < prev_count; ++j) {
+            if (prev[j].handle == raw[i].xHandle) {
+                deltas[i] = static_cast<std::uint32_t>(now_rt - prev[j].runtime);
+                break;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < n_raw; ++i) {
+        prev[i] = {raw[i].xHandle, static_cast<std::uint32_t>(raw[i].ulRunTimeCounter)};
+    }
+    prev_count = n_raw;
+    prev_total_rt = total_rt;
+    has_prev_total = true;
+
+    std::size_t n_out = n_raw;
+    if (n_raw > kMaxEncodedTasks) {
+        n_out = kMaxEncodedTasks;
+        for (std::size_t i = 0; i < n_out; ++i) {
+            std::size_t best = i;
+            for (std::size_t j = i + 1; j < n_raw; ++j) {
+                const std::size_t a = order[j];
+                const std::size_t b = order[best];
+                if (deltas[a] > deltas[b] ||
+                    (deltas[a] == deltas[b] && raw[a].ulRunTimeCounter > raw[b].ulRunTimeCounter)) {
+                    best = j;
+                }
+            }
+            if (best != i) {
+                const std::size_t tmp = order[i];
+                order[i] = order[best];
+                order[best] = tmp;
+            }
+        }
+    }
+
+    for (std::size_t i = 0; i < n_out; ++i) {
+        const TaskStatus_t& st = raw[order[i]];
+        TaskSample& sample = out[i];
+        sample.handle = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(st.xHandle));
+        copy_task_name(sample.name, st.pcTaskName);
+        sample.prio = static_cast<std::uint8_t>(st.uxCurrentPriority);
+        sample.core = task_core(st);
+        sample.state = static_cast<std::uint8_t>(st.eCurrentState);
+        sample.runtime = deltas[order[i]];
+        sample.stack_hwm =
+            static_cast<std::uint32_t>(st.usStackHighWaterMark) * static_cast<std::uint32_t>(sizeof(StackType_t));
+    }
+
+    const std::size_t n_bytes = encode_tasks(task_buf, sizeof(task_buf), seq, t_ms, total_delta, out, n_out);
+    if (n_bytes > 0) uart_write_bytes(kUart, task_buf, n_bytes);
 }
 
 void stop_timers() {
@@ -208,14 +353,19 @@ void flush_samples(std::uint32_t& flush_cycles) {
 
 void flusher_task(void*) {
     bool sampling = g_sampling.load(std::memory_order_acquire);
-    std::uint32_t analyses = sampling ? kCapSamples : 0;
+    std::uint32_t analyses = sampling ? kSupportedCaps : 0;
     std::uint16_t hello_seq = 0;
+    std::uint16_t heap_seq = 0;
+    std::uint16_t task_seq = 0;
     std::uint32_t flush_cycles = 0;
+    bool reset_task_history = false;
     CommandParser parser;
 
     const TickType_t poll_ticks = pdMS_TO_TICKS(kPollMs) > 0 ? pdMS_TO_TICKS(kPollMs) : 1;
     TickType_t last_flush = xTaskGetTickCount();
     TickType_t last_hello = last_flush;
+    TickType_t sampling_start = last_flush;
+    TickType_t last_stats = last_flush;
 
     send_hello(hello_seq++, sampling, analyses);
 
@@ -230,31 +380,40 @@ void flusher_task(void*) {
                 switch (cmd.cmd) {
                     case kCmdStart: {
                         const std::uint16_t rate = clamp_rate(cmd.rate_hz ? cmd.rate_hz : g_default_rate_hz);
-                        analyses = cmd.analyses ? (cmd.analyses & kCapSamples) : kCapSamples;
-                        if (sampling) {
+                        analyses = cmd.analyses ? (cmd.analyses & kSupportedCaps) : kSupportedCaps;
+                        if (g_sampling.load(std::memory_order_acquire)) {
                             g_sampling.store(false, std::memory_order_release);
                             stop_timers();
                             vTaskDelay(2); // let any in-flight ISR exit before clearing tables
                         }
-                        configure_timers(rate);
                         g_profiler->clear();
                         g_profiler->set_rate(rate);
+                        flush_cycles = 0;
+                        if (analyses & kCapSamples) {
+                            configure_timers(rate);
+                            g_sampling.store(true, std::memory_order_release);
+                            start_timers();
+                        }
                         sampling = true;
-                        g_sampling.store(true, std::memory_order_release);
-                        start_timers();
-                        last_flush = xTaskGetTickCount();
+                        reset_task_history = true;
+                        const TickType_t started = xTaskGetTickCount();
+                        last_flush = started;
+                        sampling_start = started;
+                        last_stats = started;
                         send_hello(hello_seq++, sampling, analyses);
                         break;
                     }
                     case kCmdStop: {
-                        if (sampling) {
-                            sampling = false;
+                        if (g_sampling.load(std::memory_order_acquire)) {
                             g_sampling.store(false, std::memory_order_release);
                             stop_timers();
                             vTaskDelay(2); // let any in-flight ISR exit before clearing tables
                             g_profiler->clear();
                         }
+                        sampling = false;
                         analyses = 0;
+                        flush_cycles = 0;
+                        reset_task_history = true;
                         last_hello = xTaskGetTickCount();
                         send_hello(hello_seq++, sampling, analyses);
                         break;
@@ -273,9 +432,18 @@ void flusher_task(void*) {
 
         const TickType_t now = xTaskGetTickCount();
         if (sampling) {
-            if (elapsed_ms(now, last_flush) >= kFlushMs) {
+            if ((analyses & kCapSamples) && elapsed_ms(now, last_flush) >= kFlushMs) {
                 flush_samples(flush_cycles);
                 last_flush = xTaskGetTickCount();
+            }
+            if ((analyses & (kCapHeap | kCapTasks)) && elapsed_ms(now, last_stats) >= kStatsMs) {
+                const std::uint32_t t_ms = elapsed_ms(now, sampling_start);
+                if (analyses & kCapHeap) send_heap_stats(heap_seq++, t_ms);
+                if (analyses & kCapTasks) {
+                    send_task_stats(task_seq++, t_ms, reset_task_history);
+                    reset_task_history = false;
+                }
+                last_stats = now;
             }
         } else {
             if (elapsed_ms(now, last_hello) >= kHelloMs) {

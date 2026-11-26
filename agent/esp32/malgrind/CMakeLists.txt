@@ -7,6 +7,6 @@ set(root "${CMAKE_CURRENT_LIST_DIR}/../../..")
 idf_component_register(
     SRCS "${root}/core/src/profiler.cpp" "${root}/core/src/command.cpp" "${root}/platforms/esp32/src/esp32.cpp" "autostart.cpp"
     INCLUDE_DIRS "${root}/core/include" "${root}/platforms/esp32/include"
-    REQUIRES driver esp_system esp_hw_support freertos
+    REQUIRES driver esp_system esp_hw_support freertos heap
 )
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-u malgrind_autostart_link")

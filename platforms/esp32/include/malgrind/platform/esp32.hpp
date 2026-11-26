@@ -6,7 +6,8 @@
 //   - UART0 driver with RX/TX ring buffers (frames, HELLO beacons, commands, and ESP_LOG share it)
 //   - one gptimer per core that samples the interrupted stack in its ISR when sampling is active
 //   - a low-priority task on core 0 that polls UART0 RX for MLC1 commands (START, STOP, HELLO) every 50 ms:
-//       * while sampling (`start_sampling == true` or after START): flushes sample frames every 250 ms
+//       * while active (`start_sampling == true` or after START): flushes sample frames every 250 ms when
+//         kCapSamples is enabled, and emits HEAP / TASKS (capped at 32 entries) frames every 1000 ms when enabled
 //       * while sleeping (`start_sampling == false` or after STOP): timers remain stopped (0 ISR overhead)
 //         and a HELLO beacon (state = 0) is emitted every 1000 ms until a START command arrives
 // Returns false if something could not be set up (details are logged). Subsequent calls are no-ops returning true.

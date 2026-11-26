@@ -875,7 +875,7 @@ host `wire.hpp/.cpp` (`encode_command(Command) -> std::vector<uint8_t>`), tests 
 - TASKS every 1000 ms when bit 2: `uxTaskGetSystemState` (requires `CONFIG_FREERTOS_USE_TRACE_FACILITY=y` and
   `CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y` → add both to `agent/esp32/sdkconfig.agent`); runtime as delta since last report; `stack_hwm` in bytes.
 - Send from the flusher task, never from the ISR. Cap TASKS at 32 entries (truncate, set a flag bit in `state`? no: just truncate and document).
-- [ ] Commit `feat(agent/esp32): heap and task statistics`.
+- [x] Commit `feat(agent/esp32): heap and task statistics`.
 
 ### T6.5 Host: v2 in sessions, store and protocol 🟡
 
