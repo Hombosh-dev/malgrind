@@ -149,8 +149,29 @@ ProbeResult probe_source(ByteSource& source) {
         const auto n = source.read(buf, 100);
         if (!n) break;
         if (*n == 0) continue;
-        if (const auto frames = reader.feed(std::span(buf).first(*n)).frames; !frames.empty())
-            return {.agent = true, .arch = frames[0].arch, .ncores = frames[0].ncores, .cpu_mhz = frames[0].cpu_hz / 1e6};
+        const auto res = reader.feed(std::span(buf).first(*n));
+        for (const auto& msg : res.messages) {
+            if (const auto* hello = std::get_if<Hello>(&msg)) {
+                return {
+                    .agent = true,
+                    .arch = hello->arch,
+                    .ncores = hello->ncores,
+                    .cpu_mhz = hello->cpu_hz / 1e6,
+                    .caps = hello->caps,
+                    .state = hello->state,
+                };
+            }
+        }
+        if (!res.frames.empty()) {
+            return {
+                .agent = true,
+                .arch = res.frames[0].arch,
+                .ncores = res.frames[0].ncores,
+                .cpu_mhz = res.frames[0].cpu_hz / 1e6,
+                .caps = kCapSamples,
+                .state = 1,
+            };
+        }
     }
     return {};
 }

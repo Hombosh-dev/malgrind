@@ -444,8 +444,47 @@ int main() {
     assert(fn["functions"][0]["name"] == "0x400d1000" && fn["functions"][0]["self"] == 6 && fn["functions"][0]["total"] == 6);
     assert(fn["callers"].size() == 1 && fn["callers"][0]["name"] == "0x400d2fff" && fn["callers"][0]["count"] == 7);
     assert(fn["callees"].size() == 2);
+    assert(fn["series"] == nlohmann::json::array({{0, 4}, {29000, 3}}));
+    assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d1800"))["series"] ==
+           nlohmann::json::array({{0, 1}, {29000, 0}}));
     assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, ""))["callers"].empty());
+    assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, ""))["series"].empty());
+    assert(nlohmann::json::parse(agg.functions_json(1u, 0s, std::nullopt, "0x400d1fff"))["series"] ==
+           nlohmann::json::array({{0, 1}}));
+    assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 10s, std::nullopt, "0x400d1fff"))["series"] ==
+           nlohmann::json::array({{29000, 3}}));
+    assert(nlohmann::json::parse(agg.functions_json(std::nullopt, 5s, 1000ms, "0x400d1fff"))["series"] ==
+           nlohmann::json::array({{0, 4}}));
     assert(nlohmann::json::parse(agg.functions_json(1u, 0s, std::nullopt, ""))["total"] == 1); // core filter
+
+    // Multiple frames inside the same 1s bucket sum together, and recursion counts once per sample in `series`.
+    {
+        Aggregator bucket_agg(symbols);
+        bucket_agg.set_target(Arch::Xtensa, 1, 240'000'000, 997);
+        bucket_agg.set_agent_status(kCapSamples | kCapHeap, 0);
+        const auto pre_snap = nlohmann::json::parse(bucket_agg.snapshot_json(std::nullopt, 0s));
+        assert(pre_snap["tree"]["value"] == 0);
+        assert(pre_snap["stats"]["arch"] == "xtensa" && pre_snap["stats"]["rate_hz"] == 997);
+        assert(pre_snap["stats"]["caps"] == (kCapSamples | kCapHeap) && pre_snap["stats"]["agent_state"] == 0);
+
+        Frame f1, f2, f3;
+        f1.arch = f2.arch = f3.arch = Arch::Xtensa;
+        f1.ncores = f2.ncores = f3.ncores = 1;
+        f1.core = f2.core = f3.core = 0;
+        f1.cpu_hz = f2.cpu_hz = f3.cpu_hz = 240'000'000;
+        f1.rate_hz = f2.rate_hz = f3.rate_hz = 997;
+        f1.stacks = {{2, {0x400d1000, 0x400d3000}}};
+        f2.stacks = {{3, {0x400d1000, 0x400d3000}}, {4, {0x400d2000, 0x400d3000}}};
+        f3.stacks = {{6, {0x400d2000, 0x400d3000}}};
+        bucket_agg.set_agent_status(kCapSamples | kCapHeap, 1);
+        bucket_agg.add(f1, 1200ms);
+        bucket_agg.add(f2, 1800ms);
+        bucket_agg.add(f3, 2100ms);
+        const auto bfn = nlohmann::json::parse(bucket_agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d1000"));
+        assert(bfn["series"] == nlohmann::json::array({{1000, 5}, {2000, 0}}));
+        const auto post_snap = nlohmann::json::parse(bucket_agg.snapshot_json(std::nullopt, 0s));
+        assert(post_snap["stats"]["caps"] == (kCapSamples | kCapHeap) && post_snap["stats"]["agent_state"] == 1);
+    }
 
     // recursion: names {main, r, r, leaf}: r counts once in `total`, and calls itself
     Frame rec;
@@ -455,6 +494,7 @@ int main() {
     rec_agg.add(rec, 0ms);
     const auto rfn = nlohmann::json::parse(rec_agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d0fff"));
     assert(rfn["total"] == 5);
+    assert(rfn["series"] == nlohmann::json::array({{0, 5}}));
     for (const auto& f : rfn["functions"])
         if (f["name"] == "0x400d0fff") assert(f["total"] == 5 && f["self"] == 0);   // 5, not 10
     assert(rfn["callees"].size() == 2); // itself and the leaf

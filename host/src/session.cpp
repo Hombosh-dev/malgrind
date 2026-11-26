@@ -6,9 +6,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <format>
+#include <variant>
 
 namespace fs = std::filesystem;
 
@@ -36,8 +38,12 @@ std::unique_ptr<Session> Session::live(std::unique_ptr<ByteSource> source, RunWr
                                        fs::path project, Emit emit, std::uint64_t large_run_bytes) {
     std::unique_ptr<Session> s(new Session(std::move(emit), std::move(elf), std::move(project), true));
     s->run_id_ = writer.meta().id;
+    s->desired_rate_hz_ = writer.meta().settings
+        ? static_cast<std::uint16_t>(std::min(writer.meta().settings->rate_hz, 65535u))
+        : std::uint16_t{0};
     s->writer_.emplace(std::move(writer));
     s->large_run_bytes_ = large_run_bytes;
+    s->active_source_ = source.get();
     s->live_ = true;
     s->thread_ = std::thread([raw = s.get(), src = std::move(source)]() mutable { raw->read_loop(std::move(src)); });
     return s;
@@ -70,6 +76,20 @@ void Session::record(const std::function<void(RunWriter&)>& fn) {
 }
 
 void Session::read_loop(std::unique_ptr<ByteSource> source) {
+    std::unique_ptr<ByteSource> owned = std::move(source);
+    struct SourceClear {
+        Session& session;
+        ~SourceClear() {
+            std::scoped_lock lock(session.source_mutex_);
+            session.active_source_ = nullptr;
+            session.live_ = false;
+        }
+    } clear_guard{*this};
+    {
+        std::scoped_lock lock(source_mutex_);
+        active_source_ = owned.get();
+    }
+
     const auto start = Clock::now();
     auto elapsed = [&] { return std::chrono::duration_cast<Aggregator::Ms>(Clock::now() - start); };
     std::array<std::uint8_t, 4096> buf;
@@ -77,7 +97,7 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
     bool warned_large = false;
     bool ended = false;
     while (!stop_) {
-        const auto n = source ? source->read(buf) : std::nullopt;
+        const auto n = owned ? owned->read(buf) : std::nullopt;
         if (!n) {
             ended = true;
             break;
@@ -99,48 +119,125 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
         }
     }
     record([&](RunWriter& w) { w.finish(static_cast<std::uint64_t>(elapsed().count())); });
-    live_ = false;
+    {
+        std::scoped_lock lock(source_mutex_);
+        active_source_ = nullptr;
+        live_ = false;
+    }
     if (ended) emit_({{"event", "ended"}, {"run", run_id_}, {"reason", "eof"}});
 }
 
 void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
     auto res = reader_.feed(bytes);
     if (!res.text.empty()) emit_({{"event", "log"}, {"text", std::move(res.text)}});
+    for (auto& msg : res.messages) {
+        std::visit(
+            [&](auto& m) {
+                using T = std::decay_t<decltype(m)>;
+                if constexpr (std::is_same_v<T, Hello>) {
+                    saw_hello_ = true;
+                    const std::uint32_t merged_caps = m.caps | observed_caps_.load();
+                    caps_.store(merged_caps);
+                    agent_state_.store(m.state);
+                    agent_ver_.store(m.agent_ver);
+                    if (!ready_) {
+                        setup_target(m.arch, m.ncores, m.cpu_hz, m.rate_hz, merged_caps, m.state, m.agent_ver);
+                    } else if (auto* agg = ready_.load()) {
+                        agg->set_target(m.arch, m.ncores, m.cpu_hz, m.rate_hz);
+                        agg->set_agent_status(merged_caps, m.state);
+                    }
+                    if (live_ && m.state == 0 && !auto_started_.exchange(true)) {
+                        (void)send_command(
+                            Command{kCmdStart, desired_rate_hz_, m.caps & (kCapSamples | kCapHeap | kCapTasks)});
+                    }
+                } else if constexpr (std::is_same_v<T, HeapStats>) {
+                    observed_caps_.fetch_or(kCapHeap);
+                    const std::uint32_t updated_caps = caps_.fetch_or(kCapHeap) | kCapHeap;
+                    heap_series_.add(std::move(m));
+                    if (auto* agg = ready_.load()) agg->set_agent_status(updated_caps, agent_state_.load());
+                } else if constexpr (std::is_same_v<T, TaskStats>) {
+                    observed_caps_.fetch_or(kCapTasks);
+                    const std::uint32_t updated_caps = caps_.fetch_or(kCapTasks) | kCapTasks;
+                    task_table_.add(std::move(m));
+                    if (auto* agg = ready_.load()) agg->set_agent_status(updated_caps, agent_state_.load());
+                }
+            },
+            msg);
+    }
     for (auto& frame : res.frames) {
-        if (!ready_) setup(frame);
+        observed_caps_.fetch_or(kCapSamples);
+        const std::uint32_t updated_caps = caps_.fetch_or(kCapSamples) | kCapSamples;
+        if (!saw_hello_) agent_state_.store(1);
+        if (!ready_) {
+            setup_target(frame.arch, frame.ncores, frame.cpu_hz, frame.rate_hz, updated_caps, agent_state_.load(),
+                         agent_ver_.load());
+        } else if (auto* agg = ready_.load()) {
+            agg->set_agent_status(updated_caps, agent_state_.load());
+        }
         ready_.load()->add(std::move(frame), t);
     }
 }
 
-void Session::setup(const Frame& first) {
+void Session::setup_target(Arch arch, std::uint8_t ncores, std::uint32_t cpu_hz, std::uint16_t rate_hz,
+                           std::uint32_t caps, std::uint8_t state, std::uint16_t agent_ver) {
     fs::path elf = elf_;
     // Only inside a project the caller named: the working directory of a GUI app is arbitrary, and an ELF of another
     // firmware would label every address with a wrong function.
     if (elf.empty() && search_elf_ && !project_.empty()) {
-        if (const auto found = find_elf(first.arch, project_, project_)) elf = *found;
+        if (const auto found = find_elf(arch, project_, project_)) elf = *found;
     }
     if (elf.empty()) {
-        notice(std::format("no {} firmware ELF found: functions show as raw addresses", arch_name(first.arch)));
+        notice(std::format("no {} firmware ELF found: functions show as raw addresses", arch_name(arch)));
     }
-    const auto tool = find_addr2line(first.arch);
+    const auto tool = find_addr2line(arch);
     if (!elf.empty() && tool.empty())
-        notice(std::format("no addr2line found for {}: functions show as raw addresses", arch_name(first.arch)));
+        notice(std::format("no addr2line found for {}: functions show as raw addresses", arch_name(arch)));
     std::vector<ExtraElf> extras;
-    if (const Family* family = family_for_arch(first.arch)) {
-        extras = family->extra_symbol_files(os::home_dir(), first.arch, elf);
+    if (const Family* family = family_for_arch(arch)) {
+        extras = family->extra_symbol_files(os::home_dir(), arch, elf);
     }
     symbols_.emplace(elf, tool, std::move(extras));
     aggregator_.emplace(*symbols_);
+    aggregator_->set_target(arch, ncores, cpu_hz, rate_hz);
+    aggregator_->set_agent_status(caps, state);
     record([&](RunWriter& w) {
-        w.set_target(first.arch, first.ncores, first.cpu_hz / 1e6);
+        w.set_target(arch, ncores, cpu_hz / 1e6);
         if (!elf.empty() && search_elf_) w.set_elf(elf);
     });
     emit_({{"event", "target"},
-           {"arch", std::string(arch_name(first.arch))},
-           {"ncores", first.ncores},
-           {"cpu_mhz", first.cpu_hz / 1e6},
-           {"elf", elf.empty() ? nlohmann::json(nullptr) : nlohmann::json(elf.string())}});
+           {"arch", std::string(arch_name(arch))},
+           {"ncores", ncores},
+           {"cpu_mhz", cpu_hz / 1e6},
+           {"elf", elf.empty() ? nlohmann::json(nullptr) : nlohmann::json(os::to_utf8(elf))},
+           {"caps", caps},
+           {"state", state},
+           {"agent_ver", agent_ver}});
     ready_ = &*aggregator_; // last: queries from other threads only see a complete setup
+}
+
+bool Session::send_command(const Command& cmd) {
+    std::scoped_lock lock(source_mutex_);
+    if (!live_ || stop_ || !active_source_) return false;
+    const auto bytes = encode_command(cmd);
+    return active_source_->write(bytes);
+}
+
+bool Session::agent_start(std::uint16_t rate_hz, std::uint32_t analyses) {
+    if (!send_command(Command{kCmdStart, rate_hz, analyses})) return false;
+    auto_started_ = true;
+    return true;
+}
+
+bool Session::agent_stop() {
+    return send_command(Command{kCmdStop, 0, 0});
+}
+
+std::string Session::memory_json(Aggregator::Ms window, std::optional<Aggregator::Ms> at) const {
+    return heap_series_.json(window, at);
+}
+
+std::string Session::tasks_json(Aggregator::Ms window, std::optional<Aggregator::Ms> at) const {
+    return task_table_.json(window, at);
 }
 
 std::optional<std::string> Session::snapshot(std::optional<unsigned> core, Aggregator::Ms window,

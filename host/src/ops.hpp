@@ -5,11 +5,13 @@
 #include "devices.hpp"
 #include "families/family.hpp"
 #include "github.hpp"
+#include "malgrind/profiler.hpp"
 #include "malgrind/target_info.hpp"
 #include "os/serial.hpp"
 #include "pio.hpp"
 #include "source.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -58,10 +60,12 @@ void run_pio(const Invocation& invocation, const std::function<void(std::string_
 struct ProbeResult {
     bool busy = false;  // somebody else has the port
     bool denied = false; // this user may not open the port (not in its group, Linux)
-    bool agent = false; // a malgrind frame arrived
+    bool agent = false; // a malgrind frame or hello beacon arrived
     Arch arch{};
     unsigned ncores = 0;
     double cpu_mhz = 0;
+    std::uint32_t caps = kCapSamples;
+    std::uint8_t state = 0;
 };
 // Listens to an already-open source for up to 2 s for a malgrind frame. Never records.
 [[nodiscard]] ProbeResult probe_source(ByteSource& source);

@@ -53,8 +53,22 @@ nlohmann::json top_counts(const std::map<std::string, std::uint64_t>& counts, st
 void Aggregator::add(Frame frame, Ms t) {
     symbols_.prepare(frame); // addr2line outside the lock
     std::scoped_lock lock(mutex_);
+    if (!target_) target_ = TargetSummary{frame.arch, frame.ncores, frame.cpu_hz, frame.rate_hz};
+    if (!has_agent_status_) agent_state_ = 1;
     dropped_prefix_.push_back((dropped_prefix_.empty() ? 0 : dropped_prefix_.back()) + frame.dropped);
     frames_.emplace_back(t, std::move(frame));
+}
+
+void Aggregator::set_target(Arch arch, unsigned ncores, std::uint32_t cpu_hz, std::uint16_t rate_hz) {
+    std::scoped_lock lock(mutex_);
+    target_ = TargetSummary{arch, ncores, cpu_hz, rate_hz};
+}
+
+void Aggregator::set_agent_status(std::uint32_t caps, std::uint8_t agent_state) {
+    std::scoped_lock lock(mutex_);
+    caps_ = caps;
+    agent_state_ = agent_state;
+    has_agent_status_ = true;
 }
 
 Aggregator::Ms Aggregator::duration() const {
@@ -72,16 +86,23 @@ std::vector<std::string> Aggregator::names(const std::vector<std::uint32_t>& pcs
 }
 
 template <class F>
-void Aggregator::for_each_stack(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const {
+void Aggregator::for_each_frame(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const {
     if (frames_.empty()) return;
     const Ms end = at.value_or(duration_unlocked());
-    auto last = std::ranges::upper_bound(frames_, end, {}, &Entry::first); // frames with t <= end are before it
+    const auto last = std::ranges::upper_bound(frames_, end, {}, &Entry::first); // frames with t <= end are before it
     for (auto it = frames_.begin(); it != last; ++it) {
         const auto& [t, frame] = *it;
-        if (window.count() != 0 && end - t > window) continue;
+        if (window.count() > 0 && end - t > window) continue;
         if (core && *core != frame.core) continue;
-        for (const auto& s : frame.stacks) f(s, frame.core);
+        f(t, frame);
     }
+}
+
+template <class F>
+void Aggregator::for_each_stack(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const {
+    for_each_frame(core, window, at, [&](Ms, const Frame& frame) {
+        for (const auto& s : frame.stacks) f(s, frame.core);
+    });
 }
 
 Aggregator::StackCounts Aggregator::collect(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
@@ -136,14 +157,46 @@ std::string Aggregator::functions_json(std::optional<unsigned> core, Ms window, 
     });
     auto fn = nlohmann::json::array();
     for (const auto& [name, c] : sorted | std::views::take(kTopFunctions)) fn.push_back({{"name", name}, {"self", c.self}, {"total", c.total}});
-    return nlohmann::json{{"total", total}, {"functions", fn}, {"callers", top_counts(callers, kTopRelated)},
-                          {"callees", top_counts(callees, kTopRelated)}}
+    auto series = nlohmann::json::array();
+    if (!focus.empty()) {
+        std::map<std::int64_t, std::uint64_t> buckets;
+        std::map<std::vector<std::uint32_t>, bool> matches_cache;
+        for_each_frame(core, window, at, [&](Ms t, const Frame& frame) {
+            const std::int64_t bucket_ms = (t.count() / 1000) * 1000;
+            auto& bucket = buckets[bucket_ms];
+            for (const auto& s : frame.stacks) {
+                auto [it, inserted] = matches_cache.try_emplace(s.pcs, false);
+                if (inserted) {
+                    const auto n = names(s.pcs);
+                    it->second = std::ranges::find(n, focus) != n.end();
+                }
+                if (it->second) bucket += s.count;
+            }
+        });
+        for (const auto& [bucket_ms, count] : buckets) {
+            series.push_back(nlohmann::json::array({bucket_ms, count}));
+        }
+    }
+    return nlohmann::json{{"total", total},
+                          {"functions", fn},
+                          {"callers", top_counts(callers, kTopRelated)},
+                          {"callees", top_counts(callees, kTopRelated)},
+                          {"series", std::move(series)}}
         .dump();
 }
 
 std::string Aggregator::stats_json(Ms at) const {
     const auto end = std::ranges::upper_bound(frames_, at, {}, &Entry::first);
-    if (end == frames_.begin()) return std::format(R"({{"duration_ms":{}}})", duration_unlocked().count());
+    if (end == frames_.begin()) {
+        if (!target_) {
+            return std::format(R"({{"duration_ms":{},"caps":{},"agent_state":{}}})", duration_unlocked().count(),
+                               caps_, agent_state_);
+        }
+        return std::format(
+            R"({{"arch":"{}","ncores":{},"cpu_mhz":{},"rate_hz":{},"samples_per_s":0.0,"dropped":0,"overhead_pct":null,"isr_max_cycles":0,"duration_ms":{},"caps":{},"agent_state":{}}})",
+            arch_name(target_->arch), target_->ncores, target_->cpu_hz / 1e6, target_->rate_hz,
+            duration_unlocked().count(), caps_, agent_state_);
+    }
     std::map<unsigned, std::vector<const Entry*>> per_core;
     for (auto it = end; it != frames_.begin();) {
         --it;
@@ -169,9 +222,10 @@ std::string Aggregator::stats_json(Ms at) const {
     const Frame& f = std::prev(end)->second;
     const auto dropped = dropped_prefix_[static_cast<std::size_t>(std::prev(end) - frames_.begin())];
     return std::format(
-        R"({{"arch":"{}","ncores":{},"cpu_mhz":{},"rate_hz":{},"samples_per_s":{:.1f},"dropped":{},"overhead_pct":{},"isr_max_cycles":{},"duration_ms":{}}})",
+        R"({{"arch":"{}","ncores":{},"cpu_mhz":{},"rate_hz":{},"samples_per_s":{:.1f},"dropped":{},"overhead_pct":{},"isr_max_cycles":{},"duration_ms":{},"caps":{},"agent_state":{}}})",
         arch_name(f.arch), f.ncores, f.cpu_hz / 1e6, f.rate_hz, hits_per_s, dropped,
-        cores ? std::format("{:.3f}", 100 * overhead / cores) : "null", f.isr_max, duration_unlocked().count());
+        cores ? std::format("{:.3f}", 100 * overhead / cores) : "null", f.isr_max, duration_unlocked().count(),
+        caps_, agent_state_);
 }
 
 std::string Aggregator::folded(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {

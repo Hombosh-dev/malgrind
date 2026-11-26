@@ -11,7 +11,7 @@
 //   devices                                -> {devices: [{id, kind, path, name, title, usb, access, family_hint, family_hint_name}], can_grant_access}
 //                                             kind = "serial"|"probe"; usb = {vid, pid, serial, location, product, manufacturer}|null;
 //                                             access = {ok, group, in_group, fixable}; nothing is opened
-//   probe {device, project?}               -> {busy, agent, denied, family, family_name, arch?, ncores?, cpu_mhz?, methods}   listens up to 2 s, records nothing;
+//   probe {device, project?}               -> {busy, agent, denied, family, family_name, arch?, ncores?, cpu_mhz?, caps?, state?, methods}   listens up to 2 s, records nothing;
 //                                             methods = [{id: attach|new_run|no_flash, available, why}]; `project` (an id) only
 //                                             decides whether new_run is possible with it
 //   chip_id {device}                       -> {chip}                                    resets the board
@@ -42,7 +42,11 @@
 //   update {run, name?, notes?}            -> RunMeta
 //   delete {run}                           -> {}      (refused for the run in use)
 //   snapshot {core?, window_s, at_ms?}     -> {tree, stats}   {"tree": null} before the first frame
-//   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees}
+//   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees, series}
+//   memory {window_s?, at_ms?}             -> {regions: [{region, name, series: [[t_ms, free, min_free, largest, total], ...]}]}
+//   tasks {window_s?, at_ms?}              -> {tasks: [{handle, name, prio, core, state, cpu_pct, stack_hwm, warn}]}
+//   agent_start {rate_hz?, analyses?}      -> {}   sends a START command to the live agent
+//   agent_stop                             -> {}   sends a STOP command to the live agent
 //   diff {a, b, core?}                     -> {a, b, total_a, total_b, functions, tree}
 //   export {run?, format, path, core?, window_s?, at_ms?} -> {bytes}   format = "folded" | "speedscope"; window_s defaults to 0
 //   write_file {path, base64}              -> {bytes}   decodes strict base64 and writes raw bytes to `path`

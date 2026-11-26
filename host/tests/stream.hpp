@@ -2,10 +2,14 @@
 
 // Test data shared by the host tests: a byte stream made by the real encoder in core/.
 
+#include "malgrind/command.hpp"
 #include "malgrind/profiler.hpp"
 
+#include <array>
+#include <cassert>
 #include <chrono>
 #include <cstdint>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -23,6 +27,37 @@ inline std::vector<std::uint8_t> make_stream(unsigned flushes) {
         p.flush([&](const std::uint8_t* d, std::size_t n) { stream.insert(stream.end(), d, d + n); }, [] {}, 5000);
     }
     return stream;
+}
+
+inline std::vector<std::uint8_t> make_hello_frame(const malgrind::HelloPayload& hello) {
+    std::array<std::uint8_t, 64> buf{};
+    const std::size_t n = malgrind::encode_hello(buf.data(), buf.size(), hello);
+    assert(n > 0);
+    return {buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)};
+}
+
+inline std::vector<std::uint8_t> make_heap_frame(std::uint16_t seq, std::uint32_t t_ms,
+                                                 std::span<const malgrind::HeapRegion> regions) {
+    std::array<std::uint8_t, 256> buf{};
+    const std::size_t n = malgrind::encode_heap(buf.data(), buf.size(), seq, t_ms, regions.data(), regions.size());
+    assert(n > 0);
+    return {buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)};
+}
+
+inline std::vector<std::uint8_t> make_tasks_frame(std::uint16_t seq, std::uint32_t t_ms, std::uint32_t total_runtime,
+                                                  std::span<const malgrind::TaskSample> tasks) {
+    std::array<std::uint8_t, 1280> buf{};
+    const std::size_t n =
+        malgrind::encode_tasks(buf.data(), buf.size(), seq, t_ms, total_runtime, tasks.data(), tasks.size());
+    assert(n > 0);
+    return {buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)};
+}
+
+inline std::vector<malgrind::Command> decode_commands(std::span<const std::uint8_t> bytes) {
+    malgrind::CommandParser parser;
+    std::vector<malgrind::Command> out;
+    parser.feed(bytes.data(), bytes.size(), [&](const malgrind::Command& cmd) { out.push_back(cmd); });
+    return out;
 }
 
 template <class Pred>

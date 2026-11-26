@@ -888,7 +888,7 @@ host `wire.hpp/.cpp` (`encode_command(Command) -> std::vector<uint8_t>`), tests 
 - New commands: `memory {window_s, at_ms?}` → `{regions: [{region, series: [[t_ms, free, min_free, largest, total]...]}]}`;
   `tasks {window_s, at_ms?}` → `{tasks: [{name, prio, core, cpu_pct, stack_hwm, warn}]}`; `agent_start {rate_hz?, analyses?}`, `agent_stop`.
 - Replays work automatically (the raw bytes are stored).
-- [ ] Tests with `MemorySource` feeding encoded HELLO/HEAP/TASKS frames. Commit `feat(engine): heap and task analyses`.
+- [x] Tests with `MemorySource` feeding encoded HELLO/HEAP/TASKS frames. Commit `feat(engine): heap and task analyses`.
 
 ### T6.6 UI: Memory and Tasks tabs, time-series strip 🟢
 

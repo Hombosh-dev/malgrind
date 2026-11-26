@@ -20,7 +20,9 @@
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -199,8 +201,13 @@ void attach_snapshot_stop() {
     h.source()->push(make_stream(2)); // 8 samples
     assert(wait_for([&] { return h.samples() == 8; }));
     const auto fn = h.call({{"cmd", "functions"}, {"window_s", 0}, {"focus", "0x400d1fff"}})["result"];
-    assert(fn["total"] == 8 && fn["callees"].size() == 2);
-    assert(h.call({{"cmd", "snapshot"}, {"window_s", 0}, {"core", 1}})["result"]["tree"]["value"] == 2);
+    assert(fn["total"] == 8 && fn["callees"].size() == 2 && fn["series"].size() == 1 && fn["series"][0][1] == 8);
+    assert(h.call({{"cmd", "functions"}, {"window_s", 0}})["result"]["series"].empty());
+    const auto v1_snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}, {"core", 1}})["result"];
+    assert(v1_snap["tree"]["value"] == 2);
+    assert(v1_snap["stats"]["caps"] == malgrind::kCapSamples && v1_snap["stats"]["agent_state"] == 1);
+    assert(h.call({{"cmd", "memory"}})["result"] == json({{"regions", json::array()}}));
+    assert(h.call({{"cmd", "tasks"}})["result"] == json({{"tasks", json::array()}}));
 
     auto runs = h.runs();
     assert(runs.size() == 1 && runs[0]["id"] == id && runs[0]["live"] == true);
@@ -244,6 +251,7 @@ void probe_finds_agent() {
     const auto probe = h.call({{"cmd", "probe"}, {"device", dev.id}});
     assert(probe["ok"] && probe["result"]["busy"] == false && probe["result"]["agent"] == true);
     assert(probe["result"]["arch"] == "xtensa" && probe["result"]["ncores"] == 2);
+    assert(probe["result"]["caps"] == malgrind::kCapSamples && probe["result"]["state"] == 1);
     assert(probe["result"]["family"] == "esp32" && probe["result"]["family_name"] == "ESP32 (ESP-IDF)");
     assert(h.runs().empty()); // probing records nothing
 
@@ -936,6 +944,157 @@ void open_after_upload_reenumerates() {
     assert(n && *n > 0);
 }
 
+void v2_probe_memory_tasks_and_commands() {
+    Harness h("malgrind_serve_v2");
+    const auto dev = h.plug("fake-v2", "usb-10c4-ea60-sn-v2", "ttyUSB0");
+
+    // Empty session defaults and live-only control errors.
+    assert(h.call({{"cmd", "memory"}})["result"] == json({{"regions", json::array()}}));
+    assert(h.call({{"cmd", "tasks"}})["result"] == json({{"tasks", json::array()}}));
+    const auto no_live_start = h.call({{"cmd", "agent_start"}, {"rate_hz", 500}});
+    assert(no_live_start["ok"] == false && contains(no_live_start["error"], "no run is live"));
+    const auto no_live_stop = h.call({{"cmd", "agent_stop"}});
+    assert(no_live_stop["ok"] == false && contains(no_live_stop["error"], "no run is live"));
+
+    // Probe detects a sleeping v2 HELLO beacon with its caps and state == 0.
+    const std::uint32_t v2_caps = malgrind::kCapSamples | malgrind::kCapHeap | malgrind::kCapTasks;
+    const malgrind::HelloPayload sleeping_hello{
+        .seq = 1,
+        .arch = malgrind::Arch::Xtensa,
+        .ncores = 2,
+        .cpu_hz = 240'000'000,
+        .agent_ver = 2,
+        .caps = v2_caps,
+        .state = 0,
+        .rate_hz = 997,
+        .analyses = 0,
+    };
+    h.set_source_factory([&](const Device&, unsigned) {
+        auto src = std::make_unique<MemorySource>();
+        src->push(make_hello_frame(sleeping_hello));
+        src->close();
+        return std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(std::move(src));
+    });
+    const auto probe = h.call({{"cmd", "probe"}, {"device", dev.id}});
+    assert(probe["ok"] && probe["result"]["agent"] == true);
+    assert(probe["result"]["arch"] == "xtensa" && probe["result"]["ncores"] == 2);
+    assert(probe["result"]["caps"] == v2_caps && probe["result"]["state"] == 0);
+    assert(probe["result"]["family"] == "esp32");
+    assert(method(probe["result"], "attach")["available"] == true);
+
+    // Reset factory to default MemorySource for attach.
+    h.set_source_factory({});
+    const auto attached = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "v2-run"}, {"settings", {{"rate_hz", 400}}}});
+    assert(attached["ok"]);
+    const std::string run_id = attached["result"]["run"]["id"];
+
+    // Sleeping HELLO triggers auto-start and initializes snapshot stats before sample frames arrive.
+    h.source()->push(make_hello_frame(sleeping_hello));
+    assert(wait_for([&] { return decode_commands(h.source()->written()).size() == 1; }));
+    {
+        const auto cmds = decode_commands(h.source()->written());
+        assert(cmds[0].cmd == malgrind::kCmdStart && cmds[0].rate_hz == 400 && cmds[0].analyses == v2_caps);
+    }
+    assert(wait_for([&] {
+        const auto snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}});
+        return snap["ok"] && !snap["result"]["tree"].is_null();
+    }));
+    {
+        const auto snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"];
+        assert(snap["tree"]["value"] == 0);
+        assert(snap["stats"]["caps"] == v2_caps && snap["stats"]["agent_state"] == 0);
+    }
+
+    // Wake up and push HEAP, TASKS, and SAMPLES across two timestamps.
+    auto awake_hello = sleeping_hello;
+    awake_hello.seq = 2;
+    awake_hello.state = 1;
+    awake_hello.rate_hz = 400;
+    awake_hello.analyses = v2_caps;
+    h.source()->push(make_hello_frame(awake_hello));
+
+    const malgrind::HeapRegion hr1[] = {{malgrind::kHeapInternal, 200'000, 150'000, 140'000, 100'000}};
+    const malgrind::HeapRegion hr2[] = {{malgrind::kHeapInternal, 200'000, 130'000, 120'000, 90'000}};
+    h.source()->push(make_heap_frame(3, 1000, hr1));
+    h.source()->push(make_heap_frame(4, 3000, hr2));
+
+    malgrind::TaskSample ts1[2]{};
+    ts1[0].handle = 1;
+    std::memcpy(ts1[0].name, "idle", 4);
+    ts1[0].prio = 0;
+    ts1[0].core = 0;
+    ts1[0].state = 1;
+    ts1[0].runtime = 200;
+    ts1[0].stack_hwm = 768;
+    ts1[1].handle = 2;
+    std::memcpy(ts1[1].name, "sensor", 6);
+    ts1[1].prio = 4;
+    ts1[1].core = 0xff;
+    ts1[1].state = 0;
+    ts1[1].runtime = 800;
+    ts1[1].stack_hwm = 400;
+    h.source()->push(make_tasks_frame(5, 1000, 1000, ts1));
+
+    malgrind::TaskSample ts2[2]{};
+    ts2[0] = ts1[0];
+    ts2[0].runtime = 300;
+    ts2[1] = ts1[1];
+    ts2[1].runtime = 700;
+    ts2[1].stack_hwm = 600; // recovered, but min across [1000..3000] is 400 -> warn true
+    h.source()->push(make_tasks_frame(6, 3000, 1000, ts2));
+
+    h.source()->push(make_stream(1)); // 4 samples
+    assert(wait_for([&] {
+        if (h.samples() != 4) return false;
+        const auto m = h.call({{"cmd", "memory"}, {"window_s", 0}})["result"];
+        const auto t = h.call({{"cmd", "tasks"}, {"window_s", 0}})["result"];
+        return !m["regions"].empty() && m["regions"][0]["series"].size() == 2 && t["tasks"].size() == 2;
+    }));
+
+    const auto mem_all = h.call({{"cmd", "memory"}, {"window_s", 0}})["result"];
+    assert(mem_all["regions"][0]["name"] == "internal");
+    assert(mem_all["regions"][0]["series"][0] == json::array({1000, 150'000, 140'000, 100'000, 200'000}));
+    assert(mem_all["regions"][0]["series"][1] == json::array({3000, 130'000, 120'000, 90'000, 200'000}));
+    const auto mem_win = h.call({{"cmd", "memory"}, {"window_s", 1}, {"at_ms", 1500}})["result"];
+    assert(mem_win["regions"][0]["series"].size() == 1 && mem_win["regions"][0]["series"][0][0] == 1000);
+
+    const auto tasks_all = h.call({{"cmd", "tasks"}, {"window_s", 0}})["result"];
+    assert(tasks_all["tasks"][0]["name"] == "sensor" && std::abs(tasks_all["tasks"][0]["cpu_pct"].get<double>() - 75.0) < 1e-6);
+    assert(tasks_all["tasks"][0]["core"].is_null() && tasks_all["tasks"][0]["stack_hwm"] == 400 && tasks_all["tasks"][0]["warn"] == true);
+    assert(tasks_all["tasks"][1]["name"] == "idle" && std::abs(tasks_all["tasks"][1]["cpu_pct"].get<double>() - 25.0) < 1e-6);
+    assert(tasks_all["tasks"][1]["core"] == 0 && tasks_all["tasks"][1]["warn"] == false);
+
+    const auto tasks_recent = h.call({{"cmd", "tasks"}, {"window_s", 1}})["result"];
+    assert(tasks_recent["tasks"][0]["name"] == "sensor" && std::abs(tasks_recent["tasks"][0]["cpu_pct"].get<double>() - 70.0) < 1e-6);
+    assert(tasks_recent["tasks"][0]["stack_hwm"] == 600 && tasks_recent["tasks"][0]["warn"] == false);
+
+    const auto fn = h.call({{"cmd", "functions"}, {"window_s", 0}, {"focus", "0x400d1fff"}})["result"];
+    assert(fn["series"].size() == 1 && fn["series"][0][1] == 4);
+
+    // Explicit agent_stop and agent_start send COMMAND frames.
+    assert(h.call({{"cmd", "agent_stop"}})["ok"]);
+    assert(h.call({{"cmd", "agent_start"}, {"rate_hz", 250}, {"analyses", malgrind::kCapSamples | malgrind::kCapHeap}})["ok"]);
+    const auto cmds = decode_commands(h.source()->written());
+    assert(cmds.size() == 3);
+    assert(cmds[1].cmd == malgrind::kCmdStop);
+    assert(cmds[2].cmd == malgrind::kCmdStart && cmds[2].rate_hz == 250 &&
+           cmds[2].analyses == (malgrind::kCapSamples | malgrind::kCapHeap));
+
+    const auto live_snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"];
+    assert(live_snap["stats"]["caps"] == v2_caps && live_snap["stats"]["agent_state"] == 1);
+
+    // Stop, open replay, and verify memory, tasks, functions series, and snapshot match while control commands fail.
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+    assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
+    assert(h.call({{"cmd", "agent_start"}, {"rate_hz", 500}})["ok"] == false);
+    assert(h.call({{"cmd", "agent_stop"}})["ok"] == false);
+    assert(h.call({{"cmd", "memory"}, {"window_s", 0}})["result"] == mem_all);
+    assert(h.call({{"cmd", "tasks"}, {"window_s", 0}})["result"] == tasks_all);
+    assert(h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"] == live_snap);
+    assert(h.call({{"cmd", "functions"}, {"window_s", 0}, {"focus", "0x400d1fff"}})["result"]["series"] == fn["series"]);
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+}
+
 #ifndef _WIN32
 void pty_serial_attach_and_busy() {
     Harness h("malgrind_serve_pty", /*real_serial=*/true);
@@ -988,6 +1147,7 @@ int main() {
     export_and_write_file_commands();
     eof_finishes_run();
     open_after_upload_reenumerates();
+    v2_probe_memory_tasks_and_commands();
 #ifndef _WIN32
     pty_serial_attach_and_busy();
 #endif

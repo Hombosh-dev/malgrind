@@ -55,6 +55,31 @@ std::optional<std::string> opt_str_arg(const json& req, const char* key) {
     return req[key].get<std::string>();
 }
 
+struct QueryWindow {
+    std::optional<unsigned> core;
+    Aggregator::Ms window;
+    std::optional<Aggregator::Ms> at;
+};
+
+QueryWindow parse_query_window(const json& req, long long default_window_s) {
+    QueryWindow q{{}, std::chrono::seconds(default_window_s), std::nullopt};
+    if (req.contains("core") && !req["core"].is_null()) {
+        if (!req["core"].is_number_unsigned()) throw std::runtime_error("invalid argument: core");
+        q.core = req["core"].get<unsigned>();
+    }
+    if (req.contains("window_s") && !req["window_s"].is_null()) {
+        if (!req["window_s"].is_number_integer()) throw std::runtime_error("invalid argument: window_s");
+        const auto window_s = req["window_s"].get<long long>();
+        if (window_s < 0) throw std::runtime_error("invalid argument: window_s must be non-negative");
+        q.window = std::chrono::seconds(window_s);
+    }
+    if (req.contains("at_ms") && !req["at_ms"].is_null()) {
+        if (!req["at_ms"].is_number()) throw std::runtime_error("invalid argument: at_ms");
+        q.at = Aggregator::Ms(req["at_ms"].get<long long>());
+    }
+    return q;
+}
+
 std::string device_arg(const json& req) {
     if (const auto dev = opt_str_arg(req, "device")) return *dev;
     if (const auto port = opt_str_arg(req, "port")) return *port;
@@ -169,7 +194,9 @@ private:
         const json id = req.contains("id") ? req["id"] : json(nullptr);
         try {
             const auto cmd = str_arg(req, "cmd");
-            if (cmd == "snapshot" || cmd == "functions") return reply_raw(id, query(cmd, req));
+            if (cmd == "snapshot" || cmd == "functions" || cmd == "memory" || cmd == "tasks") {
+                return reply_raw(id, query(cmd, req));
+            }
             if (cmd == "new_run" || cmd == "remove_agent" || cmd == "chip_id" || cmd == "project_add" || cmd == "install_pio" || cmd == "grant_access") return run_long(id, cmd, req);
             reply(id, command(cmd, req));
         } catch (const std::exception& e) {
@@ -200,6 +227,8 @@ private:
             return json::object();
         }
         if (cmd == "attach") return attach(req);
+        if (cmd == "agent_start") return agent_start_command(req);
+        if (cmd == "agent_stop") return agent_stop_command();
         if (cmd == "stop") {
             set_session(nullptr);
             return json::object();
@@ -253,23 +282,7 @@ private:
         const auto path = str_arg(req, "path");
         if (path.empty()) throw std::runtime_error("missing argument: path");
 
-        std::optional<unsigned> core;
-        if (req.contains("core") && !req["core"].is_null()) {
-            if (!req["core"].is_number_unsigned()) throw std::runtime_error("invalid argument: core");
-            core = req["core"].get<unsigned>();
-        }
-        long long window_s = 0;
-        if (req.contains("window_s") && !req["window_s"].is_null()) {
-            if (!req["window_s"].is_number_integer()) throw std::runtime_error("invalid argument: window_s");
-            window_s = req["window_s"].get<long long>();
-            if (window_s < 0) throw std::runtime_error("invalid argument: window_s must be non-negative");
-        }
-        const Aggregator::Ms window = std::chrono::seconds(window_s);
-        std::optional<Aggregator::Ms> at;
-        if (req.contains("at_ms") && !req["at_ms"].is_null()) {
-            if (!req["at_ms"].is_number()) throw std::runtime_error("invalid argument: at_ms");
-            at = Aggregator::Ms(req["at_ms"].get<long long>());
-        }
+        const auto q = parse_query_window(req, 0);
 
         if (req.contains("run") && !req["run"].is_null() && !req["run"].is_string())
             throw std::runtime_error("invalid argument: run");
@@ -286,14 +299,14 @@ private:
             if (!sess) throw std::runtime_error("no such run: " + *run_arg);
         }
 
-        if (!sess->has_samples(core, window, at))
+        if (!sess->has_samples(q.core, q.window, q.at))
             throw std::runtime_error("no samples to export");
 
         const auto meta = store_.get(sess->run_id());
         const std::string display_name = (meta && !meta->name.empty()) ? meta->name : sess->run_id();
         const auto data = format == "folded"
-            ? sess->folded(core, window, at)
-            : sess->speedscope_json(display_name, core, window, at);
+            ? sess->folded(q.core, q.window, q.at)
+            : sess->speedscope_json(display_name, q.core, q.window, q.at);
         if (!data || data->empty()) throw std::runtime_error("no samples to export");
 
         write_binary_file(path, std::span<const char>(data->data(), data->size()));
@@ -311,20 +324,53 @@ private:
         return {{"bytes", bytes.size()}};
     }
 
-    // snapshot and functions answer with the aggregator's JSON text as it is
+    // snapshot, functions, memory, and tasks answer with the aggregator/series JSON text directly
     std::string query(const std::string& cmd, const json& req) {
-        std::optional<unsigned> core;
-        if (req.contains("core") && req["core"].is_number_unsigned()) core = req["core"].get<unsigned>();
-        const Aggregator::Ms window = std::chrono::seconds(req.value("window_s", 10));
-        std::optional<Aggregator::Ms> at;
-        if (req.contains("at_ms") && req["at_ms"].is_number()) at = Aggregator::Ms(req["at_ms"].get<long long>());
+        const auto q = parse_query_window(req, 10);
         const auto session = current();
         if (cmd == "snapshot") {
-            auto result = session ? session->snapshot(core, window, at) : std::nullopt;
+            auto result = session ? session->snapshot(q.core, q.window, q.at) : std::nullopt;
             return result ? *result : R"({"tree":null})";
         }
-        auto result = session ? session->functions(core, window, at, req.value("focus", "")) : std::nullopt;
+        if (cmd == "memory") {
+            return session ? session->memory_json(q.window, q.at) : R"({"regions":[]})";
+        }
+        if (cmd == "tasks") {
+            return session ? session->tasks_json(q.window, q.at) : R"({"tasks":[]})";
+        }
+        auto result =
+            session ? session->functions(q.core, q.window, q.at, opt_str_arg(req, "focus").value_or("")) : std::nullopt;
         return result ? *result : R"({"functions":[]})";
+    }
+
+    json agent_start_command(const json& req) {
+        std::uint16_t rate_hz = 0;
+        if (req.contains("rate_hz") && !req["rate_hz"].is_null()) {
+            if (!req["rate_hz"].is_number_integer()) throw std::runtime_error("invalid argument: rate_hz");
+            const auto v = req["rate_hz"].get<long long>();
+            if (v < 0 || v > 65535) throw std::runtime_error("invalid argument: rate_hz out of range");
+            rate_hz = static_cast<std::uint16_t>(v);
+        }
+        std::uint32_t analyses = 0;
+        if (req.contains("analyses") && !req["analyses"].is_null()) {
+            if (!req["analyses"].is_number_integer()) throw std::runtime_error("invalid argument: analyses");
+            const auto v = req["analyses"].get<long long>();
+            if (v < 0 || v > 0xffffffffll) throw std::runtime_error("invalid argument: analyses out of range");
+            analyses = static_cast<std::uint32_t>(v);
+        }
+        const auto session = current();
+        if (!session || !session->live() || !session->agent_start(rate_hz, analyses)) {
+            throw std::runtime_error("no run is live");
+        }
+        return json::object();
+    }
+
+    json agent_stop_command() {
+        const auto session = current();
+        if (!session || !session->live() || !session->agent_stop()) {
+            throw std::runtime_error("no run is live");
+        }
+        return json::object();
     }
 
     Device resolve_serial(const std::string& ref) const {
@@ -348,6 +394,8 @@ private:
             result["arch"] = std::string(arch_name(r.arch));
             result["ncores"] = r.ncores;
             result["cpu_mhz"] = r.cpu_mhz;
+            result["caps"] = r.caps;
+            result["state"] = r.state;
         }
         const Family* method_family =
             probed_family ? probed_family : (!dev.family_hint.empty() ? family_by_id(dev.family_hint) : nullptr);
