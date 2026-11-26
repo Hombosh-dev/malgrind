@@ -706,6 +706,7 @@ private:
         detected.elf = project.elf; // a project without code may have been given its ELF
         if (mode == "attach") {
             result["detected"] = detected;
+            result["caps"] = {{"memcheck", false}};
             return result;
         }
         require_buildable(project);
@@ -715,6 +716,7 @@ private:
         detected.rate_hz = kDefaultRateHz;
         detected.elf.clear(); // a new run finds its ELF after the build: nothing to offer here
         result["detected"] = detected;
+        result["caps"] = {{"memcheck", p.family ? p.family->caps().memcheck : false}};
         result["envs"] = p.project.envs;
         const auto detected_plan = make_plan(p, options_.agent_dir, {});
         result["elf_hint"] = os::to_utf8(detected_plan.elf); // where the build puts it; used when no ELF is chosen

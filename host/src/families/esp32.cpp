@@ -67,7 +67,8 @@ AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const
 // that a newer malgrind added would simply not exist). The stamp says which files the directory was made with.
 std::string agent_stamp(const fs::path& files) {
     std::uint64_t hash = 1469598103934665603ull; // FNV-1a
-    for (const char* name : {"malgrind/CMakeLists.txt", "malgrind/Kconfig.projbuild", "inject.py", "sdkconfig.agent"})
+    for (const char* name :
+         {"malgrind/CMakeLists.txt", "malgrind/Kconfig.projbuild", "inject.py", "sdkconfig.agent", "sdkconfig.memcheck"})
         for (const unsigned char c : slurp(files / name)) hash = (hash ^ c) * 1099511628211ull;
     return std::format("{:016x}", hash);
 }
@@ -161,7 +162,7 @@ public:
     [[nodiscard]] std::string_view id() const override { return "esp32"; }
     [[nodiscard]] std::string_view name() const override { return "ESP32 (ESP-IDF)"; }
     [[nodiscard]] FamilyCaps caps() const override {
-        return {.agent = true, .backup = true, .identify = true, .identify_resets_board = true};
+        return {.agent = true, .backup = true, .identify = true, .identify_resets_board = true, .memcheck = true};
     }
     [[nodiscard]] bool handles_arch(Arch arch) const override {
         return arch == Arch::Xtensa || arch == Arch::RiscV32;
@@ -188,7 +189,7 @@ public:
     [[nodiscard]] AgentCommands agent_commands(const ToolContext& tools, const ProjectInfo& project,
                                                const std::string& env, const std::string& port,
                                                const RunSettings& settings, bool write_files) const override {
-        if (write_files) write_agent_sdkconfig(project, env, tools.agent_root, settings.rate_hz);
+        if (write_files) write_agent_sdkconfig(project, env, tools.agent_root, settings.rate_hz, settings.check_memory);
         return {agent_command(tools.pio, project, env, port, tools.agent_root, false),
                 agent_command(tools.pio, project, env, port, tools.agent_root, true),
                 agent_elf(project, env)};
@@ -296,19 +297,30 @@ std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
     return out;
 }
 
-void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir, unsigned rate_hz) {
+void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir,
+                           unsigned rate_hz, bool check_memory) {
     const auto p = agent_paths(project, env, agent_dir);
     auto agent_keys = slurp(p.files / "sdkconfig.agent");
     if (agent_keys.empty()) throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
+    std::string memcheck_keys;
+    if (check_memory) {
+        memcheck_keys = slurp(p.files / "sdkconfig.memcheck");
+        if (memcheck_keys.empty()) throw std::runtime_error("the memcheck config is missing from " + os::to_utf8(p.files));
+    }
     fs::create_directories(p.out);
     if (const auto stamp = agent_stamp(p.files); slurp(p.out / "agent.stamp") != stamp) {
         std::error_code ec;
         fs::remove_all(p.out / "build", ec); // configured with other agent files: start clean (a few minutes, once per malgrind update)
         std::ofstream(p.out / "agent.stamp", std::ios::trunc) << stamp;
     }
-    // The rate travels as an sdkconfig key, not as an environment variable: IDF reconfigures and recompiles the agent when
-    // the sdkconfig changes, but would keep a stale object when only an environment variable does.
+    // The rate and memcheck options travel as sdkconfig keys, not as environment variables: IDF reconfigures and
+    // recompiles the agent when the sdkconfig changes, but would keep a stale object when only an environment variable does.
     if (rate_hz != 0) agent_keys += "\nCONFIG_MALGRIND_RATE_HZ=" + std::to_string(rate_hz) + "\n";
+    if (check_memory) {
+        agent_keys += "\n" + memcheck_keys + "\nCONFIG_MALGRIND_MEMCHECK=y\n";
+    } else {
+        agent_keys += "\n# CONFIG_MALGRIND_MEMCHECK is not set\n";
+    }
     fs::create_directories(p.out);
     // an unchanged file keeps its time stamp: a newer sdkconfig makes ESP-IDF reconfigure and rebuild everything
     const auto merged = merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);

@@ -104,7 +104,7 @@ Plan make_plan(const Prepared& p, const fs::path& agent_dir, const RunSettings& 
 
     const Family* family = resolve_family(p, env);
     auto cmds = family->agent_commands(ToolContext{{}, p.pio, agent_dir}, p.project, env, p.port, s, false);
-    Plan plan{std::move(cmds.build), std::move(cmds.upload), std::move(cmds.elf), {}, {}, env, s.rate_hz};
+    Plan plan{std::move(cmds.build), std::move(cmds.upload), std::move(cmds.elf), {}, {}, env, s.rate_hz, s.check_memory};
     for (auto* inv : {&plan.build, &plan.upload}) {
         inv->argv.insert(inv->argv.end(), extra->begin(), extra->end());
         if (!s.build_flags.empty()) inv->env.push_back("PLATFORMIO_BUILD_FLAGS=" + s.build_flags);
@@ -121,6 +121,7 @@ void write_plan_files(const Prepared& p, const fs::path& agent_dir, const Plan& 
     RunSettings s;
     s.env = plan.env;
     s.rate_hz = plan.rate_hz;
+    s.check_memory = plan.check_memory;
     (void)family->agent_commands(ToolContext{{}, p.pio, agent_dir}, p.project, plan.env, p.port, s, true);
 }
 

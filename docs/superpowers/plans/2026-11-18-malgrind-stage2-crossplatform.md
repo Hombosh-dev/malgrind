@@ -920,7 +920,7 @@ drains into ALLOCS/ERROR frames (encoders exist since T6.1). Tests in `test_core
 - Build option: `RunSettings.check_memory` (bool, default false). `Esp32Family::agent_commands` appends
   `agent/esp32/sdkconfig.memcheck` to the agent sdkconfig when true. Show the measured overhead in the UI text (human measures, agent writes the number).
 - **Stop and report** if hooks cannot be made safe; do not ship a hook that can deadlock.
-- [ ] Commit `feat(agent/esp32): allocation hooks and memory error events (opt-in)`.
+- [x] Commit `feat(agent/esp32): allocation hooks and memory error events (opt-in)`.
 
 ### T7.3 Host: leak tracker and errors 🟡
 

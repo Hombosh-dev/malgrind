@@ -25,7 +25,7 @@
 //   project_update {project, name?, env?, trusted?} -> Project
 //   project_remove {project}               -> {}      the record and a clone; never the user's own folder
 //   project {dir}                          -> {dir, envs, default_env}
-//   run_plan {project, device, mode?, settings?} -> {detected, last, envs, elf_hint, detected_commands, commands, error}   what the settings
+//   run_plan {project, device, mode?, settings?} -> {detected, last, caps, envs, elf_hint, detected_commands, commands, error}   what the settings
 //                                             panel shows before a run: the detected RunSettings, the project's last-used ones, and the
 //                                             exact commands (+ environment) for `settings` as they are now. A field that does not hold up
 //                                             is `error` (commands null), not a failed request. mode "attach": only `detected` and `last`.

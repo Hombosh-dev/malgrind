@@ -18,4 +18,12 @@ menu "malgrind agent"
             sleep mode (timers stopped, ~0 CPU overhead, emitting a HELLO beacon every 1000 ms) until a v2 host sends
             a START command.
 
+    config MALGRIND_MEMCHECK
+        bool "Check memory errors (allocations, leaks, corruption)"
+        default n
+        help
+            When enabled, records heap allocation/free events with backtraces, failed allocations, and periodic heap
+            integrity checks. Adds noticeable per-allocation CPU and RAM overhead; keep disabled unless diagnosing
+            memory issues.
+
 endmenu

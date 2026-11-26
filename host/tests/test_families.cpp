@@ -80,6 +80,7 @@ void registry_lookups() {
 
 void base_family_defaults() {
     StubFamily stub;
+    assert(!stub.caps().memcheck);
     assert(!stub.is_agent_image("/no/such/image.bin"));
     assert(stub.extra_symbol_files({}, Arch::Xtensa, {}).empty());
     assert(stub.family_hint_for_usb("303a", "1001").empty());
@@ -102,7 +103,7 @@ void esp32_metadata_and_usb() {
     const Family& esp = esp32_family();
     assert(esp.id() == "esp32" && esp.name() == "ESP32 (ESP-IDF)");
     const auto caps = esp.caps();
-    assert(caps.agent && caps.backup && caps.identify && caps.identify_resets_board);
+    assert(caps.agent && caps.backup && caps.identify && caps.identify_resets_board && caps.memcheck);
     assert(esp.handles_arch(Arch::Xtensa) && esp.handles_arch(Arch::RiscV32));
     assert(!esp.handles_arch(Arch::ArmV7M) && !esp.handles_arch(Arch::Host));
     assert(esp.agent_baud() == 921600);
@@ -175,13 +176,45 @@ void agent_commands_preview_and_write() {
     assert(std::ranges::find(preview.upload.argv, "upload") != preview.upload.argv.end());
     assert(std::ranges::find(preview.upload.argv, "/dev/ttyUSB0") != preview.upload.argv.end());
 
-    // write_files = true: writes sdkconfig.<env> and agent.stamp
+    // write_files = true: writes sdkconfig.<env> and agent.stamp (check_memory = false by default)
     const auto real = esp.agent_commands(tools, *project, "esp32dev", "/dev/ttyUSB0", {.rate_hz = 500}, true);
     assert(real.build.argv == preview.build.argv && real.upload.argv == preview.upload.argv && real.elf == preview.elf);
     const auto sdkconfig = slurp(proj_dir / ".pio/malgrind/sdkconfig.esp32dev");
     assert(contains(sdkconfig, "CONFIG_USER=1\n") && contains(sdkconfig, "CONFIG_MALGRIND_RATE_HZ=500\n"));
     assert(contains(sdkconfig, "CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600\n") && !contains(sdkconfig, "115200"));
+    assert(contains(sdkconfig, "# CONFIG_MALGRIND_MEMCHECK is not set\n") && !contains(sdkconfig, "CONFIG_HEAP_USE_HOOKS"));
     assert(fs::exists(proj_dir / ".pio/malgrind/agent.stamp"));
+
+    // check_memory = true: appends sdkconfig.memcheck + CONFIG_MALGRIND_MEMCHECK=y and overrides conflicting choices
+    write(proj_dir / "sdkconfig.esp32dev",
+          "CONFIG_USER=1\nCONFIG_HEAP_POISONING_DISABLED=y\nCONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y\n");
+    (void)esp.agent_commands(tools, *project, "esp32dev", "/dev/ttyUSB0", {.rate_hz = 500, .check_memory = true}, true);
+    const auto mem_sdkconfig = slurp(proj_dir / ".pio/malgrind/sdkconfig.esp32dev");
+    assert(contains(mem_sdkconfig, "CONFIG_USER=1\n"));
+    assert(contains(mem_sdkconfig, "CONFIG_HEAP_USE_HOOKS=y\n"));
+    assert(contains(mem_sdkconfig, "CONFIG_HEAP_POISONING_COMPREHENSIVE=y\n"));
+    assert(contains(mem_sdkconfig, "CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y\n"));
+    assert(contains(mem_sdkconfig, "CONFIG_MALGRIND_MEMCHECK=y\n"));
+    assert(!contains(mem_sdkconfig, "CONFIG_HEAP_POISONING_DISABLED=y"));
+    assert(!contains(mem_sdkconfig, "CONFIG_FREERTOS_CHECK_STACKOVERFLOW_NONE=y"));
+
+    // check_memory = false after true removes memcheck config cleanly
+    (void)esp.agent_commands(tools, *project, "esp32dev", "/dev/ttyUSB0", {.check_memory = false}, true);
+    const auto nomem_sdkconfig = slurp(proj_dir / ".pio/malgrind/sdkconfig.esp32dev");
+    assert(contains(nomem_sdkconfig, "# CONFIG_MALGRIND_MEMCHECK is not set\n"));
+    assert(!contains(nomem_sdkconfig, "CONFIG_MALGRIND_MEMCHECK=y") && !contains(nomem_sdkconfig, "CONFIG_HEAP_USE_HOOKS"));
+
+    // Missing sdkconfig.memcheck throws cleanly when check_memory = true
+    const auto partial_agent = dir / "partial-agent";
+    write(partial_agent / "agent/esp32/sdkconfig.agent", "CONFIG_X=1\n");
+    write(partial_agent / "agent/esp32/inject.py", "");
+    bool missing_memcheck_threw = false;
+    try {
+        write_agent_sdkconfig(*project, "esp32dev", partial_agent, 0, true);
+    } catch (const std::runtime_error&) {
+        missing_memcheck_threw = true;
+    }
+    assert(missing_memcheck_threw);
 
     // Missing agent files throw cleanly
     bool missing_threw = false;

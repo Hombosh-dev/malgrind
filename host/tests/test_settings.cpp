@@ -104,8 +104,24 @@ void the_rate_is_written_into_the_sdkconfig() {
     assert(contains(slurp(sdkconfig), "CONFIG_MALGRIND_RATE_HZ=800") && !contains(slurp(sdkconfig), "RATE_HZ=500")); // a change replaces the line
     write_plan_files(p, kAgent, make_plan(p, kAgent, {}));
     assert(!contains(slurp(sdkconfig), "CONFIG_MALGRIND_RATE_HZ")); // and back to the default
+    assert(contains(slurp(sdkconfig), "# CONFIG_MALGRIND_MEMCHECK is not set"));
+    assert(!contains(slurp(sdkconfig), "CONFIG_HEAP_USE_HOOKS"));
+
+    const auto mem_plan = make_plan(p, kAgent, {.check_memory = true});
+    assert(mem_plan.check_memory);
+    write_plan_files(p, kAgent, mem_plan);
+    assert(contains(slurp(sdkconfig), "CONFIG_MALGRIND_MEMCHECK=y\n"));
+    assert(contains(slurp(sdkconfig), "CONFIG_HEAP_USE_HOOKS=y\n"));
+    assert(contains(slurp(sdkconfig), "CONFIG_HEAP_POISONING_COMPREHENSIVE=y\n"));
+    assert(contains(slurp(sdkconfig), "CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y\n"));
+
+    write_plan_files(p, kAgent, make_plan(p, kAgent, {.check_memory = false}));
+    assert(contains(slurp(sdkconfig), "# CONFIG_MALGRIND_MEMCHECK is not set\n"));
+    assert(!contains(slurp(sdkconfig), "CONFIG_MALGRIND_MEMCHECK=y"));
+    assert(!contains(slurp(sdkconfig), "CONFIG_HEAP_USE_HOOKS"));
     // the Kconfig option exists in the agent, with the default the app shows
     assert(contains(slurp(fs::path(MALGRIND_SOURCE_DIR) / "agent/esp32/malgrind/Kconfig.projbuild"), "default 997") && kDefaultRateHz == 997);
+    assert(contains(slurp(fs::path(MALGRIND_SOURCE_DIR) / "agent/esp32/malgrind/Kconfig.projbuild"), "config MALGRIND_MEMCHECK"));
 }
 
 // PlatformIO configures CMake once and then keeps it: a build directory made with other agent files would silently ignore a
@@ -129,6 +145,12 @@ void a_build_made_with_other_agent_files_is_started_clean() {
     std::ofstream(agent / "agent/esp32/malgrind/Kconfig.projbuild", std::ios::app) << "\n# changed\n";
     write_plan_files(p, agent, make_plan(p, agent, {.rate_hz = 600}));
     assert(!fs::exists(marker)); // other agent files than the build was made with
+
+    fs::create_directories(marker.parent_path());
+    std::ofstream(marker) << "x";
+    std::ofstream(agent / "agent/esp32/sdkconfig.memcheck", std::ios::app) << "\n# changed\n";
+    write_plan_files(p, agent, make_plan(p, agent, {.rate_hz = 600}));
+    assert(!fs::exists(marker)); // sdkconfig.memcheck is covered by agent.stamp too
 }
 
 void an_override_replaces_the_line_but_not_the_agent() {
@@ -172,11 +194,12 @@ void a_plan_writes_nothing() {
 }
 
 void settings_survive_json() {
-    RunSettings s{.env = "b", .extra_args = "-v", .build_flags = "-DX", .rate_hz = 800, .elf = "/x/y.elf", .build_command = "pio run", .upload_command = ""};
+    RunSettings s{.env = "b", .extra_args = "-v", .build_flags = "-DX", .rate_hz = 800, .check_memory = true, .elf = "/x/y.elf", .build_command = "pio run", .upload_command = ""};
     const nlohmann::json j = s;
-    assert(j["rate_hz"] == 800 && j["elf"] == "/x/y.elf" && j.get<RunSettings>() == s);
+    assert(j["rate_hz"] == 800 && j["check_memory"] == true && j["elf"] == "/x/y.elf" && j.get<RunSettings>() == s);
+    assert(RunSettings{}.check_memory == false);
     assert(nlohmann::json::parse(R"({"rate_hz": 500})").get<RunSettings>() == RunSettings{.rate_hz = 500}); // missing keys: defaults
-    assert(nlohmann::json::parse(R"({"rate_hz": "fast", "env": 3})").get<RunSettings>() == RunSettings{}); // wrong types are ignored, never thrown
+    assert(nlohmann::json::parse(R"({"rate_hz": "fast", "env": 3, "check_memory": "yes"})").get<RunSettings>() == RunSettings{}); // wrong types are ignored, never thrown
     assert(nlohmann::json(nullptr).get<RunSettings>() == RunSettings{});
 }
 

@@ -623,7 +623,8 @@ void run_plan_shows_what_was_detected_and_what_would_run() {
     const auto dev = h.plug("fake-port-x", "usb-10c4-ea60-sn-x1", "ttyUSB0");
     const auto id = settings_project(h);
     const auto plan = h.call({{"cmd", "run_plan"}, {"project", id}, {"device", dev.id}, {"mode", "new_run"}})["result"];
-    assert(plan["detected"]["env"] == "a" && plan["detected"]["rate_hz"] == 997 && plan["envs"] == json::array({"a", "b"}));
+    assert(plan["detected"]["env"] == "a" && plan["detected"]["rate_hz"] == 997 && plan["detected"]["check_memory"] == false);
+    assert(plan["caps"]["memcheck"] == true && plan["envs"] == json::array({"a", "b"}));
     assert(plan["last"].is_null() && plan["error"] == "");
     assert(plan["elf_hint"] == os::to_utf8(fs::absolute(h.root / "settings-proj/.pio/malgrind/build/a/firmware.elf").lexically_normal()));
     const std::string build = plan["commands"]["build"], upload = plan["commands"]["upload"];
@@ -644,6 +645,7 @@ void run_plan_shows_what_was_detected_and_what_would_run() {
     // attach only needs the ELF
     const auto attach = h.call({{"cmd", "run_plan"}, {"project", id}, {"device", dev.id}, {"mode", "attach"}})["result"];
     assert(attach["commands"].is_null() && attach["detected"].contains("elf"));
+    assert(attach["caps"]["memcheck"] == false);
 }
 
 void new_run_checks_every_setting_before_the_board_is_touched() {

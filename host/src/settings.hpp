@@ -18,6 +18,7 @@ struct RunSettings {
     std::string extra_args{};   // words appended to both pio commands, split like a command line (no shell)
     std::string build_flags{};  // PLATFORMIO_BUILD_FLAGS: -D... flags PlatformIO adds to the project's own
     unsigned rate_hz = 0;       // samples per second per core; 0: the agent's default, kDefaultRateHz
+    bool check_memory = false;  // opt-in memory error/leak hooks (slower, uses extra RAM)
     std::filesystem::path elf{}; // firmware ELF for function names; empty: found automatically
     std::string build_command{}, upload_command{}; // replace the detected command line (the agent's environment variables stay)
 

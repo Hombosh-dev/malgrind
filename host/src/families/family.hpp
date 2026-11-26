@@ -39,6 +39,7 @@ struct FamilyCaps {
     bool backup = false;                // can read and write back the whole flash
     bool identify = false;              // can name the chip (identify_resets_board says whether that resets it)
     bool identify_resets_board = false;
+    bool memcheck = false;              // supports opt-in memory error/allocation checks
 };
 
 class Family {

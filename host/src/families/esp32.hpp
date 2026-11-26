@@ -52,9 +52,10 @@ inline constexpr std::string_view kEsp32AgentMarkerV2 = "malgrind-agent-v2";
 // Writes <project>/.pio/malgrind/sdkconfig.<env> (the user's sdkconfig with the agent's keys); nothing else of the project is
 // touched, and an unchanged file is not rewritten. `agent_dir` holds agent/esp32/ (the app's resources, or the repo).
 // Throws std::runtime_error if the agent files are missing.
-// `rate_hz` (0: the agent's default) becomes CONFIG_MALGRIND_RATE_HZ in it.
+// `rate_hz` (0: the agent's default) becomes CONFIG_MALGRIND_RATE_HZ; `check_memory` enables sdkconfig.memcheck +
+// CONFIG_MALGRIND_MEMCHECK=y (false sets `# CONFIG_MALGRIND_MEMCHECK is not set`).
 void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const std::filesystem::path& agent_dir,
-                           unsigned rate_hz = 0);
+                           unsigned rate_hz = 0, bool check_memory = false);
 
 // The command and environment that build the project with the agent (`upload` true: and flash it). Writes nothing: a
 // preview of a run can be made with it. Throws if the agent files are missing.

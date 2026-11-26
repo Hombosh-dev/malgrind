@@ -29,6 +29,7 @@ struct Plan {
     std::string build_text, upload_text; // the two command lines as text, for the app to show
     std::string env;                   // the PlatformIO environment the plan builds (the setting, else the detected one)
     unsigned rate_hz = 0;              // 0: the agent's default; written into the build config by write_plan_files
+    bool check_memory = false;         // opt-in memcheck hooks; written into the build config by write_plan_files
 };
 
 // The detected commands, changed by `settings`: extra arguments appended to both, PLATFORMIO_BUILD_FLAGS in their environment,
