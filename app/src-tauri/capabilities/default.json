@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "shell:allow-stdin-write",
     "shell:allow-kill",
     { "identifier": "shell:allow-spawn", "allow": [{ "name": "binaries/malgrind-cli", "sidecar": true, "args": true }] }

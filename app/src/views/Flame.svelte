@@ -18,6 +18,10 @@
 
   const width = () => Math.max(320, host.clientWidth);
 
+  export function getSvg(): SVGSVGElement | null {
+    return host?.querySelector('svg') ?? null;
+  }
+
   function draw() {
     if (!tree || tree.value <= 0) {
       host.replaceChildren();

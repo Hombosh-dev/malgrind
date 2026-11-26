@@ -17,6 +17,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -50,7 +51,20 @@ public:
                                                        std::optional<Aggregator::Ms> at, std::string_view focus) const;
 
     // Folded stacks ("core0;main;f;g 12" per line), the input of flamegraph.pl and speedscope. nullopt before the first frame.
-    [[nodiscard]] std::optional<std::string> folded() const;
+    [[nodiscard]] std::optional<std::string> folded(std::optional<unsigned> core = std::nullopt,
+                                                    Aggregator::Ms window = Aggregator::Ms{0},
+                                                    std::optional<Aggregator::Ms> at = std::nullopt) const;
+
+    // Speedscope JSON profile for the run in [at - window, at]. nullopt before the first frame.
+    [[nodiscard]] std::optional<std::string> speedscope_json(std::string_view name,
+                                                             std::optional<unsigned> core = std::nullopt,
+                                                             Aggregator::Ms window = Aggregator::Ms{0},
+                                                             std::optional<Aggregator::Ms> at = std::nullopt) const;
+
+    // True once the first frame has arrived and at least one matching sample falls in [at - window, at].
+    [[nodiscard]] bool has_samples(std::optional<unsigned> core = std::nullopt,
+                                   Aggregator::Ms window = Aggregator::Ms{0},
+                                   std::optional<Aggregator::Ms> at = std::nullopt) const;
 
     // All non-empty symbolized stacks of the run so far, outermost frame first. Empty before the first frame.
     [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt) const;

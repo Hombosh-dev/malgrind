@@ -174,10 +174,12 @@ std::string Aggregator::stats_json(Ms at) const {
         cores ? std::format("{:.3f}", 100 * overhead / cores) : "null", f.isr_max, duration_unlocked().count());
 }
 
-std::string Aggregator::folded() const {
+std::string Aggregator::folded(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
     std::scoped_lock lock(mutex_);
     std::map<std::pair<unsigned, std::vector<std::uint32_t>>, std::uint64_t> total; // (core, stack) -> samples
-    for_each_stack(std::nullopt, Ms{0}, std::nullopt, [&](const Stack& s, unsigned core) { total[{core, s.pcs}] += s.count; });
+    for_each_stack(core, window, at, [&](const Stack& s, unsigned frame_core) {
+        if (!s.pcs.empty() && s.count > 0) total[{frame_core, s.pcs}] += s.count;
+    });
     std::string out;
     for (const auto& [key, count] : total) {
         out += std::format("core{}", key.first);
@@ -185,6 +187,71 @@ std::string Aggregator::folded() const {
         out += std::format(" {}\n", count);
     }
     return out;
+}
+
+std::string Aggregator::speedscope_json(std::string_view name, std::optional<unsigned> core, Ms window,
+                                        std::optional<Ms> at) const {
+    std::scoped_lock lock(mutex_);
+    std::map<unsigned, StackCounts> per_core;
+    for_each_stack(core, window, at, [&](const Stack& s, unsigned frame_core) {
+        if (!s.pcs.empty() && s.count > 0) per_core[frame_core][s.pcs] += s.count;
+    });
+
+    auto shared_frames = nlohmann::json::array();
+    std::map<std::string, std::size_t, std::less<>> frame_index;
+    auto index_of = [&](const std::string& fn) -> std::size_t {
+        if (const auto it = frame_index.find(fn); it != frame_index.end()) return it->second;
+        const auto idx = shared_frames.size();
+        frame_index.emplace(fn, idx);
+        shared_frames.push_back({{"name", fn}});
+        return idx;
+    };
+
+    auto profiles = nlohmann::json::array();
+    for (const auto& [frame_core, stack_counts] : per_core) {
+        auto samples = nlohmann::json::array();
+        auto weights = nlohmann::json::array();
+        std::uint64_t end_value = 0;
+        for (const auto& [pcs, count] : stack_counts) {
+            const auto resolved = names(pcs);
+            if (resolved.empty()) continue;
+            auto sample = nlohmann::json::array();
+            for (const auto& fn : resolved) sample.push_back(index_of(fn));
+            samples.push_back(std::move(sample));
+            weights.push_back(count);
+            end_value += count;
+        }
+        if (samples.empty()) continue;
+        profiles.push_back({
+            {"type", "sampled"},
+            {"name", std::format("core{}", frame_core)},
+            {"unit", "none"},
+            {"startValue", 0},
+            {"endValue", end_value},
+            {"samples", std::move(samples)},
+            {"weights", std::move(weights)},
+        });
+    }
+
+    nlohmann::json doc = {
+        {"$schema", "https://www.speedscope.app/file-format-schema.json"},
+        {"version", "0.0.1"},
+        {"exporter", std::string("malgrind ") + MALGRIND_VERSION},
+        {"name", std::string(name)},
+        {"shared", {{"frames", std::move(shared_frames)}}},
+        {"profiles", std::move(profiles)},
+    };
+    if (!doc["profiles"].empty()) doc["activeProfileIndex"] = 0;
+    return doc.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+bool Aggregator::has_samples(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
+    std::scoped_lock lock(mutex_);
+    bool found = false;
+    for_each_stack(core, window, at, [&](const Stack& s, unsigned) {
+        if (!s.pcs.empty() && s.count > 0) found = true;
+    });
+    return found;
 }
 
 std::vector<NamedStack> Aggregator::named_stacks(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {

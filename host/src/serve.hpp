@@ -44,6 +44,8 @@
 //   snapshot {core?, window_s, at_ms?}     -> {tree, stats}   {"tree": null} before the first frame
 //   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees}
 //   diff {a, b, core?}                     -> {a, b, total_a, total_b, functions, tree}
+//   export {run?, format, path, core?, window_s?, at_ms?} -> {bytes}   format = "folded" | "speedscope"; window_s defaults to 0
+//   write_file {path, base64}              -> {bytes}   decodes strict base64 and writes raw bytes to `path`
 //
 // new_run, remove_agent, project_add, install_pio, grant_access and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
 

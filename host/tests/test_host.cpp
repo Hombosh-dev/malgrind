@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,67 @@ int main() {
     const auto folded = agg.folded();
     assert(contains(folded, "core0;0x400d2fff;0x400d1fff;0x400d1000 6\n"));
     assert(contains(folded, "core1;0x400d2fff;0x400d1fff;0x400d17ff") == false); // a core-1 leaf is not call-adjusted twice
+    assert(contains(folded, "core1;0x400d2fff;0x400d1fff;0x400d1800 1\n"));
+
+    // folded with core/window/at filters
+    assert(agg.folded(1u, 0s) == "core1;0x400d2fff;0x400d1fff;0x400d1800 1\n");
+    assert(agg.folded(std::nullopt, 10s) == "core0;0x400d2fff;0x400d1fff;0x400d1000 3\n");
+    const auto scrubbed_folded = agg.folded(std::nullopt, 5s, 1000ms);
+    assert(contains(scrubbed_folded, "core0;0x400d2fff;0x400d1fff;0x400d1000 3\n"));
+    assert(contains(scrubbed_folded, "core1;0x400d2fff;0x400d1fff;0x400d1800 1\n"));
+    assert(agg.folded(2u, 0s).empty());
+
+    // speedscope_json: schema, deduplicated frames, deterministic multi-core profiles, weights & endValue
+    const auto ss = nlohmann::json::parse(agg.speedscope_json("demo-run"));
+    assert(ss["$schema"] == "https://www.speedscope.app/file-format-schema.json");
+    assert(ss["version"] == "0.0.1");
+    assert(ss["exporter"] == std::string("malgrind ") + MALGRIND_VERSION);
+    assert(ss["name"] == "demo-run");
+    assert(ss["activeProfileIndex"] == 0);
+
+    const auto& frames_json = ss["shared"]["frames"];
+    assert(frames_json.size() == 4); // 0x400d2fff, 0x400d1fff, 0x400d1000, 0x400d1800 (shared frames deduplicated)
+    std::set<std::string> unique_names;
+    for (const auto& fr : frames_json) unique_names.insert(fr["name"].get<std::string>());
+    assert(unique_names.size() == 4);
+
+    assert(ss["profiles"].size() == 2);
+    const auto& p0 = ss["profiles"][0];
+    const auto& p1 = ss["profiles"][1];
+    assert(p0["type"] == "sampled" && p0["name"] == "core0" && p0["unit"] == "none" && p0["startValue"] == 0 && p0["endValue"] == 6);
+    assert(p0["samples"].size() == 1 && p0["weights"] == nlohmann::json::array({6}));
+    assert(p1["type"] == "sampled" && p1["name"] == "core1" && p1["unit"] == "none" && p1["startValue"] == 0 && p1["endValue"] == 1);
+    assert(p1["samples"].size() == 1 && p1["weights"] == nlohmann::json::array({1}));
+    auto stack_names = [&](const nlohmann::json& sample) {
+        std::vector<std::string> out;
+        for (const auto& idx : sample) out.push_back(frames_json[idx.get<std::size_t>()]["name"].get<std::string>());
+        return out;
+    };
+    assert(stack_names(p0["samples"][0]) == (std::vector<std::string>{"0x400d2fff", "0x400d1fff", "0x400d1000"}));
+    assert(stack_names(p1["samples"][0]) == (std::vector<std::string>{"0x400d2fff", "0x400d1fff", "0x400d1800"}));
+
+    // speedscope_json with filters and empty result
+    const auto ss_c1 = nlohmann::json::parse(agg.speedscope_json("c1", 1u, 0s));
+    assert(ss_c1["profiles"].size() == 1 && ss_c1["profiles"][0]["name"] == "core1" && ss_c1["profiles"][0]["endValue"] == 1);
+    assert(ss_c1["shared"]["frames"].size() == 3 && ss_c1["activeProfileIndex"] == 0);
+    const auto ss_empty = nlohmann::json::parse(agg.speedscope_json("empty", 2u, 0s));
+    assert(ss_empty["$schema"] == "https://www.speedscope.app/file-format-schema.json");
+    assert(ss_empty["shared"]["frames"].empty() && ss_empty["profiles"].empty());
+    assert(!ss_empty.contains("activeProfileIndex"));
+
+    // multi-stack per core: weights sum to endValue and stacks are sorted deterministically
+    Aggregator multi_agg(symbols);
+    Frame f_a, f_b;
+    f_a.arch = Arch::Xtensa, f_a.ncores = 1, f_a.core = 0, f_a.cpu_hz = 1;
+    f_a.stacks = {{3, {0x400d2000, 0x400d3000}}, {2, {0x400d1000, 0x400d3000}}};
+    f_b.arch = Arch::Xtensa, f_b.ncores = 1, f_b.core = 0, f_b.cpu_hz = 1;
+    f_b.stacks = {{4, {0x400d1000, 0x400d3000}}};
+    multi_agg.add(f_a, 0ms);
+    multi_agg.add(f_b, 100ms);
+    const auto ss_multi = nlohmann::json::parse(multi_agg.speedscope_json("multi"));
+    assert(ss_multi["profiles"].size() == 1);
+    assert(ss_multi["profiles"][0]["weights"] == nlohmann::json::array({6, 3}));
+    assert(ss_multi["profiles"][0]["endValue"] == 9);
 
     // function table: b = 0x400d1fff is called by main and calls a (6 samples) and c (1)
     const auto fn = nlohmann::json::parse(agg.functions_json(std::nullopt, 0s, std::nullopt, "0x400d1fff"));

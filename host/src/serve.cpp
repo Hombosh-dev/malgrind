@@ -24,11 +24,15 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <format>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -55,6 +59,57 @@ std::string device_arg(const json& req) {
     if (const auto dev = opt_str_arg(req, "device")) return *dev;
     if (const auto port = opt_str_arg(req, "port")) return *port;
     throw std::runtime_error("missing argument: device");
+}
+
+int base64_value(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+std::vector<std::uint8_t> decode_base64(std::string_view in) {
+    if (in.size() % 4 != 0) throw std::runtime_error("invalid base64: length must be a multiple of 4");
+    if (in.empty()) return {};
+    std::vector<std::uint8_t> out;
+    out.reserve((in.size() / 4) * 3);
+    for (std::size_t i = 0; i < in.size(); i += 4) {
+        const bool last = (i + 4 == in.size());
+        const int v0 = base64_value(static_cast<unsigned char>(in[i]));
+        const int v1 = base64_value(static_cast<unsigned char>(in[i + 1]));
+        if (v0 < 0 || v1 < 0) throw std::runtime_error("invalid base64 character");
+
+        const char c2 = in[i + 2];
+        const char c3 = in[i + 3];
+        if (c2 == '=') {
+            if (!last || c3 != '=') throw std::runtime_error("invalid base64 padding");
+            out.push_back(static_cast<std::uint8_t>((v0 << 2) | (v1 >> 4)));
+            continue;
+        }
+        const int v2 = base64_value(static_cast<unsigned char>(c2));
+        if (v2 < 0) throw std::runtime_error("invalid base64 character");
+        out.push_back(static_cast<std::uint8_t>((v0 << 2) | (v1 >> 4)));
+        out.push_back(static_cast<std::uint8_t>(((v1 & 0x0f) << 4) | (v2 >> 2)));
+        if (c3 == '=') {
+            if (!last) throw std::runtime_error("invalid base64 padding");
+            continue;
+        }
+        const int v3 = base64_value(static_cast<unsigned char>(c3));
+        if (v3 < 0) throw std::runtime_error("invalid base64 character");
+        out.push_back(static_cast<std::uint8_t>(((v2 & 0x03) << 6) | v3));
+    }
+    return out;
+}
+
+void write_binary_file(const std::string& path_utf8, std::span<const char> bytes) {
+    if (path_utf8.empty()) throw std::runtime_error("missing argument: path");
+    std::ofstream out(os::from_utf8(path_utf8), std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("cannot open file for writing: " + path_utf8);
+    if (!bytes.empty()) out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    out.flush();
+    if (!out) throw std::runtime_error("failed to write file: " + path_utf8);
 }
 
 class Server {
@@ -186,7 +241,74 @@ private:
             if (req.contains("core") && req["core"].is_number_unsigned()) core = req["core"].get<unsigned>();
             return diff_runs(store_, a, b, core);
         }
+        if (cmd == "export") return export_command(req);
+        if (cmd == "write_file") return write_file_command(req);
         throw std::runtime_error("unknown command: " + cmd);
+    }
+
+    json export_command(const json& req) {
+        const auto format = str_arg(req, "format");
+        if (format != "folded" && format != "speedscope")
+            throw std::runtime_error("unknown export format: " + format);
+        const auto path = str_arg(req, "path");
+        if (path.empty()) throw std::runtime_error("missing argument: path");
+
+        std::optional<unsigned> core;
+        if (req.contains("core") && !req["core"].is_null()) {
+            if (!req["core"].is_number_unsigned()) throw std::runtime_error("invalid argument: core");
+            core = req["core"].get<unsigned>();
+        }
+        long long window_s = 0;
+        if (req.contains("window_s") && !req["window_s"].is_null()) {
+            if (!req["window_s"].is_number_integer()) throw std::runtime_error("invalid argument: window_s");
+            window_s = req["window_s"].get<long long>();
+            if (window_s < 0) throw std::runtime_error("invalid argument: window_s must be non-negative");
+        }
+        const Aggregator::Ms window = std::chrono::seconds(window_s);
+        std::optional<Aggregator::Ms> at;
+        if (req.contains("at_ms") && !req["at_ms"].is_null()) {
+            if (!req["at_ms"].is_number()) throw std::runtime_error("invalid argument: at_ms");
+            at = Aggregator::Ms(req["at_ms"].get<long long>());
+        }
+
+        if (req.contains("run") && !req["run"].is_null() && !req["run"].is_string())
+            throw std::runtime_error("invalid argument: run");
+        const auto run_arg = opt_str_arg(req, "run");
+        const auto cur = current();
+        std::shared_ptr<Session> sess;
+        if (!run_arg || run_arg->empty()) {
+            if (!cur) throw std::runtime_error("no run is open");
+            sess = cur;
+        } else if (cur && cur->run_id() == *run_arg) {
+            sess = cur;
+        } else {
+            sess = Session::replay(store_, *run_arg, [](const json&) {});
+            if (!sess) throw std::runtime_error("no such run: " + *run_arg);
+        }
+
+        if (!sess->has_samples(core, window, at))
+            throw std::runtime_error("no samples to export");
+
+        const auto meta = store_.get(sess->run_id());
+        const std::string display_name = (meta && !meta->name.empty()) ? meta->name : sess->run_id();
+        const auto data = format == "folded"
+            ? sess->folded(core, window, at)
+            : sess->speedscope_json(display_name, core, window, at);
+        if (!data || data->empty()) throw std::runtime_error("no samples to export");
+
+        write_binary_file(path, std::span<const char>(data->data(), data->size()));
+        return {{"bytes", data->size()}};
+    }
+
+    json write_file_command(const json& req) {
+        const auto path = str_arg(req, "path");
+        const auto b64 = str_arg(req, "base64");
+        const auto bytes = decode_base64(b64);
+        const std::span<const char> data = bytes.empty()
+            ? std::span<const char>{}
+            : std::span<const char>(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+        write_binary_file(path, data);
+        return {{"bytes", bytes.size()}};
     }
 
     // snapshot and functions answer with the aggregator's JSON text as it is

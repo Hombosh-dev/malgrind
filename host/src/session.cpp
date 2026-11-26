@@ -133,9 +133,22 @@ std::optional<std::string> Session::functions(std::optional<unsigned> core, Aggr
     return agg ? std::optional(agg->functions_json(core, window, at, focus)) : std::nullopt;
 }
 
-std::optional<std::string> Session::folded() const {
+std::optional<std::string> Session::folded(std::optional<unsigned> core, Aggregator::Ms window,
+                                           std::optional<Aggregator::Ms> at) const {
     const auto* agg = ready_.load();
-    return agg ? std::optional(agg->folded()) : std::nullopt;
+    return agg ? std::optional(agg->folded(core, window, at)) : std::nullopt;
+}
+
+std::optional<std::string> Session::speedscope_json(std::string_view name, std::optional<unsigned> core,
+                                                    Aggregator::Ms window, std::optional<Aggregator::Ms> at) const {
+    const auto* agg = ready_.load();
+    return agg ? std::optional(agg->speedscope_json(name, core, window, at)) : std::nullopt;
+}
+
+bool Session::has_samples(std::optional<unsigned> core, Aggregator::Ms window,
+                          std::optional<Aggregator::Ms> at) const {
+    const auto* agg = ready_.load();
+    return agg && agg->has_samples(core, window, at);
 }
 
 std::vector<NamedStack> Session::named_stacks(std::optional<unsigned> core) const {

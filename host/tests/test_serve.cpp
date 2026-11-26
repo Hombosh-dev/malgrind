@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -753,6 +754,146 @@ void diff_runs_works_while_live() {
     assert(h.call({{"cmd", "stop"}})["ok"]);
 }
 
+std::string read_binary(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    assert(in.good());
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+void export_and_write_file_commands() {
+    Harness h("malgrind_serve_export");
+    const auto dev = h.plug("fake-port-exp", "usb-10c4-ea60-sn-exp1", "ttyUSB0");
+    const auto out_dir = h.root / "exports";
+    fs::create_directories(out_dir);
+
+    // No open run -> export fails clearly.
+    const auto no_open = h.call({{"cmd", "export"}, {"format", "folded"}, {"path", os::to_utf8(out_dir / "none.folded")}});
+    assert(no_open["ok"] == false && contains(no_open["error"], "no run is open"));
+
+    // Unknown export format -> fails clearly.
+    const auto bad_fmt = h.call({{"cmd", "export"}, {"format", "csv"}, {"path", os::to_utf8(out_dir / "bad.csv")}});
+    assert(bad_fmt["ok"] == false && contains(bad_fmt["error"], "unknown export format"));
+
+    // Record stored run A (4 samples: 3 on core 0, 1 on core 1) and close it.
+    const std::string id_a = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "stored-alpha"}})["result"]["run"]["id"];
+    h.source()->push(make_stream(1));
+    assert(wait_for([&] { return h.samples() == 4; }));
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+
+    // Start live run B; before the first frame arrives, export reports no samples.
+    const std::string id_b = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "live-beta"}})["result"]["run"]["id"];
+    const auto empty_live = h.call({{"cmd", "export"}, {"format", "folded"}, {"path", os::to_utf8(out_dir / "empty.folded")}});
+    assert(empty_live["ok"] == false && contains(empty_live["error"], "no samples"));
+
+    // Push 2 flushes (8 samples: 6 on core 0, 2 on core 1) to live run B.
+    h.source()->push(make_stream(2));
+    assert(wait_for([&] { return h.samples() == 8; }));
+
+    // Export current live run as folded (run omitted).
+    const auto live_folded_path = out_dir / "live.folded";
+    const auto live_folded = h.call({{"cmd", "export"}, {"format", "folded"}, {"path", os::to_utf8(live_folded_path)}});
+    assert(live_folded["ok"]);
+    const auto folded_bytes = read_binary(live_folded_path);
+    assert(live_folded["result"]["bytes"] == folded_bytes.size());
+    assert(contains(folded_bytes, "core0;0x400d2fff;0x400d1fff;0x400d1000 6\n"));
+    assert(contains(folded_bytes, "core1;0x400d2fff;0x400d1fff;0x400d1800 2\n"));
+
+    // Export current live run as speedscope with explicit matching run id and core filter.
+    const auto live_ss_path = out_dir / "live.speedscope.json";
+    const auto live_ss = h.call({{"cmd", "export"},
+                                 {"run", id_b},
+                                 {"format", "speedscope"},
+                                 {"core", 0},
+                                 {"path", os::to_utf8(live_ss_path)}});
+    assert(live_ss["ok"]);
+    const auto ss_text = read_binary(live_ss_path);
+    assert(live_ss["result"]["bytes"] == ss_text.size());
+    const auto ss_json = json::parse(ss_text);
+    assert(ss_json["$schema"] == "https://www.speedscope.app/file-format-schema.json");
+    assert(ss_json["name"] == "live-beta");
+    assert(ss_json["activeProfileIndex"] == 0);
+    assert(ss_json["profiles"].size() == 1 && ss_json["profiles"][0]["name"] == "core0");
+    assert(ss_json["profiles"][0]["endValue"] == 6);
+
+    // Export stored run A while live run B stays open and unaffected.
+    const auto stored_ss_path = out_dir / "stored.speedscope.json";
+    const auto stored_ss = h.call({{"cmd", "export"},
+                                   {"run", id_a},
+                                   {"format", "speedscope"},
+                                   {"path", os::to_utf8(stored_ss_path)}});
+    assert(stored_ss["ok"]);
+    const auto stored_json = json::parse(read_binary(stored_ss_path));
+    assert(stored_json["name"] == "stored-alpha");
+    assert(stored_json["profiles"].size() == 2);
+    assert(stored_json["profiles"][0]["endValue"] == 3 && stored_json["profiles"][1]["endValue"] == 1);
+
+    const auto stored_folded_path = out_dir / "stored.folded";
+    const auto stored_folded = h.call({{"cmd", "export"},
+                                       {"run", id_a},
+                                       {"format", "folded"},
+                                       {"core", 1},
+                                       {"path", os::to_utf8(stored_folded_path)}});
+    assert(stored_folded["ok"] && read_binary(stored_folded_path) == "core1;0x400d2fff;0x400d1fff;0x400d1800 1\n");
+
+    // Live run B is still current and still receiving frames.
+    h.source()->push(make_stream(1));
+    assert(wait_for([&] { return h.samples() == 12; }));
+
+    // Time-windowed export (`at_ms: 0` with `window_s: 5` on stored run A).
+    const auto windowed_path = out_dir / "windowed.folded";
+    const auto windowed = h.call({{"cmd", "export"},
+                                  {"run", id_a},
+                                  {"format", "folded"},
+                                  {"window_s", 5},
+                                  {"at_ms", 0},
+                                  {"path", os::to_utf8(windowed_path)}});
+    assert(windowed["ok"] && contains(read_binary(windowed_path), "core0;0x400d2fff;0x400d1fff;0x400d1000 3\n"));
+    const auto future_empty = h.call({{"cmd", "export"},
+                                      {"run", id_a},
+                                      {"format", "folded"},
+                                      {"window_s", 5},
+                                      {"at_ms", 100000},
+                                      {"path", os::to_utf8(out_dir / "future.folded")}});
+    assert(future_empty["ok"] == false && contains(future_empty["error"], "no samples"));
+
+    // Export error cases: missing run, filtered out core, unwritable path.
+    assert(h.call({{"cmd", "export"}, {"run", "missing"}, {"format", "folded"}, {"path", os::to_utf8(out_dir / "m.folded")}})["ok"] == false);
+    const auto no_core = h.call({{"cmd", "export"}, {"format", "speedscope"}, {"core", 9}, {"path", os::to_utf8(out_dir / "c9.json")}});
+    assert(no_core["ok"] == false && contains(no_core["error"], "no samples"));
+    assert(h.call({{"cmd", "export"}, {"format", "folded"}, {"path", os::to_utf8(h.root / "missing-dir/x.folded")}})["ok"] == false);
+
+    // write_file: PNG binary round-trip (non-ASCII/null/high bytes covering all padding lengths) and SVG text round-trip.
+    // Raw bytes: "\x89PNG\r\n\x1a\n\x00\x01\xff\x80" (12 bytes) -> "iVBORw0KGgoAAf+A"
+    const std::string png_bytes("\x89PNG\r\n\x1a\n\x00\x01\xff\x80", 12);
+    const auto png_path = out_dir / "chart.png";
+    const auto wf_png = h.call({{"cmd", "write_file"}, {"path", os::to_utf8(png_path)}, {"base64", "iVBORw0KGgoAAf+A"}});
+    assert(wf_png["ok"] && wf_png["result"]["bytes"] == 12);
+    assert(read_binary(png_path) == png_bytes);
+
+    // 1-byte and 2-byte padding round-trip: "\x00\xff" -> "AP8=", "\x41" -> "QQ=="
+    const auto pad1_path = out_dir / "pad1.bin";
+    const auto wf_pad1 = h.call({{"cmd", "write_file"}, {"path", os::to_utf8(pad1_path)}, {"base64", "AP8="}});
+    assert(wf_pad1["ok"] && wf_pad1["result"]["bytes"] == 2 && read_binary(pad1_path) == std::string("\x00\xff", 2));
+    const auto pad2_path = out_dir / "pad2.bin";
+    const auto wf_pad2 = h.call({{"cmd", "write_file"}, {"path", os::to_utf8(pad2_path)}, {"base64", "QQ=="}});
+    assert(wf_pad2["ok"] && wf_pad2["result"]["bytes"] == 1 && read_binary(pad2_path) == "A");
+
+    // SVG round-trip: "<svg/>" -> "PHN2Zy8+"
+    const auto svg_path = out_dir / "chart.svg";
+    const auto wf_svg = h.call({{"cmd", "write_file"}, {"path", os::to_utf8(svg_path)}, {"base64", "PHN2Zy8+"}});
+    assert(wf_svg["ok"] && wf_svg["result"]["bytes"] == 6 && read_binary(svg_path) == "<svg/>");
+
+    // write_file rejects malformed base64 and unwritable paths.
+    for (const char* bad : {"a", "abc", "YWJ!", "YW Jj", "YW_j", "====", "A===", "YQ==YQ==", "YWI=YQ==", "YW=A"}) {
+        const auto err = h.call({{"cmd", "write_file"}, {"path", os::to_utf8(out_dir / "bad.bin")}, {"base64", bad}});
+        assert(err["ok"] == false && contains(err["error"], "base64"));
+    }
+    assert(!fs::exists(out_dir / "bad.bin"));
+    assert(h.call({{"cmd", "write_file"}, {"path", os::to_utf8(h.root / "missing-dir/x.bin")}, {"base64", "QQ=="}})["ok"] == false);
+
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+}
+
 void eof_finishes_run() {
     Harness h("malgrind_serve_g");
     const auto dev = h.plug("fake-port-g", "usb-10c4-ea60-sn-g1", "ttyUSB0");
@@ -844,6 +985,7 @@ int main() {
     remove_agent_restores_or_says_why_not();
     open_while_live_refused();
     diff_runs_works_while_live();
+    export_and_write_file_commands();
     eof_finishes_run();
     open_after_upload_reenumerates();
 #ifndef _WIN32

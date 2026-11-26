@@ -1,7 +1,9 @@
 <script lang="ts">
   import { untrack } from 'svelte';
+  import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+  import { bytesToBase64, defaultExportFilename, serializeFlameSvg, svgToPngBase64 } from '../lib/export';
   import { formatDuration } from '../lib/format';
-  import type { Node } from '../lib/blend';
+  import type { Node as FlameNode } from '../lib/blend';
   import type { Sidecar } from '../lib/sidecar';
   import type { RunMeta } from '../lib/types';
   import Flame from '../views/Flame.svelte';
@@ -34,7 +36,7 @@
   let windowS = $state(untrack(() => startsLive) ? 10 : 0); // a stored run opens as the whole run
   let at = $state<number | null>(null); // null: the end of the run (following it, while live)
   let focus = $state('');
-  let tree = $state<Node | null>(null);
+  let tree = $state<FlameNode | null>(null);
   let functions = $state<FunctionsData | null>(null);
   let stats = $state<Stats>({});
   let notices = $state<string[]>([]);
@@ -42,6 +44,12 @@
   let notes = $state(untrack(() => run.notes));
   let showNotes = $state(false);
   let showSettings = $state(false); // what the run was made with (only runs made with the settings panel have it)
+  let showExport = $state(false);
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  let flame = $state<ReturnType<typeof Flame> | null | undefined>(null);
+  let exportWrap = $state<HTMLDivElement | null>(null);
+  let exportBtn = $state<HTMLButtonElement | null>(null);
   // the fields the user set; an empty one was the detected value
   const used = $derived(
     run.settings
@@ -62,6 +70,88 @@
   const duration = $derived(stats.duration_ms ?? run.duration_ms);
   const position = $derived(at ?? duration);
   const resetKey = $derived(`${core}|${windowS}|${at ?? 'end'}`);
+  const imageExportDisabled = $derived(view !== 'flame' || !tree || tree.value <= 0);
+  const imageExportTip = $derived(
+    view !== 'flame'
+      ? 'Switch to Flamegraph view to export SVG or PNG'
+      : !tree || tree.value <= 0
+        ? 'No samples in this window'
+        : ''
+  );
+
+  type ExportFormat = 'folded' | 'speedscope' | 'svg' | 'png';
+  const EXPORT_SPECS: Record<ExportFormat, { title: string; ext: string; filterName: string; extensions: string[] }> = {
+    folded: { title: 'Export folded stacks', ext: 'folded', filterName: 'Folded stacks', extensions: ['folded', 'txt'] },
+    speedscope: { title: 'Export Speedscope profile', ext: 'speedscope.json', filterName: 'Speedscope profile', extensions: ['json'] },
+    svg: { title: 'Export flamegraph SVG', ext: 'svg', filterName: 'SVG image', extensions: ['svg'] },
+    png: { title: 'Export flamegraph PNG', ext: 'png', filterName: 'PNG image', extensions: ['png'] },
+  };
+
+  $effect(() => {
+    if (!showExport) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (exportWrap && e.target instanceof Node && !exportWrap.contains(e.target)) {
+        showExport = false;
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        showExport = false;
+        exportBtn?.focus();
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  });
+
+  async function exportAs(format: ExportFormat) {
+    showExport = false;
+    if (exporting) return;
+    error = '';
+    exportNotice = '';
+
+    const isImage = format === 'svg' || format === 'png';
+    const svg = isImage ? (flame?.getSvg() ?? null) : null;
+    if (isImage && (!svg || imageExportDisabled)) {
+      error = imageExportTip || 'No flamegraph is available to export.';
+      return;
+    }
+
+    const spec = EXPORT_SPECS[format];
+    const baseLabel = name.trim() || run.name || run.id;
+    exporting = true;
+    try {
+      const path = await saveDialog({
+        title: spec.title,
+        defaultPath: defaultExportFilename(baseLabel, spec.ext),
+        filters: [{ name: spec.filterName, extensions: spec.extensions }],
+      });
+      if (!path) return;
+
+      if (isImage && svg) {
+        const base64 =
+          format === 'svg'
+            ? bytesToBase64(new TextEncoder().encode(serializeFlameSvg(svg)))
+            : await svgToPngBase64(svg);
+        await sidecar.call<{ bytes: number }>('write_file', { path, base64 });
+      } else {
+        const args: Record<string, unknown> = { run: run.id, format, path, window_s: windowS };
+        if (core !== 'all') args.core = core;
+        if (at !== null) args.at_ms = at;
+        await sidecar.call<{ bytes: number }>('export', args);
+      }
+      const fileLabel = path.split(/[\\/]/).pop() || path;
+      exportNotice = `Exported ${fileLabel}`;
+    } catch (e) {
+      error = String(e instanceof Error ? e.message : e);
+    } finally {
+      exporting = false;
+    }
+  }
 
   async function poll() {
     if (busy) return;
@@ -70,7 +160,7 @@
       const args: Record<string, unknown> = { window_s: windowS };
       if (core !== 'all') args.core = core;
       if (at !== null) args.at_ms = at;
-      const snapshot = await sidecar.call<{ tree: Node | null; stats: Stats }>('snapshot', args);
+      const snapshot = await sidecar.call<{ tree: FlameNode | null; stats: Stats }>('snapshot', args);
       tree = snapshot.tree;
       stats = snapshot.stats ?? {};
       if (view === 'functions') functions = await sidecar.call<FunctionsData>('functions', { ...args, focus });
@@ -139,6 +229,43 @@
     <button class="btn ghost small notes-btn" class:active={showNotes} onclick={() => (showNotes = !showNotes)} aria-pressed={showNotes}>
       Notes{#if notes.trim().length > 0}<span class="notes-dot" title="This run has notes" aria-hidden="true"></span>{/if}
     </button>
+    <div class="export-wrap" bind:this={exportWrap}>
+      <button
+        bind:this={exportBtn}
+        class="btn ghost small"
+        type="button"
+        disabled={exporting}
+        aria-haspopup="menu"
+        aria-expanded={showExport}
+        onclick={() => (showExport = !showExport)}
+      >
+        {exporting ? 'Exporting…' : 'Export ▾'}
+      </button>
+      {#if showExport}
+        <div class="export-menu" role="menu" aria-label="Export run">
+          <button type="button" role="menuitem" onclick={() => exportAs('folded')}>Folded stacks (.folded)</button>
+          <button type="button" role="menuitem" onclick={() => exportAs('speedscope')}>Speedscope (.speedscope.json)</button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={imageExportDisabled}
+            title={imageExportTip}
+            onclick={() => exportAs('svg')}
+          >
+            Flamegraph SVG (.svg)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={imageExportDisabled}
+            title={imageExportTip}
+            onclick={() => exportAs('png')}
+          >
+            Flamegraph PNG (.png)
+          </button>
+        </div>
+      {/if}
+    </div>
     <button class="btn small" onclick={close}>{live ? 'Stop' : 'Close'}</button>
   </header>
 
@@ -154,6 +281,9 @@
   {#each notices as text, i}
     <div class="notice">{text}<button class="x" onclick={() => (notices = notices.filter((_, j) => j !== i))} aria-label="Dismiss">×</button></div>
   {/each}
+  {#if exportNotice}
+    <div class="notice">{exportNotice}<button class="x" onclick={() => (exportNotice = '')} aria-label="Dismiss">×</button></div>
+  {/if}
   {#if !live && startsLive}<div class="notice">The board stopped sending data (unplugged, or reset?). The run is saved.</div>{/if}
   {#if error}<div class="notice bad" role="alert">{error}</div>{/if}
 
@@ -177,7 +307,7 @@
 
     <main>
       {#if view === 'flame'}
-        <Flame {tree} {resetKey} />
+        <Flame bind:this={flame} {tree} {resetKey} />
       {:else}
         <Functions data={functions} {focus} onFocus={(f) => (focus = f)} />
       {/if}
@@ -207,6 +337,17 @@
   .notes-btn { display: inline-flex; align-items: center; gap: 6px; }
   .notes-btn.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .notes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .export-wrap { position: relative; }
+  .export-menu {
+    position: absolute; right: 0; top: calc(100% + 6px); min-width: 220px; padding: 4px;
+    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 24px #00000026; z-index: 20;
+  }
+  .export-menu button {
+    text-align: left; padding: 7px 10px; font-size: 12.5px; background: none; border: 0; border-radius: 6px; color: var(--fg);
+  }
+  .export-menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .export-menu button:disabled { opacity: 0.45; cursor: not-allowed; }
   .notes { margin: 0; width: 100%; min-height: 70px; padding: 10px 16px; font: inherit; color: var(--fg); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); resize: vertical; }
   .notice { display: flex; justify-content: space-between; padding: 8px 16px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-bottom: 1px solid var(--line); font-size: 13px; }
   .notice.bad { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); }

@@ -41,7 +41,16 @@ public:
                                              std::string_view focus) const;
 
     // Folded stacks ("core0;main;f;g 12"), the input of flamegraph.pl and speedscope.
-    [[nodiscard]] std::string folded() const;
+    [[nodiscard]] std::string folded(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                     std::optional<Ms> at = std::nullopt) const;
+
+    // Speedscope JSON profile (https://www.speedscope.app/file-format-schema.json), one sampled profile per core.
+    [[nodiscard]] std::string speedscope_json(std::string_view name, std::optional<unsigned> core = std::nullopt,
+                                              Ms window = Ms{0}, std::optional<Ms> at = std::nullopt) const;
+
+    // True when at least one non-empty stack with positive count falls inside [at - window, at] for `core`.
+    [[nodiscard]] bool has_samples(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                   std::optional<Ms> at = std::nullopt) const;
 
     // Non-empty symbolized stacks in [at - window, at], outermost frame first.
     [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
