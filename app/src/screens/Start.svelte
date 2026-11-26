@@ -5,7 +5,7 @@
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
   import { pickSlot, toggleRunPick } from '../lib/diff';
-  import { formatDuration, formatWhen } from '../lib/format';
+  import { formatBytes, formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
   import type { ProjectMeta, RunMeta } from '../lib/types';
@@ -182,6 +182,7 @@
                   <span class="muted when">{formatWhen(run.started)}</span>
                   <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
                   <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
+                  {#if run.bytes !== undefined}<span class="tag">{formatBytes(run.bytes)}</span>{/if}
                 </button>
                 <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>✎</button>
                 {#if deleting === run.id}

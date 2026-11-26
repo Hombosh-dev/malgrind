@@ -12,6 +12,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -33,7 +34,7 @@ public:
     // firmware ELF under `project` when the first frame names the architecture; with no project, names stay raw addresses.
     [[nodiscard]] static std::unique_ptr<Session> live(std::unique_ptr<ByteSource> source, RunWriter writer,
                                                        std::filesystem::path elf, std::filesystem::path project,
-                                                       Emit emit);
+                                                       Emit emit, std::uint64_t large_run_bytes = kLargeRunBytes);
     // A stored run, fully loaded before this returns. nullptr if there is no such run.
     [[nodiscard]] static std::unique_ptr<Session> replay(const RunStore& store, std::string_view id, Emit emit);
 
@@ -84,6 +85,7 @@ private:
     std::string run_id_;
     std::optional<RunWriter> writer_; // only touched by the reader thread (and by replay before it returns)
     bool recording_ = true;
+    std::uint64_t large_run_bytes_ = kLargeRunBytes;
     FrameReader reader_;
     std::optional<Symbolizer> symbols_;
     std::optional<Aggregator> aggregator_; // after symbols_: destroyed first

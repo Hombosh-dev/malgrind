@@ -27,6 +27,24 @@ bool valid_id(std::string_view id) {
            std::ranges::all_of(id, [](unsigned char c) { return std::isalnum(c) || c == '-' || c == '_'; });
 }
 
+std::uint64_t file_size_or_zero(const fs::path& p) {
+    std::error_code ec;
+    const auto sz = fs::file_size(p, ec);
+    return ec ? 0 : sz;
+}
+
+std::uint64_t dir_bytes(const fs::path& dir) {
+    std::uint64_t total = 0;
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) {
+        std::error_code item_ec;
+        if (!entry.is_regular_file(item_ec) || item_ec) continue;
+        const auto sz = entry.file_size(item_ec);
+        if (!item_ec) total += sz;
+    }
+    return total;
+}
+
 // meta.json is replaced atomically: a crash leaves the old file or the new one, never half of one.
 void write_meta(const fs::path& dir, const RunMeta& meta) {
     const auto tmp = dir / "meta.json.tmp";
@@ -55,6 +73,7 @@ std::optional<RunMeta> read_meta(const fs::path& dir) {
     m.cpu_mhz = j.value("cpu_mhz", 0.0);
     m.duration_ms = j.value("duration_ms", std::uint64_t{0});
     m.has_elf = fs::exists(dir / "firmware.elf");
+    m.bytes = dir_bytes(dir);
     if (j.contains("settings") && j["settings"].is_object()) m.settings = j["settings"].get<RunSettings>();
     return m;
 }
@@ -77,17 +96,27 @@ void to_json(nlohmann::json& j, const RunMeta& m) {
          {"project", m.project}, {"env", m.env},         {"port", m.port},
          {"device_id", m.device_id}, {"project_id", m.project_id},
          {"started", m.started}, {"ncores", m.ncores},   {"cpu_mhz", m.cpu_mhz},
-         {"duration_ms", m.duration_ms}, {"has_elf", m.has_elf}};
+         {"duration_ms", m.duration_ms}, {"bytes", m.bytes}, {"has_elf", m.has_elf}};
     j["arch"] = m.arch ? nlohmann::json(std::string(arch_name(*m.arch))) : nlohmann::json(nullptr);
     j["settings"] = m.settings ? nlohmann::json(*m.settings) : nlohmann::json(nullptr);
 }
 
 RunWriter::RunWriter(fs::path dir, RunMeta meta)
-    : dir_(std::move(dir)), meta_(std::move(meta)), frames_(dir_ / "frames.mlg", std::ios::binary | std::ios::app) {
+    : dir_(std::move(dir)),
+      meta_(std::move(meta)),
+      frames_(dir_ / "frames.mlg", std::ios::binary | std::ios::app),
+      frames_bytes_(file_size_or_zero(dir_ / "frames.mlg")),
+      elf_bytes_(file_size_or_zero(dir_ / "firmware.elf")),
+      meta_bytes_(file_size_or_zero(dir_ / "meta.json")) {
     save();
 }
 
-void RunWriter::save() const { write_meta(dir_, meta_); }
+void RunWriter::save() {
+    meta_.bytes = bytes();
+    write_meta(dir_, meta_);
+    meta_bytes_ = file_size_or_zero(dir_ / "meta.json");
+    meta_.bytes = bytes();
+}
 
 void RunWriter::append(std::uint32_t t_ms, std::span<const std::uint8_t> bytes) {
     while (!bytes.empty()) { // one record holds at most 65535 bytes
@@ -95,10 +124,12 @@ void RunWriter::append(std::uint32_t t_ms, std::span<const std::uint8_t> bytes) 
         put_le(frames_, t_ms, 4);
         put_le(frames_, n, 2);
         frames_.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(n));
+        frames_bytes_ += 6 + n;
         bytes = bytes.subspan(n);
     }
     frames_.flush();
     meta_.duration_ms = t_ms;
+    meta_.bytes = this->bytes();
     if (t_ms - last_saved_ms_ >= 1000) {
         last_saved_ms_ = t_ms;
         save();
@@ -114,6 +145,7 @@ void RunWriter::set_elf(const fs::path& elf) {
     std::error_code ec;
     fs::copy_file(elf, dir_ / "firmware.elf", fs::copy_options::overwrite_existing, ec);
     meta_.has_elf = !ec;
+    elf_bytes_ = file_size_or_zero(dir_ / "firmware.elf");
     save();
 }
 
@@ -186,6 +218,7 @@ std::optional<RunMeta> RunStore::update(std::string_view id, std::optional<std::
     if (name) meta->name = std::move(*name);
     if (notes) meta->notes = std::move(*notes);
     write_meta(*dir, *meta);
+    meta->bytes = dir_bytes(*dir);
     return meta;
 }
 

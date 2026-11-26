@@ -170,6 +170,51 @@ void survives_a_broken_disk() {
     fs::remove_all(root);
 }
 
+void large_run_notice_emitted_once() {
+    const auto root = fresh("malgrind_session_large");
+    RunStore store(root / "runs");
+    Events ev;
+    auto writer = store.create({.name = "large"});
+    const std::uint64_t initial = writer.bytes();
+    const auto first = make_stream(1);
+    const std::uint64_t threshold = initial + first.size() + 1000;
+
+    auto source = std::make_unique<MemorySource>();
+    auto* src = source.get();
+    auto session = Session::live(std::move(source), std::move(writer), {}, root / "project", ev.sink(), threshold);
+
+    auto count_large_notices = [&] {
+        int count = 0;
+        for (const auto& n : ev.named("notice")) {
+            if (contains(n["text"].get<std::string>(), "on disk")) ++count;
+        }
+        return count;
+    };
+
+    // Below threshold: frame + tiny log marker must not trigger the large-run notice.
+    src->push(first);
+    assert(wait_for([&] { return session->snapshot(std::nullopt, kAll, std::nullopt).has_value(); }));
+    src->push(std::string_view("ping\n"));
+    assert(wait_for([&] { return contains(ev.logs(), "ping\n"); }));
+    assert(count_large_notices() == 0);
+
+    // Cross threshold with a larger chunk: emits once.
+    const std::string big_a = std::string(1200, 'a') + "\n";
+    src->push(std::string_view(big_a));
+    assert(wait_for([&] { return count_large_notices() == 1; }));
+
+    // Additional chunks beyond threshold must not emit a second large-run notice.
+    const std::string big_b = std::string(1200, 'b') + "\n";
+    src->push(std::string_view(big_b));
+    src->close();
+    src = nullptr;
+    assert(wait_for([&] { return !ev.named("ended").empty(); }, 1000ms));
+    assert(count_large_notices() == 1);
+
+    session.reset();
+    fs::remove_all(root);
+}
+
 #ifndef _WIN32
 void pty_serial_records_live() {
     const auto root = fresh("malgrind_session_pty");
@@ -201,6 +246,7 @@ int main() {
     replay_matches_live();
     log_passthrough();
     survives_a_broken_disk();
+    large_run_notice_emitted_once();
 #ifndef _WIN32
     pty_serial_records_live();
 #endif

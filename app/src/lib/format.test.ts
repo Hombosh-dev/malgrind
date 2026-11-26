@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { baseName, defaultRunName, formatDuration, formatWhen } from './format';
+import { baseName, defaultRunName, formatBytes, formatDuration, formatWhen } from './format';
 
 describe('format', () => {
   it('formats durations', () => {
@@ -7,6 +7,17 @@ describe('format', () => {
     expect(formatDuration(45_400)).toBe('45 s');
     expect(formatDuration(12 * 60_000)).toBe('12 min');
     expect(formatDuration(65 * 60_000)).toBe('1 h 05 min');
+  });
+  it('formats byte sizes across units and handles invalid inputs', () => {
+    expect(formatBytes(0)).toBe('0 B');
+    expect(formatBytes(-42)).toBe('0 B');
+    expect(formatBytes(Number.NaN)).toBe('0 B');
+    expect(formatBytes(Number.POSITIVE_INFINITY)).toBe('0 B');
+    expect(formatBytes(512)).toBe('512 B');
+    expect(formatBytes(1023)).toBe('1023 B');
+    expect(formatBytes(1536)).toBe('1.5 KB');
+    expect(formatBytes(12.3 * 1024 * 1024)).toBe('12.3 MB');
+    expect(formatBytes(1.2 * 1024 * 1024 * 1024)).toBe('1.20 GB');
   });
   it('keeps a timestamp it cannot read', () => {
     expect(formatWhen('not a date')).toBe('not a date');

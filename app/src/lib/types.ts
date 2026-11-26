@@ -36,6 +36,7 @@ export interface RunMeta {
   ncores: number;
   cpu_mhz: number;
   duration_ms: number;
+  bytes?: number;
   has_elf: boolean;
   settings: RunSettings | null; // what the run was made with; null for runs from before settings existed
   live?: boolean; // only in the `runs` list, for the run being recorded

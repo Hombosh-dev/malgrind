@@ -7,6 +7,17 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
+// "0 B", "512 B", "1.5 KB", "12.3 MB", "1.20 GB"
+export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${Math.floor(bytes)} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  return `${(mb / 1024).toFixed(2)} GB`;
+}
+
 // Local date and time of an ISO timestamp, "15 Nov 2026, 22:01"
 export function formatWhen(iso: string): string {
   const date = new Date(iso);

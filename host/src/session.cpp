@@ -17,16 +17,27 @@ namespace malgrind::host {
 namespace {
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
+
+std::string large_run_notice(std::uint64_t threshold_bytes, std::uint64_t current_bytes) {
+    if (threshold_bytes >= 1024ull * 1024) {
+        return std::format("this run has reached {} MB on disk", current_bytes / (1024ull * 1024));
+    }
+    if (threshold_bytes >= 1024ull) {
+        return std::format("this run has reached {} KB on disk", current_bytes / 1024ull);
+    }
+    return std::format("this run has reached {} bytes on disk", current_bytes);
+}
 } // namespace
 
 Session::Session(Emit emit, fs::path elf, fs::path project, bool search_elf)
     : emit_(std::move(emit)), elf_(std::move(elf)), project_(std::move(project)), search_elf_(search_elf) {}
 
 std::unique_ptr<Session> Session::live(std::unique_ptr<ByteSource> source, RunWriter writer, fs::path elf,
-                                       fs::path project, Emit emit) {
+                                       fs::path project, Emit emit, std::uint64_t large_run_bytes) {
     std::unique_ptr<Session> s(new Session(std::move(emit), std::move(elf), std::move(project), true));
     s->run_id_ = writer.meta().id;
     s->writer_.emplace(std::move(writer));
+    s->large_run_bytes_ = large_run_bytes;
     s->live_ = true;
     s->thread_ = std::thread([raw = s.get(), src = std::move(source)]() mutable { raw->read_loop(std::move(src)); });
     return s;
@@ -63,6 +74,7 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
     auto elapsed = [&] { return std::chrono::duration_cast<Aggregator::Ms>(Clock::now() - start); };
     std::array<std::uint8_t, 4096> buf;
     bool hinted = false;
+    bool warned_large = false;
     bool ended = false;
     while (!stop_) {
         const auto n = source ? source->read(buf) : std::nullopt;
@@ -81,6 +93,10 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
         const std::span bytes(buf.data(), *n);
         record([&](RunWriter& w) { w.append(static_cast<std::uint32_t>(t.count()), bytes); }); // on disk before it is decoded
         on_bytes(bytes, t);
+        if (!warned_large && recording_ && large_run_bytes_ > 0 && writer_ && writer_->bytes() >= large_run_bytes_) {
+            warned_large = true;
+            notice(large_run_notice(large_run_bytes_, writer_->bytes()));
+        }
     }
     record([&](RunWriter& w) { w.finish(static_cast<std::uint64_t>(elapsed().count())); });
     live_ = false;
