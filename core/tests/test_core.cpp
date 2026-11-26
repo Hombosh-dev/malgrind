@@ -1,4 +1,5 @@
-// Self-check for the core: stack merging, table overflow, frame encoding, CRC.
+// Self-check for the core: stack merging, table overflow, frame encoding, CRC, command parsing.
+#include "malgrind/command.hpp"
 #include "malgrind/profiler.hpp"
 
 #include <array>
@@ -229,6 +230,154 @@ int main() {
         std::array<std::uint8_t, 128> buf{};
         err.depth = kMaxDepth + 1;
         assert(encode_error(buf.data(), buf.size(), err) == 0);
+    }
+
+    // CommandParser: framing, chunking, resync on false/overlapping MLC1, bad header/CRC, back-to-back
+    {
+        auto make_cmd_frame = [](std::uint8_t cmd, std::uint16_t rate_hz, std::uint32_t analyses) {
+            std::vector<std::uint8_t> f{'M', 'L', 'C', '1', 9, 0, kWireVersion, kKindCommand, cmd};
+            f.push_back(static_cast<std::uint8_t>(rate_hz));
+            f.push_back(static_cast<std::uint8_t>(rate_hz >> 8));
+            for (int i = 0; i < 4; ++i) f.push_back(static_cast<std::uint8_t>(analyses >> (8 * i)));
+            const std::uint32_t crc = crc32(f.data() + 4, 2 + 9);
+            for (int i = 0; i < 4; ++i) f.push_back(static_cast<std::uint8_t>(crc >> (8 * i)));
+            assert(f.size() == CommandParser::kFrameSize);
+            return f;
+        };
+
+        auto make_raw_frame = [](std::uint16_t len_field, std::uint8_t ver, std::uint8_t kind,
+                                 const std::vector<std::uint8_t>& tail) {
+            std::vector<std::uint8_t> f{'M', 'L', 'C', '1',
+                                        static_cast<std::uint8_t>(len_field),
+                                        static_cast<std::uint8_t>(len_field >> 8),
+                                        ver, kind};
+            f.insert(f.end(), tail.begin(), tail.end());
+            const std::uint32_t crc = crc32(f.data() + 4, f.size() - 4);
+            for (int i = 0; i < 4; ++i) f.push_back(static_cast<std::uint8_t>(crc >> (8 * i)));
+            return f;
+        };
+
+        const auto f_start = make_cmd_frame(kCmdStart, 997, kCapSamples | kCapHeap);
+        const auto f_stop = make_cmd_frame(kCmdStop, 0, 0);
+        const auto f_hello = make_cmd_frame(kCmdHello, 500, kCapSamples | kCapTasks | kCapErrors);
+
+        // Byte-by-byte feeding
+        {
+            CommandParser parser;
+            Command out{};
+            for (std::size_t i = 0; i + 1 < f_start.size(); ++i) {
+                assert(!parser.feed(f_start[i], out));
+            }
+            assert(parser.feed(f_start.back(), out));
+            assert(out.cmd == kCmdStart && out.rate_hz == 997 && out.analyses == (kCapSamples | kCapHeap));
+        }
+
+        // Chunked feeding + nullptr/zero-size guards + back-to-back commands
+        {
+            std::vector<std::uint8_t> stream;
+            stream.insert(stream.end(), f_start.begin(), f_start.end());
+            stream.insert(stream.end(), f_stop.begin(), f_stop.end());
+            stream.insert(stream.end(), f_hello.begin(), f_hello.end());
+
+            for (std::size_t chunk : {std::size_t{1}, std::size_t{3}, std::size_t{5}, std::size_t{7}, stream.size()}) {
+                CommandParser parser;
+                parser.feed(nullptr, 5, [](const Command&) { assert(false); });
+                parser.feed(stream.data(), 0, [](const Command&) { assert(false); });
+
+                std::vector<Command> got;
+                for (std::size_t i = 0; i < stream.size(); i += chunk) {
+                    const std::size_t n = (i + chunk <= stream.size()) ? chunk : (stream.size() - i);
+                    parser.feed(stream.data() + i, n, [&](const Command& c) { got.push_back(c); });
+                }
+                assert(got.size() == 3);
+                assert(got[0].cmd == kCmdStart && got[0].rate_hz == 997 && got[0].analyses == (kCapSamples | kCapHeap));
+                assert(got[1].cmd == kCmdStop && got[1].rate_hz == 0 && got[1].analyses == 0);
+                assert(got[2].cmd == kCmdHello && got[2].rate_hz == 500 && got[2].analyses == (kCapSamples | kCapTasks | kCapErrors));
+            }
+        }
+
+        // Garbage prefix, partial/false "MLC1", overlapping "MLC1", wrong len/ver/kind, bad CRC resync
+        {
+            std::vector<std::uint8_t> stream;
+            const char noise[] = "boot log\nM ML MLC MLCM MLCMLC1";
+            stream.insert(stream.end(), noise, noise + sizeof(noise) - 1);
+            // The trailing "MLC1" above is followed immediately by f_start ("MLC1..."):
+            // false "MLC1" followed by overlapping real "MLC1" in len bytes!
+            stream.insert(stream.end(), f_start.begin(), f_start.end());
+
+            // False "MLC1" + "ML" then real "C1..." (overlap inside len)
+            const std::uint8_t false_ml[] = {'M', 'L', 'C', '1', 'M', 'L'};
+            stream.insert(stream.end(), false_ml, false_ml + sizeof(false_ml));
+            stream.insert(stream.end(), f_stop.begin() + 2, f_stop.end());
+
+            // Wrong len != 9 (len=8, len=0x0109) with valid CRC, followed by f_hello
+            const auto bad_len1 = make_raw_frame(8, kWireVersion, kKindCommand, {1, 2, 3, 4, 5, 6});
+            const auto bad_len2 = make_raw_frame(0x0109, kWireVersion, kKindCommand, {1, 2, 3, 4, 5, 6, 7});
+            stream.insert(stream.end(), bad_len1.begin(), bad_len1.end());
+            stream.insert(stream.end(), bad_len2.begin(), bad_len2.end());
+            stream.insert(stream.end(), f_hello.begin(), f_hello.end());
+
+            // Wrong ver != kWireVersion (ver=1, ver=3) and wrong kind != kKindCommand (kind=kKindHello, kind='M')
+            const auto bad_ver1 = make_raw_frame(9, 1, kKindCommand, {1, 2, 3, 4, 5, 6, 7});
+            const auto bad_ver2 = make_raw_frame(9, 3, kKindCommand, {1, 2, 3, 4, 5, 6, 7});
+            const auto bad_kind1 = make_raw_frame(9, kWireVersion, kKindHello, {1, 2, 3, 4, 5, 6, 7});
+            const auto bad_kind2 = make_raw_frame(9, kWireVersion, static_cast<std::uint8_t>('M'), {1, 2, 3, 4, 5, 6, 7});
+            stream.insert(stream.end(), bad_ver1.begin(), bad_ver1.end());
+            stream.insert(stream.end(), bad_ver2.begin(), bad_ver2.end());
+            stream.insert(stream.end(), bad_kind1.begin(), bad_kind1.end());
+            stream.insert(stream.end(), bad_kind2.begin(), bad_kind2.end());
+            stream.insert(stream.end(), f_start.begin(), f_start.end());
+
+            // Bad CRC frame whose payload+CRC starts a real valid frame at byte 8 (embedded "MLC1" inside bad frame!)
+            {
+                const std::uint8_t outer_hdr[] = {'M', 'L', 'C', '1', 9, 0, kWireVersion, kKindCommand};
+                stream.insert(stream.end(), outer_hdr, outer_hdr + sizeof(outer_hdr));
+                stream.insert(stream.end(), f_stop.begin(), f_stop.end());
+            }
+
+            // Bad CRC frame with an embedded false "MLC1" at byte 8 (wrong len) AND a real "MLC1" at byte 15
+            {
+                const std::uint8_t outer_with_two[] = {
+                    'M', 'L', 'C', '1', 9, 0, kWireVersion, kKindCommand,
+                    'M', 'L', 'C', '1', 0, 0, 0,
+                    'M', 'L', 'C', '1',
+                };
+                stream.insert(stream.end(), outer_with_two, outer_with_two + sizeof(outer_with_two));
+                stream.insert(stream.end(), f_hello.begin() + 4, f_hello.end());
+            }
+
+            // Corrupted CRC on a regular frame followed by f_start
+            {
+                auto bad_crc = f_stop;
+                bad_crc.back() ^= 0x01;
+                stream.insert(stream.end(), bad_crc.begin(), bad_crc.end());
+                stream.insert(stream.end(), f_start.begin(), f_start.end());
+            }
+
+            CommandParser parser;
+            std::vector<Command> got;
+            parser.feed(stream.data(), stream.size(), [&](const Command& c) { got.push_back(c); });
+            assert(got.size() == 7);
+            assert(got[0].cmd == kCmdStart && got[0].rate_hz == 997);
+            assert(got[1].cmd == kCmdStop && got[1].rate_hz == 0);
+            assert(got[2].cmd == kCmdHello && got[2].rate_hz == 500);
+            assert(got[3].cmd == kCmdStart && got[3].rate_hz == 997);
+            assert(got[4].cmd == kCmdStop && got[4].rate_hz == 0);
+            assert(got[5].cmd == kCmdHello && got[5].rate_hz == 500);
+            assert(got[6].cmd == kCmdStart && got[6].rate_hz == 997);
+        }
+
+        // reset() discards partial buffered bytes
+        {
+            CommandParser parser;
+            Command out{};
+            for (std::size_t i = 0; i < 10; ++i) assert(!parser.feed(f_start[i], out));
+            parser.reset();
+            for (std::size_t i = 10; i < f_start.size(); ++i) assert(!parser.feed(f_start[i], out));
+            for (std::size_t i = 0; i + 1 < f_stop.size(); ++i) assert(!parser.feed(f_stop[i], out));
+            assert(parser.feed(f_stop.back(), out));
+            assert(out.cmd == kCmdStop && out.rate_hz == 0 && out.analyses == 0);
+        }
     }
 
     std::puts("core ok");

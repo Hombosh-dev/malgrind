@@ -265,6 +265,68 @@ void test_v1_and_v2_wire() {
             assert(res.text.size() >= 4 && res.text.starts_with("MLC1"));
         }
     }
+
+    // 6. encode_command -> CommandParser round-trip and FrameReader ignores COMMAND frames.
+    {
+        const Command cmds[] = {
+            {kCmdStart, 997, kCapSamples | kCapHeap | kCapTasks},
+            {kCmdStop, 0, 0},
+            {kCmdHello, 250, kCapSamples | kCapAllocs | kCapErrors},
+        };
+
+        std::vector<std::uint8_t> wire_stream;
+        const std::string garbage = "noise\nMLC1"; // partial/false MLC1 right before encoded command
+        wire_stream.insert(wire_stream.end(), garbage.begin(), garbage.end());
+
+        auto first = encode_command(cmds[0]);
+        assert(first.size() == CommandParser::kFrameSize);
+        assert(std::memcmp(first.data(), "MLC1", 4) == 0);
+        assert(first[4] == 9 && first[5] == 0 && first[6] == kWireVersion && first[7] == kKindCommand);
+        wire_stream.insert(wire_stream.end(), first.begin(), first.end());
+
+        auto corrupted = encode_command(cmds[1]);
+        corrupted[10] ^= 0x80; // corrupt payload byte -> bad CRC
+        wire_stream.insert(wire_stream.end(), corrupted.begin(), corrupted.end());
+
+        for (const auto& cmd : cmds) {
+            const auto enc = encode_command(cmd);
+            wire_stream.insert(wire_stream.end(), enc.begin(), enc.end());
+        }
+
+        auto parse_all = [&](std::size_t chunk_size) {
+            CommandParser parser;
+            std::vector<Command> decoded;
+            for (std::size_t i = 0; i < wire_stream.size(); i += chunk_size) {
+                const std::size_t n = std::min(chunk_size, wire_stream.size() - i);
+                parser.feed(wire_stream.data() + i, n, [&](const Command& c) { decoded.push_back(c); });
+            }
+            assert(decoded.size() == 4);
+            assert(decoded[0].cmd == cmds[0].cmd && decoded[0].rate_hz == cmds[0].rate_hz && decoded[0].analyses == cmds[0].analyses);
+            for (std::size_t j = 0; j < 3; ++j) {
+                assert(decoded[1 + j].cmd == cmds[j].cmd);
+                assert(decoded[1 + j].rate_hz == cmds[j].rate_hz);
+                assert(decoded[1 + j].analyses == cmds[j].analyses);
+            }
+        };
+        parse_all(wire_stream.size());
+        parse_all(1);
+        parse_all(4);
+
+        // If encoded COMMAND frames are fed back into FrameReader, they are ignored (not frames, messages, or text).
+        std::vector<std::uint8_t> loopback;
+        const std::string pre = "log1\n", mid = "log2\n", post = "log3\n";
+        loopback.insert(loopback.end(), pre.begin(), pre.end());
+        for (const auto& cmd : cmds) {
+            const auto enc = encode_command(cmd);
+            loopback.insert(loopback.end(), enc.begin(), enc.end());
+            loopback.insert(loopback.end(), mid.begin(), mid.end());
+        }
+        loopback.insert(loopback.end(), post.begin(), post.end());
+        const auto res = FrameReader().feed(loopback);
+        assert(res.frames.empty());
+        assert(res.messages.empty());
+        assert(res.text == "log1\nlog2\nlog2\nlog2\nlog3\n");
+    }
 }
 
 } // namespace

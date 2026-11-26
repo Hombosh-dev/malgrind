@@ -218,6 +218,27 @@ std::string_view arch_name(Arch arch) noexcept {
     return "unknown";
 }
 
+std::vector<std::uint8_t> encode_command(const Command& cmd) {
+    constexpr std::uint16_t kBodyLen = 9;
+    std::vector<std::uint8_t> frame;
+    frame.reserve(CommandParser::kFrameSize);
+    frame.insert(frame.end(), kMagic.begin(), kMagic.end());
+    auto push_le = [&](std::uint32_t v, unsigned bytes) {
+        for (unsigned i = 0; i < bytes; ++i) {
+            frame.push_back(static_cast<std::uint8_t>(v >> (8u * i)));
+        }
+    };
+    push_le(kBodyLen, 2);
+    push_le(kWireVersion, 1);
+    push_le(kKindCommand, 1);
+    push_le(cmd.cmd, 1);
+    push_le(cmd.rate_hz, 2);
+    push_le(cmd.analyses, 4);
+    const std::uint32_t crc = malgrind::crc32(frame.data() + 4, 2u + kBodyLen);
+    push_le(crc, 4);
+    return frame;
+}
+
 FrameReader::Result FrameReader::feed(std::span<const std::uint8_t> data) {
     buf_.insert(buf_.end(), data.begin(), data.end());
     Result result;

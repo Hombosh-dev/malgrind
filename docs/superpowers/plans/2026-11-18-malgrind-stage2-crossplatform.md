@@ -855,7 +855,7 @@ Host: `FrameReader::Result` gains `std::vector<AgentMessage> messages;` where
 `Command{cmd, rate_hz, analyses}` when a valid COMMAND frame completes; garbage resyncs on the next `MLC1`),
 host `wire.hpp/.cpp` (`encode_command(Command) -> std::vector<uint8_t>`), tests on both sides.
 
-- [ ] Commit `feat(core): host-to-agent command frames`.
+- [x] Commit `feat(core): host-to-agent command frames`.
 
 ### T6.3 ESP32 agent: sleep, beacon, start/stop 🔌🟡
 

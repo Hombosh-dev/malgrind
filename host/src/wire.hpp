@@ -2,6 +2,7 @@
 
 // Decoder for the malgrind wire frame (layout documented in core/include/malgrind/profiler.hpp).
 
+#include "malgrind/command.hpp"
 #include "malgrind/target_info.hpp"
 
 #include <cstdint>
@@ -95,7 +96,10 @@ struct AgentError {
 
 using AgentMessage = std::variant<Hello, HeapStats, TaskStats, AllocBatch, AgentError>;
 
+using malgrind::Command;
+
 [[nodiscard]] std::string_view arch_name(Arch arch) noexcept;
+[[nodiscard]] std::vector<std::uint8_t> encode_command(const Command& cmd);
 
 // Splits a byte stream into frames, v2 control/telemetry messages, and everything else. Bytes that
 // are not part of a valid frame come back as `text`, so log output sharing the UART still reaches the terminal.
