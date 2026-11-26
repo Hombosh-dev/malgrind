@@ -7,7 +7,7 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/diff.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
     src/families/registry.cpp src/families/esp32.cpp
     src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
@@ -124,6 +124,9 @@ add_dependencies(test_serve fake_tool)
 
 malgrind_add_test(session tests/test_session.cpp)
 target_link_libraries(test_session PRIVATE malgrind_host)
+
+malgrind_add_test(diff tests/test_diff.cpp)
+target_link_libraries(test_diff PRIVATE malgrind_host)
 
 if(NOT WIN32)
     malgrind_add_test(access tests/test_access.cpp)

@@ -138,4 +138,9 @@ std::optional<std::string> Session::folded() const {
     return agg ? std::optional(agg->folded()) : std::nullopt;
 }
 
+std::vector<NamedStack> Session::named_stacks(std::optional<unsigned> core) const {
+    const auto* agg = ready_.load();
+    return agg ? agg->named_stacks(core, Aggregator::Ms{0}, std::nullopt) : std::vector<NamedStack>{};
+}
+
 } // namespace malgrind::host

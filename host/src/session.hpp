@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace malgrind::host {
 
@@ -50,6 +51,9 @@ public:
 
     // Folded stacks ("core0;main;f;g 12" per line), the input of flamegraph.pl and speedscope. nullopt before the first frame.
     [[nodiscard]] std::optional<std::string> folded() const;
+
+    // All non-empty symbolized stacks of the run so far, outermost frame first. Empty before the first frame.
+    [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt) const;
 
 private:
     Session(Emit emit, std::filesystem::path elf, std::filesystem::path project, bool search_elf);

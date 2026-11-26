@@ -4,6 +4,7 @@
 #include "wire.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -13,6 +14,11 @@
 #include <vector>
 
 namespace malgrind::host {
+
+struct NamedStack {
+    std::vector<std::string> frames; // outermost first, inlined frames expanded
+    std::uint64_t count = 0;
+};
 
 // All frames of one run, indexed by time since the run started. The same object serves a live run (frames keep
 // arriving) and a replayed one (all frames added up front); every query can look at any moment `at`.
@@ -36,6 +42,10 @@ public:
 
     // Folded stacks ("core0;main;f;g 12"), the input of flamegraph.pl and speedscope.
     [[nodiscard]] std::string folded() const;
+
+    // Non-empty symbolized stacks in [at - window, at], outermost frame first.
+    [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                                       std::optional<Ms> at = std::nullopt) const;
 
 private:
     struct Node {

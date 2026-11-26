@@ -1,6 +1,7 @@
 #include "serve.hpp"
 
 #include "devices.hpp"
+#include "diff.hpp"
 #include "discover.hpp"
 #include "github.hpp"
 #include "ops.hpp"
@@ -177,6 +178,13 @@ private:
             if (const auto cur = current(); cur && cur->run_id() == id) throw std::runtime_error("this run is open: close it first");
             if (!store_.remove(id)) throw std::runtime_error("no such run: " + id);
             return json::object();
+        }
+        if (cmd == "diff") {
+            const auto a = str_arg(req, "a");
+            const auto b = str_arg(req, "b");
+            std::optional<unsigned> core;
+            if (req.contains("core") && req["core"].is_number_unsigned()) core = req["core"].get<unsigned>();
+            return diff_runs(store_, a, b, core);
         }
         throw std::runtime_error("unknown command: " + cmd);
     }

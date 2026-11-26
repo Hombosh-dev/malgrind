@@ -697,6 +697,62 @@ void open_while_live_refused() {
     assert(open["ok"] == false && contains(open["error"], "stop the live run first"));
 }
 
+void diff_runs_works_while_live() {
+    Harness h("malgrind_serve_diff");
+    const auto dev = h.plug("fake-port-diff", "usb-10c4-ea60-sn-diff1", "ttyUSB0");
+
+    // Record run A (4 samples: 3 on core 0, 1 on core 1).
+    const std::string id_a = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "run-a"}})["result"]["run"]["id"];
+    h.source()->push(make_stream(1));
+    assert(wait_for([&] { return h.samples() == 4; }));
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+
+    // Record run B (9 samples: 8 on core 0, 1 on core 1).
+    const std::string id_b = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "run-b"}})["result"]["run"]["id"];
+    h.source()->push(make_stream(1));
+    {
+        malgrind::Profiler p({"test", malgrind::Arch::Xtensa, 240'000'000, 2}, 997);
+        const std::uint32_t pcs[] = {0x400d1900, 0x400d2000, 0x400d3000};
+        for (int i = 0; i < 5; ++i) p.record(0, pcs, 3, 100);
+        std::vector<std::uint8_t> extra;
+        p.flush([&](const std::uint8_t* d, std::size_t n) { extra.insert(extra.end(), d, d + n); }, [] {}, 5000);
+        h.source()->push(extra);
+    }
+    assert(wait_for([&] { return h.samples() == 9; }));
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+
+    // Start a third live session and verify diff runs cleanly without interrupting it.
+    const std::string id_live = h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "live-c"}})["result"]["run"]["id"];
+    h.source()->push(make_stream(1));
+    assert(wait_for([&] { return h.samples() == 4; }));
+    auto is_live_run = [&](const std::string& id) {
+        for (const auto& r : h.runs())
+            if (r["id"] == id) return r.contains("live") && r["live"] == true;
+        return false;
+    };
+    assert(is_live_run(id_live));
+
+    const auto diff = h.call({{"cmd", "diff"}, {"a", id_a}, {"b", id_b}});
+    assert(diff["ok"]);
+    const auto& res = diff["result"];
+    assert(res["a"]["id"] == id_a && res["b"]["id"] == id_b);
+    assert(res["total_a"] == 4 && res["total_b"] == 9);
+    assert(!res["functions"].empty());
+    assert(res["tree"]["name"] == "all" && res["tree"]["a"] == 4 && res["tree"]["b"] == 9 && res["tree"]["value"] == 9);
+
+    const auto diff_c1 = h.call({{"cmd", "diff"}, {"a", id_a}, {"b", id_b}, {"core", 1}});
+    assert(diff_c1["ok"] && diff_c1["result"]["total_a"] == 1 && diff_c1["result"]["total_b"] == 1);
+
+    assert(h.call({{"cmd", "diff"}, {"a", "missing"}, {"b", id_b}})["ok"] == false);
+    assert(h.call({{"cmd", "diff"}, {"a", id_a}})["ok"] == false);
+
+    // Live session continues receiving frames uninterrupted.
+    h.source()->push(make_stream(1));
+    assert(wait_for([&] { return h.samples() == 8; }));
+    assert(is_live_run(id_live));
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+}
+
 void eof_finishes_run() {
     Harness h("malgrind_serve_g");
     const auto dev = h.plug("fake-port-g", "usb-10c4-ea60-sn-g1", "ttyUSB0");
@@ -787,6 +843,7 @@ int main() {
     a_port_without_permission_is_reported_not_opened();
     remove_agent_restores_or_says_why_not();
     open_while_live_refused();
+    diff_runs_works_while_live();
     eof_finishes_run();
     open_after_upload_reenumerates();
 #ifndef _WIN32

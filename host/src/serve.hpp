@@ -43,6 +43,7 @@
 //   delete {run}                           -> {}      (refused for the run in use)
 //   snapshot {core?, window_s, at_ms?}     -> {tree, stats}   {"tree": null} before the first frame
 //   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees}
+//   diff {a, b, core?}                     -> {a, b, total_a, total_b, functions, tree}
 //
 // new_run, remove_agent, project_add, install_pio, grant_access and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
 

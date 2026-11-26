@@ -187,4 +187,15 @@ std::string Aggregator::folded() const {
     return out;
 }
 
+std::vector<NamedStack> Aggregator::named_stacks(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {
+    std::scoped_lock lock(mutex_);
+    std::vector<NamedStack> out;
+    for (const auto& [pcs, count] : collect(core, window, at)) {
+        auto frames = names(pcs);
+        if (frames.empty()) continue;
+        out.push_back(NamedStack{std::move(frames), count});
+    }
+    return out;
+}
+
 } // namespace malgrind::host
