@@ -846,8 +846,8 @@ Host: `FrameReader::Result` gains `std::vector<AgentMessage> messages;` where
 `using AgentMessage = std::variant<Hello, HeapStats, TaskStats, AllocBatch, AgentError>;` (structs in `wire.hpp`).
 `frames` keeps sample frames from both v1 and v2. Unknown kinds are skipped (not treated as text).
 
-- [ ] Tests: round-trip each kind core-encode → host-decode; a v1 frame still decodes; a stored v1 run (`test_store` fixture) replays unchanged.
-- [ ] Commit `feat(wire): v2 frames with kinds; v1 still decoded`.
+- [x] Tests: round-trip each kind core-encode → host-decode; a v1 frame still decodes; a stored v1 run (`test_store` fixture) replays unchanged.
+- [x] Commit `feat(wire): v2 frames with kinds; v1 still decoded`.
 
 ### T6.2 Command channel 🟢
 

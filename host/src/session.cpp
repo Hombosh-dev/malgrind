@@ -104,9 +104,9 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
 }
 
 void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
-    auto [frames, text] = reader_.feed(bytes);
-    if (!text.empty()) emit_({{"event", "log"}, {"text", std::move(text)}});
-    for (auto& frame : frames) {
+    auto res = reader_.feed(bytes);
+    if (!res.text.empty()) emit_({{"event", "log"}, {"text", std::move(res.text)}});
+    for (auto& frame : res.frames) {
         if (!ready_) setup(frame);
         ready_.load()->add(std::move(frame), t);
     }
