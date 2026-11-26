@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CompareBar from '../components/CompareBar.svelte';
   import RunEditor from '../components/RunEditor.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
+  import { pickSlot, toggleRunPick } from '../lib/diff';
   import { formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
@@ -13,8 +15,9 @@
     onNewProject(): void;
     onProject(id: string): void;
     onRun(run: RunMeta): void; // a stored run, opened for replay
+    onCompare(a: RunMeta, b: RunMeta): void;
   }
-  let { sidecar, onNewProject, onProject, onRun }: Props = $props();
+  let { sidecar, onNewProject, onProject, onRun, onCompare }: Props = $props();
 
   let projects = $state<ProjectMeta[]>([]);
   let runs = $state<RunMeta[]>([]);
@@ -25,6 +28,11 @@
   let renaming = $state<string | null>(null);
   let draft = $state('');
   let editingRun = $state<string | null>(null);
+  let selectedIds = $state<string[]>([]);
+
+  const selectedRuns = $derived(
+    selectedIds.map((id) => runs.find((r) => r.id === id)).filter((r): r is RunMeta => r !== undefined),
+  );
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -62,7 +70,10 @@
     try {
       await sidecar.call(kind === 'project' ? 'project_remove' : 'delete', { [kind === 'project' ? 'project' : 'run']: id });
       if (kind === 'project') projects = projects.filter((p) => p.id !== id);
-      else runs = runs.filter((r) => r.id !== id);
+      else {
+        runs = runs.filter((r) => r.id !== id);
+        selectedIds = selectedIds.filter((x) => x !== id);
+      }
     } catch (e) {
       fail(e);
     }
@@ -130,41 +141,60 @@
         {/each}
       </ul>
     {:else}
-      {#if runs.length === 0}<p class="empty muted">No runs yet.</p>{/if}
-      <ul class="rows">
-        {#each runs as run (run.id)}
-          <li class:editing={editingRun === run.id}>
-            {#if editingRun === run.id}
-              <RunEditor
-                {sidecar}
-                {run}
-                onSave={(updated) => Object.assign(run, updated)}
-                onClose={() => (editingRun = null)}
-                onError={(msg) => (error = msg)}
-              />
-            {:else}
-              <button class="row" onclick={() => openRun(run)}>
-                <span class="name-wrap">
-                  <b class="name">{run.name || run.id}</b>
-                  {#if run.notes?.trim()}
-                    <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
-                  {/if}
-                </span>
-                <span class="muted when">{formatWhen(run.started)}</span>
-                <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
-                <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
-              </button>
-              <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>✎</button>
-              {#if deleting === run.id}
-                <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
-                <button class="link" onclick={() => (deleting = null)}>No</button>
+      {#if runs.length === 0}
+        <p class="empty muted">No runs yet.</p>
+      {:else}
+        {#if runs.length >= 2 || selectedRuns.length > 0}
+          <div class="compare-wrap">
+            <CompareBar selected={selectedRuns} {onCompare} onClear={() => (selectedIds = [])} />
+          </div>
+        {/if}
+        <ul class="rows">
+          {#each runs as run (run.id)}
+            {@const slot = pickSlot(selectedIds, run.id)}
+            <li class:editing={editingRun === run.id}>
+              {#if editingRun === run.id}
+                <RunEditor
+                  {sidecar}
+                  {run}
+                  onSave={(updated) => Object.assign(run, updated)}
+                  onClose={() => (editingRun = null)}
+                  onError={(msg) => (error = msg)}
+                />
               {:else}
-                <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>🗑</button>
+                <label class="pick" title={slot ? `Selected as ${slot}` : selectedRuns.length >= 2 ? 'Two runs already selected' : 'Select to compare'}>
+                  <input
+                    type="checkbox"
+                    checked={slot !== null}
+                    disabled={slot === null && selectedRuns.length >= 2}
+                    aria-label="Select {run.name || run.id} to compare"
+                    onchange={() => (selectedIds = toggleRunPick(selectedIds, run.id))}
+                  />
+                  {#if slot}<span class="slot" class:target={slot === 'B'}>{slot}</span>{/if}
+                </label>
+                <button class="row" onclick={() => openRun(run)}>
+                  <span class="name-wrap">
+                    <b class="name">{run.name || run.id}</b>
+                    {#if run.notes?.trim()}
+                      <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
+                    {/if}
+                  </span>
+                  <span class="muted when">{formatWhen(run.started)}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
+                </button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>✎</button>
+                {#if deleting === run.id}
+                  <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
+                  <button class="link" onclick={() => (deleting = null)}>No</button>
+                {:else}
+                  <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>🗑</button>
+                {/if}
               {/if}
-            {/if}
-          </li>
-        {/each}
-      </ul>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -184,9 +214,15 @@
   .tabs button { padding: 8px 14px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 600; }
   .tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   .count { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--line); margin-left: 4px; }
+  .compare-wrap { padding: 12px 18px 8px; border-bottom: 1px solid var(--line); }
   .rows { list-style: none; margin: 0; padding: 0; }
   li { display: flex; align-items: center; gap: 6px; padding: 0 12px 0 0; border-bottom: 1px solid var(--line); }
   li.editing { padding: 0; }
+  .pick { display: inline-flex; align-items: center; gap: 6px; padding: 8px 0 8px 18px; cursor: pointer; flex-shrink: 0; }
+  .pick input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .pick input:disabled { cursor: not-allowed; }
+  .slot { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--line); color: var(--fg); }
+  .slot.target { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--accent); }
   .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
   .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

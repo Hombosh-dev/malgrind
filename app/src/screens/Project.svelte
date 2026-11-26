@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CompareBar from '../components/CompareBar.svelte';
   import RunEditor from '../components/RunEditor.svelte';
   import TopBar from '../components/TopBar.svelte';
+  import { pickSlot, toggleRunPick } from '../lib/diff';
   import { formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
@@ -13,8 +15,9 @@
     onBack(): void;
     onProfile(project: ProjectMeta): void;
     onRun(run: RunMeta): void; // a stored run of this project, opened for replay
+    onCompare(a: RunMeta, b: RunMeta): void;
   }
-  let { sidecar, id, onBack, onProfile, onRun }: Props = $props();
+  let { sidecar, id, onBack, onProfile, onRun, onCompare }: Props = $props();
 
   let project = $state<ProjectMeta | null>(null);
   let runs = $state<RunMeta[]>([]);
@@ -22,6 +25,11 @@
   let renaming = $state(false);
   let draft = $state('');
   let editingRun = $state<string | null>(null);
+  let selectedIds = $state<string[]>([]);
+
+  const selectedRuns = $derived(
+    selectedIds.map((rid) => runs.find((r) => r.id === rid)).filter((r): r is RunMeta => r !== undefined),
+  );
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -106,8 +114,14 @@
       {#if runs.length === 0}
         <p class="muted">Nothing recorded yet. Press Profile, choose the board and how to look at it.</p>
       {:else}
+        {#if runs.length >= 2 || selectedRuns.length > 0}
+          <div class="compare-wrap">
+            <CompareBar selected={selectedRuns} {onCompare} onClear={() => (selectedIds = [])} />
+          </div>
+        {/if}
         <ul>
           {#each runs as run (run.id)}
+            {@const slot = pickSlot(selectedIds, run.id)}
             <li>
               {#if editingRun === run.id}
                 <RunEditor
@@ -118,6 +132,16 @@
                   onError={(msg) => (error = msg)}
                 />
               {:else}
+                <label class="pick" title={slot ? `Selected as ${slot}` : selectedRuns.length >= 2 ? 'Two runs already selected' : 'Select to compare'}>
+                  <input
+                    type="checkbox"
+                    checked={slot !== null}
+                    disabled={slot === null && selectedRuns.length >= 2}
+                    aria-label="Select {run.name || run.id} to compare"
+                    onchange={() => (selectedIds = toggleRunPick(selectedIds, run.id))}
+                  />
+                  {#if slot}<span class="slot" class:target={slot === 'B'}>{slot}</span>{/if}
+                </label>
                 <button class="row" onclick={() => open(run)}>
                   <span class="name-wrap">
                     <b class="name">{run.name || run.id}</b>
@@ -149,12 +173,18 @@
   .icon:hover { color: var(--fg); }
   .rename { width: 100%; margin: 0 0 6px; padding: 6px 10px; font: 600 22px var(--font); color: var(--fg); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; }
   h2 { margin: 28px 0 8px; font-size: 15px; }
+  .compare-wrap { margin: 0 0 10px; }
   .btn.big { padding: 14px 32px; font-size: 16px; }
   .trust { margin: 16px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
   .trust .btn { margin-top: 10px; }
   .env { display: block; margin-top: 14px; }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
   li { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
+  .pick { display: inline-flex; align-items: center; gap: 6px; padding: 8px 4px; cursor: pointer; flex-shrink: 0; }
+  .pick input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .pick input:disabled { cursor: not-allowed; }
+  .slot { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--line); color: var(--fg); }
+  .slot.target { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--accent); }
   .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 6px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
   .name-wrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }

@@ -127,3 +127,29 @@ export interface DevicesInfo {
   devices: Device[];
   can_grant_access: boolean;
 }
+
+// Differential flamegraph / comparison result (`diff`, host/src/diff.cpp).
+export interface DiffFunction {
+  name: string;
+  a_self_pct: number;
+  b_self_pct: number;
+  a_incl_pct: number;
+  b_incl_pct: number;
+}
+
+export interface DiffNode {
+  name: string;
+  a: number;
+  b: number;
+  value: number; // = b
+  children: DiffNode[];
+}
+
+export interface DiffResult {
+  a: RunMeta;
+  b: RunMeta;
+  total_a: number;
+  total_b: number;
+  functions: DiffFunction[];
+  tree: DiffNode;
+}

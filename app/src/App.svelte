@@ -4,6 +4,7 @@
   import { installMenu } from './lib/menu';
   import type { Hello, ProjectMeta, RunMeta } from './lib/types';
   import RemoveAgent from './components/RemoveAgent.svelte';
+  import Diff from './screens/Diff.svelte';
   import NewProject from './screens/NewProject.svelte';
   import Profile from './screens/Profile.svelte';
   import Project from './screens/Project.svelte';
@@ -16,7 +17,8 @@
     | { name: 'newproject' }
     | { name: 'project'; id: string }
     | { name: 'profile'; project: ProjectMeta }
-    | { name: 'run'; run: RunMeta; live: boolean };
+    | { name: 'run'; run: RunMeta; live: boolean }
+    | { name: 'diff'; a: RunMeta; b: RunMeta; back: Route };
 
   let sidecar = $state<Sidecar | null>(null);
   let hello = $state<Hello | null>(null);
@@ -61,16 +63,35 @@
 {:else if !sidecar || !hello}
   <main class="fatal"><p class="muted">Starting…</p></main>
 {:else if route.name === 'start'}
-  <Start {sidecar} onNewProject={() => (route = { name: 'newproject' })} onProject={(id) => (route = { name: 'project', id })} onRun={(run) => show(run, false)} />
+  <Start
+    {sidecar}
+    onNewProject={() => (route = { name: 'newproject' })}
+    onProject={(id) => (route = { name: 'project', id })}
+    onRun={(run) => show(run, false)}
+    onCompare={(a, b) => (route = { name: 'diff', a, b, back: { name: 'start' } })}
+  />
 {:else if route.name === 'newproject'}
   <NewProject {sidecar} onCancel={() => (route = { name: 'start' })} onCreated={(project) => (route = { name: 'project', id: project.id })} />
 {:else if route.name === 'project'}
-  {#key route.id}
-    <Project {sidecar} id={route.id} onBack={() => (route = { name: 'start' })} onProfile={(project) => (route = { name: 'profile', project })} onRun={(run) => show(run, false)} />
+  {@const projectId = route.id}
+  {#key projectId}
+    <Project
+      {sidecar}
+      id={projectId}
+      onBack={() => (route = { name: 'start' })}
+      onProfile={(project) => (route = { name: 'profile', project })}
+      onRun={(run) => show(run, false)}
+      onCompare={(a, b) => (route = { name: 'diff', a, b, back: { name: 'project', id: projectId } })}
+    />
   {/key}
 {:else if route.name === 'profile'}
   {@const project = route.project}
   <Profile {sidecar} {project} onBack={() => (route = { name: 'project', id: project.id })} onRun={show} />
+{:else if route.name === 'diff'}
+  {@const back = route.back}
+  {#key `${route.a.id}|${route.b.id}`}
+    <Diff {sidecar} a={route.a} b={route.b} onBack={() => (route = back)} />
+  {/key}
 {:else}
   {#key route.run.id}
     <Run
