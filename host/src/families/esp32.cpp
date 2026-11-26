@@ -4,7 +4,9 @@
 #include "os/process.hpp"
 #include "os/tools.hpp"
 
+#include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -70,6 +72,74 @@ std::string agent_stamp(const fs::path& files) {
 }
 
 bool is_hex(char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }
+
+std::string lower_ascii(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
+std::string_view esp32_rom_chip(Arch arch, const fs::path& firmware_elf) {
+    const std::string lower = lower_ascii(os::to_utf8(firmware_elf));
+    if (arch == Arch::Xtensa) {
+        for (const std::string_view chip : {"esp32s3", "esp32s2"}) {
+            if (lower.find(chip) != std::string::npos) return chip;
+        }
+        return "esp32";
+    }
+    if (arch == Arch::RiscV32) {
+        for (const std::string_view chip : {"esp32c6", "esp32c5", "esp32c3", "esp32c2", "esp32h2", "esp32p4"}) {
+            if (lower.find(chip) != std::string::npos) return chip;
+        }
+        return "esp32c3";
+    }
+    return {};
+}
+
+// Matches "<chip>_rev<digits>_rom" (returning digits) or "<chip>_rom" (returning 0).
+std::optional<unsigned> parse_rom_revision(std::string_view stem, std::string_view chip) {
+    if (stem.size() == chip.size() + 4 && stem.starts_with(chip) && stem.ends_with("_rom")) return 0u;
+    constexpr std::string_view kRev = "_rev";
+    constexpr std::string_view kRom = "_rom";
+    if (!stem.starts_with(chip) || !stem.ends_with(kRom)) return std::nullopt;
+    auto rest = stem.substr(chip.size());
+    if (!rest.starts_with(kRev)) return std::nullopt;
+    rest.remove_prefix(kRev.size());
+    rest.remove_suffix(kRom.size());
+    if (rest.empty()) return std::nullopt;
+    for (const char c : rest) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return std::nullopt;
+    }
+    unsigned rev = 0;
+    const auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), rev);
+    if (ec != std::errc{} || ptr != rest.data() + rest.size()) return std::nullopt;
+    return rev;
+}
+
+void scan_rom_dir(const fs::path& dir, int depth, std::string_view chip, std::optional<unsigned>& best_rev,
+                  fs::path& best_path) {
+    std::error_code ec;
+    std::vector<fs::directory_entry> entries;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) entries.push_back(entry);
+    std::ranges::sort(entries, [](const fs::directory_entry& a, const fs::directory_entry& b) {
+        return a.path() < b.path();
+    });
+    for (const auto& entry : entries) {
+        std::error_code entry_ec;
+        if (entry.is_directory(entry_ec)) {
+            if (depth < 2) scan_rom_dir(entry.path(), depth + 1, chip, best_rev, best_path);
+        } else if (entry.is_regular_file(entry_ec)) {
+            if (lower_ascii(os::to_utf8(entry.path().extension())) != ".elf") continue;
+            const std::string stem = lower_ascii(os::to_utf8(entry.path().stem()));
+            if (const auto rev = parse_rom_revision(stem, chip)) {
+                if (!best_rev || *rev > *best_rev) {
+                    best_rev = *rev;
+                    best_path = entry.path();
+                }
+            }
+        }
+    }
+}
 
 // An esptool command, its output forwarded line by line and also returned as one text. Throws if it fails.
 std::string run_esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args,
@@ -162,6 +232,29 @@ public:
             case Arch::RiscV32: return {"riscv32-esp-elf-addr2line"};
             default: return {};
         }
+    }
+    [[nodiscard]] std::vector<ExtraElf> extra_symbol_files(const fs::path& home, Arch arch,
+                                                           const fs::path& firmware_elf) const override {
+        const std::string_view chip = esp32_rom_chip(arch, firmware_elf);
+        if (chip.empty()) return {};
+
+        std::optional<unsigned> best_rev;
+        fs::path best_path;
+        for (const auto& core : os::platformio_core_dirs(home)) {
+            std::error_code ec;
+            std::vector<fs::path> packages;
+            for (const auto& pkg : fs::directory_iterator(core / "packages", ec)) {
+                std::error_code pkg_ec;
+                if (!pkg.is_directory(pkg_ec)) continue;
+                if (os::to_utf8(pkg.path().filename()).starts_with("tool-esp-rom-elfs")) {
+                    packages.push_back(pkg.path());
+                }
+            }
+            std::ranges::sort(packages);
+            for (const auto& pkg : packages) scan_rom_dir(pkg, 1, chip, best_rev, best_path);
+        }
+        if (best_path.empty()) return {};
+        return {{0x40000000u, 0x4006ffffu, std::move(best_path)}};
     }
     [[nodiscard]] std::string family_hint_for_usb(std::string_view vid, std::string_view /*pid*/) const override {
         if (vid == "303a") return "esp32";

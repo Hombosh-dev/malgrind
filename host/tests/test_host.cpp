@@ -1,6 +1,7 @@
 // Host tool self-check: frame decoding/resync and the aggregation tree.
 #include "aggregate.hpp"
 #include "discover.hpp"
+#include "os/paths.hpp"
 #include "source.hpp"
 #include "stream.hpp"
 #include "wire.hpp"
@@ -184,6 +185,75 @@ int main() {
     assert(find_elf(Arch::Xtensa, root) == agent_elf);
     assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     fs::remove_all(root);
+
+    // Symbolizer with extra ELFs (address ranges, fallback to primary ELF, and empty primary ELF)
+    {
+        const auto sym_root = fs::canonical(fs::temp_directory_path()) / "malgrind_test_sym";
+        fs::remove_all(sym_root);
+        fs::create_directories(sym_root);
+
+        const fs::path tool = sym_root / os::exe_name("target-addr2line");
+        fs::copy_file(MALGRIND_FAKE_TOOL, tool, fs::copy_options::overwrite_existing);
+
+        const fs::path main_elf = sym_root / "main.elf";
+        const fs::path extra_elf = sym_root / "extra.elf";
+        const fs::path alt_extra_elf = sym_root / "alt_extra.elf";
+        {
+            std::ofstream out(main_elf, std::ios::binary);
+            out << "0x40001000=shadowed_by_extra\n";
+            out << "0x40005000=main_fallback_fn\n";
+            out << "0x400d1fff=app_caller\n";
+            out << "0x400d1000=app_leaf\n";
+        }
+        {
+            std::ofstream out(extra_elf, std::ios::binary);
+            out << "0x40000000=extra_start\n";
+            out << "0x40001000=extra_leaf\n";
+            out << "0x4006ffff=extra_end\n";
+        }
+        {
+            std::ofstream out(alt_extra_elf, std::ios::binary);
+            out << "0x40001000=alt_extra_leaf\n";
+            out << "0x40002000=alt_extra_only\n";
+        }
+
+        // Extra ELF resolves range [0x40000000, 0x4006ffff], out-of-range uses main ELF,
+        // unresolved in extra ELF falls back to main ELF, and first matching existing ExtraElf wins.
+        Symbolizer sym(main_elf, tool,
+                       {{0x40000000u, 0x4006ffffu, sym_root / "missing.elf"},
+                        {0x40000000u, 0x4006ffffu, extra_elf},
+                        {0x40000000u, 0x4006ffffu, alt_extra_elf}});
+        Frame f;
+        f.arch = Arch::Xtensa;
+        f.ncores = 1;
+        f.core = 0;
+        f.cpu_hz = 1;
+        f.stacks = {
+            {1, {0x40001000, 0x40005001, 0x400d2000}},
+            {1, {0x40000000, 0x4006ffff + 1, 0x40006001}},
+            {1, {0x4006ffff, 0x400d1001}},
+        };
+        sym.prepare(f);
+        assert(sym.frames(0, 0x40001000) == (std::vector<std::string>{"extra_leaf"}));
+        assert(sym.frames(1, 0x40005001) == (std::vector<std::string>{"main_fallback_fn"}));
+        assert(sym.frames(2, 0x400d2000) == (std::vector<std::string>{"app_caller"}));
+        assert(sym.frames(0, 0x40000000) == (std::vector<std::string>{"extra_start"}));
+        assert(sym.frames(1, 0x4006ffff + 1) == (std::vector<std::string>{"extra_end"}));
+        assert(sym.frames(2, 0x40006001) == (std::vector<std::string>{"0x40006000"}));
+        assert(sym.frames(0, 0x4006ffff) == (std::vector<std::string>{"extra_end"}));
+        assert(sym.frames(1, 0x400d1001) == (std::vector<std::string>{"app_leaf"}));
+
+        // Empty main ELF: extra ELF still symbolizes matching addresses; others remain raw.
+        const fs::path plain_tool = sym_root / os::exe_name("addr2line");
+        fs::copy_file(MALGRIND_FAKE_TOOL, plain_tool, fs::copy_options::overwrite_existing);
+        Symbolizer extra_only({}, plain_tool, {{0x40000000u, 0x4006ffffu, extra_elf}});
+        extra_only.prepare(f);
+        assert(extra_only.frames(0, 0x40001000) == (std::vector<std::string>{"extra_leaf"}));
+        assert(extra_only.frames(1, 0x40005001) == (std::vector<std::string>{"0x40005000"}));
+        assert(extra_only.frames(2, 0x400d2000) == (std::vector<std::string>{"0x400d1fff"}));
+
+        fs::remove_all(sym_root);
+    }
 
     std::puts("host ok");
 }

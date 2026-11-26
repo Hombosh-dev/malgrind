@@ -4,12 +4,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdio>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
@@ -202,6 +206,59 @@ int run_echo(const std::vector<std::string>& args) {
     return 0;
 }
 
+std::optional<std::uint64_t> parse_hex_addr(std::string_view s) {
+    if (s.starts_with("0x") || s.starts_with("0X")) s.remove_prefix(2);
+    if (s.empty()) return std::nullopt;
+    std::uint64_t val = 0;
+    const auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), val, 16);
+    if (ec != std::errc{} || ptr != s.data() + s.size()) return std::nullopt;
+    return val;
+}
+
+int run_addr2line(const std::vector<std::string>& args) {
+    fs::path map_path;
+    std::vector<std::string> addrs;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        const std::string& a = args[i];
+        if (a == "-e" && i + 1 < args.size()) {
+            map_path = os::from_utf8(args[++i]);
+        } else if (a.starts_with("-e") && a.size() > 2) {
+            map_path = os::from_utf8(a.substr(2));
+        } else if (!a.empty() && a[0] == '-') {
+            continue;
+        } else {
+            addrs.push_back(a);
+        }
+    }
+    if (map_path.empty()) return 1;
+    std::ifstream in(map_path, std::ios::binary);
+    if (!in) return 1;
+
+    std::unordered_map<std::uint64_t, std::vector<std::string>> table;
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        const auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        if (const auto addr = parse_hex_addr(std::string_view(line).substr(0, eq))) {
+            table[*addr].push_back(line.substr(eq + 1));
+        }
+    }
+
+    for (const std::string& a : addrs) {
+        if (const auto addr = parse_hex_addr(a)) {
+            if (const auto it = table.find(*addr); it != table.end() && !it->second.empty()) {
+                for (const std::string& fn : it->second) {
+                    std::printf("%s\nsrc.c:1\n", fn.c_str());
+                }
+                continue;
+            }
+        }
+        std::printf("??\n??:0\n");
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -224,6 +281,7 @@ int main(int argc, char** argv) {
     if (role == "python" || role == "python3" || role == "py") return run_python(args);
     if (role == "esptool") return run_esptool(args, 1);
     if (role == "echo") return run_echo(args);
+    if (role == "addr2line" || role.ends_with("-addr2line")) return run_addr2line(args);
 
     std::fprintf(stderr, "fake_tool: unknown role '%s'\n", role.c_str());
     return 1;

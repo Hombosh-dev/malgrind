@@ -6,6 +6,7 @@
 #include "malgrind/target_info.hpp"
 #include "pio.hpp"
 #include "settings.hpp"
+#include "symbols.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -61,6 +62,8 @@ public:
                              const LineFn& on_line) const;
     [[nodiscard]] virtual bool is_agent_image(const std::filesystem::path& image) const;
     [[nodiscard]] virtual std::vector<std::string> addr2line_names(Arch arch) const = 0;
+    [[nodiscard]] virtual std::vector<ExtraElf> extra_symbol_files(const std::filesystem::path& home, Arch arch,
+                                                                   const std::filesystem::path& firmware_elf) const;
     [[nodiscard]] virtual std::string family_hint_for_usb(std::string_view vid, std::string_view pid) const {
         (void)vid;
         (void)pid;

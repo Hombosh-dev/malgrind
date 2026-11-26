@@ -39,6 +39,39 @@ std::string short_name(std::string name) {
     return name;
 }
 
+std::vector<std::vector<std::string>> query_addr2line(const fs::path& tool, const fs::path& elf,
+                                                      const std::vector<std::uint32_t>& addrs) {
+    std::vector<std::vector<std::string>> chains(addrs.size());
+    if (tool.empty() || elf.empty() || addrs.empty()) return chains;
+
+    // -i prints every inlined frame of an address with nothing between addresses, so each address is
+    // followed by an invalid one: its "??" answer marks where the previous chain ends.
+    constexpr std::size_t kChunk = 128; // keep the command line short
+    constexpr const char* kSentinel = "0xffffffff";
+    const std::string tool_utf8 = os::to_utf8(tool);
+    const std::string elf_utf8 = os::to_utf8(elf);
+    for (std::size_t first = 0; first < addrs.size(); first += kChunk) {
+        const auto last = std::min(first + kChunk, addrs.size());
+        std::vector<std::string> argv{tool_utf8, "-i", "-f", "-C", "-e", elf_utf8};
+        for (auto i = first; i < last; ++i) {
+            argv.push_back(std::format("0x{:x}", addrs[i]));
+            argv.push_back(kSentinel);
+        }
+        std::istringstream out(os::capture(argv));
+        std::string func, location; // addr2line prints "function" then "file:line" per frame
+        for (auto i = first; i < last; ++i) {
+            bool first_pair = true;
+            while (std::getline(out, func) && std::getline(out, location)) {
+                if (!func.empty() && func.back() == '\r') func.pop_back();
+                if (func == "??" && !first_pair) break; // the sentinel's answer
+                first_pair = false;
+                if (func != "??") chains[i].push_back(short_name(func));
+            }
+        }
+    }
+    return chains;
+}
+
 } // namespace
 
 fs::path find_addr2line(Arch arch) {
@@ -70,26 +103,56 @@ void Symbolizer::prepare(const Frame& frame) {
     if (todo.empty()) return;
 
     std::vector<std::vector<std::string>> chains(todo.size());
-    if (!elf_.empty() && !tool_.empty()) {
-        // -i prints every inlined frame of an address with nothing between addresses, so each address is
-        // followed by an invalid one: its "??" answer marks where the previous chain ends.
-        constexpr std::size_t kChunk = 128; // keep the command line short
-        constexpr const char* kSentinel = "0xffffffff";
-        for (std::size_t first = 0; first < todo.size(); first += kChunk) {
-            const auto last = std::min(first + kChunk, todo.size());
-            std::vector<std::string> argv{os::to_utf8(tool_), "-i", "-f", "-C", "-e", os::to_utf8(elf_)};
-            for (auto i = first; i < last; ++i) {
-                argv.push_back(std::format("0x{:x}", todo[i]));
-                argv.push_back(kSentinel);
+    if (!tool_.empty()) {
+        std::vector<bool> extra_available(extra_elfs_.size(), false);
+        for (std::size_t j = 0; j < extra_elfs_.size(); ++j) {
+            std::error_code ec;
+            extra_available[j] = !extra_elfs_[j].elf.empty() && fs::exists(extra_elfs_[j].elf, ec);
+        }
+
+        struct ExtraGroup {
+            fs::path elf;
+            std::vector<std::size_t> indices;
+            std::vector<std::uint32_t> addrs;
+        };
+        std::vector<ExtraGroup> extra_groups;
+        for (std::size_t i = 0; i < todo.size(); ++i) {
+            const std::uint32_t a = todo[i];
+            for (std::size_t j = 0; j < extra_elfs_.size(); ++j) {
+                if (extra_available[j] && a >= extra_elfs_[j].start && a <= extra_elfs_[j].end) {
+                    const fs::path& target = extra_elfs_[j].elf;
+                    auto it = std::ranges::find_if(extra_groups, [&](const ExtraGroup& g) { return g.elf == target; });
+                    if (it == extra_groups.end()) {
+                        extra_groups.push_back({target, {i}, {a}});
+                    } else {
+                        it->indices.push_back(i);
+                        it->addrs.push_back(a);
+                    }
+                    break;
+                }
             }
-            std::istringstream out(os::capture(argv));
-            std::string func, location; // addr2line prints "function" then "file:line" per frame
-            for (auto i = first; i < last; ++i) {
-                bool first_pair = true;
-                while (std::getline(out, func) && std::getline(out, location)) {
-                    if (func == "??" && !first_pair) break; // the sentinel's answer
-                    first_pair = false;
-                    if (func != "??") chains[i].push_back(short_name(func));
+        }
+
+        for (const auto& group : extra_groups) {
+            auto resolved = query_addr2line(tool_, group.elf, group.addrs);
+            for (std::size_t k = 0; k < group.indices.size(); ++k) {
+                chains[group.indices[k]] = std::move(resolved[k]);
+            }
+        }
+
+        if (!elf_.empty()) {
+            std::vector<std::size_t> primary_indices;
+            std::vector<std::uint32_t> primary_addrs;
+            for (std::size_t i = 0; i < todo.size(); ++i) {
+                if (chains[i].empty()) {
+                    primary_indices.push_back(i);
+                    primary_addrs.push_back(todo[i]);
+                }
+            }
+            if (!primary_addrs.empty()) {
+                auto resolved = query_addr2line(tool_, elf_, primary_addrs);
+                for (std::size_t k = 0; k < primary_indices.size(); ++k) {
+                    chains[primary_indices[k]] = std::move(resolved[k]);
                 }
             }
         }

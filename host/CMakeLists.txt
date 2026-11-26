@@ -75,6 +75,8 @@ target_link_libraries(test_os_ports PRIVATE malgrind_host)
 
 malgrind_add_test(host tests/test_host.cpp)
 target_link_libraries(test_host PRIVATE malgrind_host)
+target_compile_definitions(test_host PRIVATE MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_host fake_tool)
 
 malgrind_add_test(store tests/test_store.cpp)
 target_link_libraries(test_store PRIVATE malgrind_host)

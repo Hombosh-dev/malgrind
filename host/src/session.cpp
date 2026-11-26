@@ -1,6 +1,8 @@
 #include "session.hpp"
 
 #include "discover.hpp"
+#include "families/family.hpp"
+#include "os/paths.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -107,7 +109,11 @@ void Session::setup(const Frame& first) {
     const auto tool = find_addr2line(first.arch);
     if (!elf.empty() && tool.empty())
         notice(std::format("no addr2line found for {}: functions show as raw addresses", arch_name(first.arch)));
-    symbols_.emplace(elf, tool);
+    std::vector<ExtraElf> extras;
+    if (const Family* family = family_for_arch(first.arch)) {
+        extras = family->extra_symbol_files(os::home_dir(), first.arch, elf);
+    }
+    symbols_.emplace(elf, tool, std::move(extras));
     aggregator_.emplace(*symbols_);
     record([&](RunWriter& w) {
         w.set_target(first.arch, first.ncores, first.cpu_hz / 1e6);

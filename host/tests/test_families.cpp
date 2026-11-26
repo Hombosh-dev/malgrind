@@ -1,4 +1,5 @@
 // Chip family interface, registry, and ESP32 family implementation self-checks.
+#include "env.hpp"
 #include "families/esp32.hpp"
 #include "families/family.hpp"
 #include "os/paths.hpp"
@@ -80,6 +81,7 @@ void registry_lookups() {
 void base_family_defaults() {
     StubFamily stub;
     assert(!stub.is_agent_image("/no/such/image.bin"));
+    assert(stub.extra_symbol_files({}, Arch::Xtensa, {}).empty());
     assert(stub.family_hint_for_usb("303a", "1001").empty());
     assert(stub.usb_adapter_name("303a", "1001").empty());
 
@@ -232,6 +234,68 @@ void sdkconfig_merge_checks() {
     assert(!contains(merged, "DEFAULT and CUSTOM are one"));
 }
 
+void esp32_extra_symbol_files() {
+    ScopedEnv save_core("PLATFORMIO_CORE_DIR", std::nullopt);
+    ScopedEnv save_drive("SystemDrive", std::nullopt);
+
+    const auto root = fresh("malgrind_families_rom");
+    const auto home = root / "home";
+    const Family& esp = esp32_family();
+
+    // Missing package -> empty
+    fs::create_directories(home / ".platformio/packages");
+    assert(esp.extra_symbol_files(home, Arch::Xtensa, "/proj/.pio/build/esp32dev/firmware.elf").empty());
+
+    // Versioned subdir + revision selection + ignored invalid/deep files
+    const auto pkg = home / ".platformio/packages/tool-esp-rom-elfs@20241011";
+    const auto ver_dir = pkg / "20241011";
+    write(ver_dir / "esp32_rom.elf", "elf");
+    write(ver_dir / "esp32_rev300_rom.elf", "elf");
+    write(ver_dir / "esp32s3_rev0_rom.elf", "elf");
+    write(ver_dir / "esp32s2_rev0_rom.elf", "elf");
+    write(ver_dir / "esp32c3_rev3_rom.elf", "elf");
+    write(ver_dir / "esp32c3_rev101_rom.elf", "elf");
+    write(ver_dir / "esp32c6_rev0_rom.elf", "elf");
+    write(ver_dir / "esp32_rev999_rom.txt", "not elf");
+    write(ver_dir / "esp32_revabc_rom.elf", "bad rev");
+    write(ver_dir / "nested/esp32_rev999_rom.elf", "too deep");
+
+    assert(esp.extra_symbol_files(home, Arch::ArmV7M, "/proj/firmware.elf").empty());
+    assert(esp.extra_symbol_files(home, Arch::Host, "/proj/firmware.elf").empty());
+
+    // Xtensa: default esp32 picks highest revision (300 > 0)
+    const auto xt_default = esp.extra_symbol_files(home, Arch::Xtensa, "/proj/.pio/build/esp32dev/firmware.elf");
+    assert(xt_default.size() == 1);
+    assert(xt_default[0].start == 0x40000000u && xt_default[0].end == 0x4006ffffu);
+    assert(xt_default[0].elf == ver_dir / "esp32_rev300_rom.elf");
+
+    // Xtensa: case-insensitive esp32s3 / esp32s2 detection from firmware path
+    const auto xt_s3 = esp.extra_symbol_files(home, Arch::Xtensa, "/proj/.pio/malgrind/build/ESP32S3/firmware.elf");
+    assert(xt_s3.size() == 1 && xt_s3[0].elf == ver_dir / "esp32s3_rev0_rom.elf");
+    const auto xt_s2 = esp.extra_symbol_files(home, Arch::Xtensa, "/proj/.pio/build/esp32s2-saola/firmware.elf");
+    assert(xt_s2.size() == 1 && xt_s2[0].elf == ver_dir / "esp32s2_rev0_rom.elf");
+
+    // RiscV32: numeric revision comparison (101 > 3), esp32c6 detection, and default esp32c3
+    const auto rv_c3 = esp.extra_symbol_files(home, Arch::RiscV32, "/proj/.pio/build/esp32c3/firmware.elf");
+    assert(rv_c3.size() == 1);
+    assert(rv_c3[0].start == 0x40000000u && rv_c3[0].end == 0x4006ffffu);
+    assert(rv_c3[0].elf == ver_dir / "esp32c3_rev101_rom.elf");
+    const auto rv_c6 = esp.extra_symbol_files(home, Arch::RiscV32, "/proj/.pio/build/esp32c6/firmware.elf");
+    assert(rv_c6.size() == 1 && rv_c6[0].elf == ver_dir / "esp32c6_rev0_rom.elf");
+    const auto rv_default = esp.extra_symbol_files(home, Arch::RiscV32, {});
+    assert(rv_default.size() == 1 && rv_default[0].elf == ver_dir / "esp32c3_rev101_rom.elf");
+
+    // Flat package layout + <chip>_rom.elf (rev 0) via PLATFORMIO_CORE_DIR
+    const auto custom_core = root / "custom_pio";
+    const auto flat_pkg = custom_core / "packages/tool-esp-rom-elfs";
+    write(flat_pkg / "esp32p4_rom.elf", "elf");
+    ScopedEnv override_core("PLATFORMIO_CORE_DIR", os::to_utf8(custom_core));
+    const auto rv_p4 = esp.extra_symbol_files(home, Arch::RiscV32, "/proj/.pio/build/esp32p4/firmware.elf");
+    assert(rv_p4.size() == 1 && rv_p4[0].elf == flat_pkg / "esp32p4_rom.elf");
+
+    fs::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -242,5 +306,6 @@ int main() {
     agent_commands_preview_and_write();
     esptool_parsing_and_agent_image();
     sdkconfig_merge_checks();
+    esp32_extra_symbol_files();
     std::puts("families ok");
 }

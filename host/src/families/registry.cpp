@@ -21,6 +21,11 @@ void Family::write_flash(const ToolContext&, const std::string&, const std::file
 
 bool Family::is_agent_image(const std::filesystem::path&) const { return false; }
 
+std::vector<ExtraElf> Family::extra_symbol_files(const std::filesystem::path&, Arch,
+                                                   const std::filesystem::path&) const {
+    return {};
+}
+
 const std::vector<const Family*>& all_families() {
     static const std::vector<const Family*> families{&esp32_family()};
     return families;
