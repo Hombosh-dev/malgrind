@@ -5,7 +5,16 @@ export const defaultRate = 997;
 
 // Settings that change nothing: every field empty or 0.
 export function emptySettings(): RunSettings {
-  return { env: '', extra_args: '', build_flags: '', rate_hz: 0, elf: '', build_command: '', upload_command: '' };
+  return {
+    env: '',
+    extra_args: '',
+    build_flags: '',
+    rate_hz: 0,
+    check_memory: false,
+    elf: '',
+    build_command: '',
+    upload_command: '',
+  };
 }
 
 // The value of the rate field as a number: a whole number from the field, 0 for "use the default" (an empty field).
@@ -36,6 +45,7 @@ export function changes(s: RunSettings, detected: RunSettings): string[] {
   if (s.elf && s.elf !== detected.elf) out.push('firmware ELF');
   if (s.extra_args.trim()) out.push('extra arguments');
   if (s.build_flags.trim()) out.push('build flags');
+  if (!!s.check_memory !== !!detected.check_memory) out.push('memory checks');
   if (s.build_command.trim()) out.push('build command');
   if (s.upload_command.trim()) out.push('upload command');
   return out;

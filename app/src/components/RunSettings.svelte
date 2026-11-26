@@ -2,7 +2,7 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
   import { defaultRunName } from '../lib/format';
-  import { changes, defaultRate, hasOverrides, parseRate, rateProblem } from '../lib/settings';
+  import { changes, defaultRate, emptySettings, hasOverrides, parseRate, rateProblem } from '../lib/settings';
   import type { Sidecar } from '../lib/sidecar';
   import type { ProjectMeta, RunPlan, RunSettings } from '../lib/types';
 
@@ -25,6 +25,7 @@
   let runName = $state(untrack(() => defaultRunName(project.name)));
   let env = $state('');
   let rateText = $state('');
+  let checkMemory = $state(false);
   let elf = $state('');
   let extraArgs = $state('');
   let buildFlags = $state('');
@@ -46,6 +47,7 @@
     extra_args: extraArgs,
     build_flags: buildFlags,
     rate_hz: Number.isNaN(rate) || rate === detectedRate ? 0 : rate, // the default is sent as "not set"
+    check_memory: mode === 'new_run' && !!plan?.caps?.memcheck ? checkMemory : false,
     elf,
     build_command: buildCommand,
     upload_command: uploadCommand
@@ -54,6 +56,7 @@
   function fill(s: RunSettings, detected: RunSettings) {
     env = s.env || detected.env;
     rateText = String(s.rate_hz || detected.rate_hz || defaultRate);
+    checkMemory = Boolean(s.check_memory ?? detected.check_memory);
     elf = s.elf;
     extraArgs = s.extra_args;
     buildFlags = s.build_flags;
@@ -101,7 +104,7 @@
 
   function reset() {
     if (!plan) return;
-    fill({ env: '', extra_args: '', build_flags: '', rate_hz: 0, elf: '', build_command: '', upload_command: '' }, plan.detected);
+    fill(emptySettings(), plan.detected);
     if (mode === 'attach') elf = plan.detected.elf;
   }
 
@@ -143,6 +146,15 @@
       {#if mode === 'new_run'}
         <label>Extra pio arguments <input bind:value={extraArgs} placeholder="--disable-auto-clean" aria-label="Extra pio arguments" /></label>
         <label>Extra build flags <input bind:value={buildFlags} placeholder="-DMY_FLAG=1" aria-label="Extra build flags" /></label>
+      {/if}
+      {#if mode === 'new_run' && !!plan?.caps?.memcheck}
+        <div class="wide check-field">
+          <label class="check-row">
+            <input type="checkbox" bind:checked={checkMemory} />
+            <span>Check memory errors (slower, more RAM)</span>
+          </label>
+          <span class="hint">Traces heap allocations and frees, and checks for heap corruption and stack overflows. Adds per-allocation overhead and extra target RAM.</span>
+        </div>
       {/if}
     </div>
 
@@ -196,6 +208,9 @@
   textarea.custom { border-color: var(--accent); }
   .hint { font: 12px var(--font); color: var(--muted); }
   .hint.bad, .error { color: var(--danger); }
+  .check-field { display: flex; flex-direction: column; gap: 4px; }
+  .check-row { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; cursor: pointer; }
+  .check-row input[type='checkbox'] { width: auto; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
   .warning { margin: 10px 0 0; color: var(--accent); font-size: 13px; }
   .advanced { margin-top: 14px; }
   .advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }

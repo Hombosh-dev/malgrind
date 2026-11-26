@@ -3,14 +3,18 @@
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { bytesToBase64, defaultExportFilename, serializeFlameSvg, svgToPngBase64 } from '../lib/export';
   import { formatDuration } from '../lib/format';
+  import { clampLeakAgeS, memcheckProblemCount } from '../lib/memcheck';
   import { formatClockMs, hasCap } from '../lib/series';
   import type { Node as FlameNode } from '../lib/blend';
   import type { Sidecar } from '../lib/sidecar';
   import {
+    CAP_ALLOCS,
+    CAP_ERRORS,
     CAP_HEAP,
     CAP_SAMPLES,
     CAP_TASKS,
     type FunctionsData,
+    type MemcheckData,
     type MemoryData,
     type RunMeta,
     type RunStats,
@@ -18,6 +22,7 @@
   } from '../lib/types';
   import Flame from '../views/Flame.svelte';
   import Functions from '../views/Functions.svelte';
+  import Memcheck from '../views/Memcheck.svelte';
   import Memory from '../views/Memory.svelte';
   import Tasks from '../views/Tasks.svelte';
 
@@ -32,15 +37,17 @@
 
   // The parent remounts this screen for every run ({#key}), so the props are read once on purpose.
   let live = $state(untrack(() => startsLive));
-  let view = $state<'flame' | 'functions' | 'memory' | 'tasks'>('flame');
+  let view = $state<'flame' | 'functions' | 'memory' | 'tasks' | 'memcheck'>('flame');
   let core = $state<'all' | number>('all');
   let windowS = $state(untrack(() => startsLive) ? 10 : 0); // a stored run opens as the whole run
   let at = $state<number | null>(null); // null: the end of the run (following it, while live)
   let focus = $state('');
+  let leakAgeS = $state(30);
   let tree = $state<FlameNode | null>(null);
   let functions = $state<FunctionsData | null>(null);
   let memory = $state<MemoryData | null>(null);
   let tasks = $state<TasksData | null>(null);
+  let memcheck = $state<MemcheckData | null>(null);
   let stats = $state<RunStats>({});
   let targetCaps = $state<number | null>(null);
   let notices = $state<string[]>([]);
@@ -63,6 +70,7 @@
           ['Firmware ELF', run.settings.elf],
           ['Extra arguments', run.settings.extra_args],
           ['Build flags', run.settings.build_flags],
+          ['Memory checks', run.settings.check_memory ? 'enabled' : ''],
           ['Build command', run.settings.build_command],
           ['Upload command', run.settings.upload_command]
         ].filter(([, value]) => value) as [string, string][])
@@ -84,9 +92,15 @@
   );
   const showMemory = $derived(hasCap(caps, CAP_HEAP));
   const showTasks = $derived(hasCap(caps, CAP_TASKS));
+  const showMemcheck = $derived(hasCap(caps, CAP_ALLOCS) || hasCap(caps, CAP_ERRORS));
+  const memcheckProblems = $derived(showMemcheck ? memcheckProblemCount(memcheck) : 0);
 
   $effect(() => {
-    if ((view === 'memory' && !showMemory) || (view === 'tasks' && !showTasks)) {
+    if (
+      (view === 'memory' && !showMemory) ||
+      (view === 'tasks' && !showTasks) ||
+      (view === 'memcheck' && !showMemcheck)
+    ) {
       view = 'flame';
     }
   });
@@ -193,13 +207,46 @@
       if (destroyed) return;
       tree = snapshot.tree;
       stats = snapshot.stats ?? {};
+      const currentCaps =
+        snapshot.stats?.caps !== undefined || targetCaps !== null
+          ? (snapshot.stats?.caps ?? 0) | (targetCaps ?? 0)
+          : CAP_SAMPLES;
+      const memcheckAvailable = hasCap(currentCaps, CAP_ALLOCS) || hasCap(currentCaps, CAP_ERRORS);
+
+      const pending: Promise<void>[] = [];
       if (view === 'functions') {
-        functions = await sidecar.call<FunctionsData>('functions', { ...args, focus });
+        pending.push(
+          sidecar.call<FunctionsData>('functions', { ...args, focus }).then((data) => {
+            if (!destroyed) functions = data;
+          }),
+        );
       } else if (view === 'memory') {
-        memory = await sidecar.call<MemoryData>('memory', timeArgs);
+        pending.push(
+          sidecar.call<MemoryData>('memory', timeArgs).then((data) => {
+            if (!destroyed) memory = data;
+          }),
+        );
       } else if (view === 'tasks') {
-        tasks = await sidecar.call<TasksData>('tasks', timeArgs);
+        pending.push(
+          sidecar.call<TasksData>('tasks', timeArgs).then((data) => {
+            if (!destroyed) tasks = data;
+          }),
+        );
       }
+      if (memcheckAvailable) {
+        const mcArgs: Record<string, unknown> = {
+          ...(at !== null ? { at_ms: at } : {}),
+          leak_age_s: clampLeakAgeS(leakAgeS),
+        };
+        pending.push(
+          sidecar.call<MemcheckData>('memcheck', mcArgs).then((data) => {
+            if (!destroyed) memcheck = data;
+          }),
+        );
+      } else {
+        memcheck = null;
+      }
+      await Promise.all(pending);
       if (destroyed) return;
       error = '';
     } catch (e) {
@@ -215,7 +262,7 @@
 
   // refresh at once when anything the picture depends on changes ...
   $effect(() => {
-    void [view, core, windowS, at, focus];
+    void [view, core, windowS, at, focus, leakAgeS];
     poll(true);
   });
   // ... and twice a second while recording
@@ -228,7 +275,13 @@
   $effect(() => {
     const offs = [
       sidecar.on('target', (e) => {
-        if (typeof e?.caps === 'number') targetCaps = e.caps;
+        if (typeof e?.caps === 'number') {
+          const hadMemcheck = hasCap(targetCaps ?? undefined, CAP_ALLOCS) || hasCap(targetCaps ?? undefined, CAP_ERRORS);
+          targetCaps = e.caps;
+          if (!hadMemcheck && (hasCap(e.caps, CAP_ALLOCS) || hasCap(e.caps, CAP_ERRORS))) {
+            void poll(true);
+          }
+        }
       }),
       sidecar.on('notice', (e) => (notices = [...notices, e.text])),
       sidecar.on('ended', () => (live = false)),
@@ -341,6 +394,14 @@
       {#if showTasks}
         <button class:on={view === 'tasks'} onclick={() => (view = 'tasks')}>Tasks</button>
       {/if}
+      {#if showMemcheck}
+        <button class="nav-memcheck" class:on={view === 'memcheck'} onclick={() => (view = 'memcheck')}>
+          <span>Memcheck</span>
+          {#if memcheckProblems > 0}
+            <span class="nav-badge" aria-label="{memcheckProblems} memory {memcheckProblems === 1 ? 'problem' : 'problems'}">{memcheckProblems}</span>
+          {/if}
+        </button>
+      {/if}
       <div class="filters">
         <label>Core
           <select bind:value={core}><option value="all">all</option>{#each cores as c}<option value={c}>{c}</option>{/each}</select>
@@ -362,8 +423,10 @@
         <Functions data={functions} {focus} onFocus={(f) => (focus = f)} />
       {:else if view === 'memory'}
         <Memory data={memory} />
-      {:else}
+      {:else if view === 'tasks'}
         <Tasks data={tasks} />
+      {:else}
+        <Memcheck data={memcheck} {leakAgeS} onLeakAgeChange={(age) => (leakAgeS = clampLeakAgeS(age))} />
       {/if}
     </main>
   </div>
@@ -410,6 +473,13 @@
   nav { width: 168px; display: flex; flex-direction: column; border-right: 1px solid var(--line); padding: 8px 0; }
   nav > button { text-align: left; padding: 9px 16px; background: none; border: 0; border-left: 3px solid transparent; color: var(--muted); }
   nav > button.on { color: var(--fg); background: var(--panel); border-left-color: var(--accent); }
+  .nav-memcheck { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .nav-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 11px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
   .filters { margin-top: 18px; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: var(--muted); }
   .filters select { width: 100%; margin-top: 3px; }
   .remove { margin-top: auto; padding: 10px 16px; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--danger); }

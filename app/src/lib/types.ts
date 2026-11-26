@@ -4,6 +4,7 @@ export interface RunSettings {
   extra_args: string; // words appended to both pio commands
   build_flags: string; // PLATFORMIO_BUILD_FLAGS
   rate_hz: number; // 0: the agent's default
+  check_memory?: boolean; // opt-in memory error/leak hooks (slower, uses extra RAM)
   elf: string;
   build_command: string; // replaces the detected build command line
   upload_command: string; // replaces the detected upload command line
@@ -13,6 +14,7 @@ export interface RunSettings {
 export interface RunPlan {
   detected: RunSettings;
   last: RunSettings | null; // what the project used last time
+  caps?: { memcheck?: boolean };
   envs?: string[];
   elf_hint?: string; // where the build puts its ELF
   detected_commands?: { build: string; upload: string };
@@ -220,6 +222,35 @@ export interface TaskRow {
 
 export interface TasksData {
   tasks: TaskRow[];
+}
+
+export type LeakKind = 'definitely' | 'possibly';
+
+export interface LeakGroup {
+  kind: LeakKind;
+  stack: string[];
+  count: number;
+  bytes: number;
+  oldest_ms: number;
+}
+
+export type MemoryErrorKind = 'heap_corrupt' | 'stack_overflow' | 'alloc_failed' | 'unknown';
+
+export interface MemoryErrorRow {
+  t_ms: number;
+  code: number;
+  kind: MemoryErrorKind;
+  arg: number;
+  name: string;
+  stack: string[];
+}
+
+export interface MemcheckData {
+  leaks: LeakGroup[];
+  errors: MemoryErrorRow[];
+  dropped: number;
+  live_bytes: number;
+  live_allocs: number;
 }
 
 export interface SeriesLine {
