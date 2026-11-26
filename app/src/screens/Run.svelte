@@ -112,7 +112,10 @@
 
   async function save(fields: { name?: string; notes?: string }) {
     try {
-      await sidecar.call('update', { run: run.id, ...fields });
+      const updated = await sidecar.call<RunMeta>('update', { run: run.id, ...fields });
+      Object.assign(run, updated);
+      if (fields.name !== undefined && name === fields.name) name = updated.name;
+      if (fields.notes !== undefined && notes === fields.notes) notes = updated.notes;
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
     }
@@ -133,7 +136,9 @@
       <span class="stat muted">{stats.samples_per_s ?? '–'} samples/s · {stats.dropped ?? 0} dropped · {stats.overhead_pct == null ? '–' : stats.overhead_pct + ' %'} overhead</span>
     {/if}
     {#if run.settings}<button class="btn ghost small" onclick={() => (showSettings = !showSettings)}>Settings</button>{/if}
-    <button class="btn ghost small" onclick={() => (showNotes = !showNotes)}>Notes</button>
+    <button class="btn ghost small notes-btn" class:active={showNotes} onclick={() => (showNotes = !showNotes)} aria-pressed={showNotes}>
+      Notes{#if notes.trim().length > 0}<span class="notes-dot" title="This run has notes" aria-hidden="true"></span>{/if}
+    </button>
     <button class="btn small" onclick={close}>{live ? 'Stop' : 'Close'}</button>
   </header>
 
@@ -199,6 +204,9 @@
   .stat { font-size: 12px; font-variant-numeric: tabular-nums; }
   .used { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 16px; font-size: 12.5px; background: var(--panel); border-bottom: 1px solid var(--line); }
   .used code { font-family: var(--mono); font-size: 12px; }
+  .notes-btn { display: inline-flex; align-items: center; gap: 6px; }
+  .notes-btn.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .notes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
   .notes { margin: 0; width: 100%; min-height: 70px; padding: 10px 16px; font: inherit; color: var(--fg); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); resize: vertical; }
   .notice { display: flex; justify-content: space-between; padding: 8px 16px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-bottom: 1px solid var(--line); font-size: 13px; }
   .notice.bad { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); }

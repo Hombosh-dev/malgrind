@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import RunEditor from '../components/RunEditor.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
   import { formatDuration, formatWhen } from '../lib/format';
@@ -23,6 +24,7 @@
   let deleting = $state<string | null>(null); // id waiting for "yes, delete"
   let renaming = $state<string | null>(null);
   let draft = $state('');
+  let editingRun = $state<string | null>(null);
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -44,12 +46,12 @@
     }
   }
 
-  async function commitRename(kind: 'project' | 'run', item: ProjectMeta | RunMeta) {
+  async function commitRename(project: ProjectMeta) {
     const name = draft.trim();
     renaming = null;
-    if (!name || name === item.name) return;
+    if (!name || name === project.name) return;
     try {
-      Object.assign(item, await sidecar.call(kind === 'project' ? 'project_update' : 'update', { [kind === 'project' ? 'project' : 'run']: item.id, name }));
+      Object.assign(project, await sidecar.call<ProjectMeta>('project_update', { project: project.id, name }));
     } catch (e) {
       fail(e);
     }
@@ -107,8 +109,8 @@
           <li>
             {#if renaming === project.id}
               <input class="rename" bind:value={draft} use:focusAndSelect aria-label="Project name"
-                onkeydown={(e) => (e.key === 'Enter' ? commitRename('project', project) : e.key === 'Escape' ? (renaming = null) : null)}
-                onblur={() => commitRename('project', project)} />
+                onkeydown={(e) => (e.key === 'Enter' ? commitRename(project) : e.key === 'Escape' ? (renaming = null) : null)}
+                onblur={() => commitRename(project)} />
             {:else}
               <button class="row" onclick={() => onProject(project.id)}>
                 <b class="name">{project.name}</b>
@@ -131,19 +133,28 @@
       {#if runs.length === 0}<p class="empty muted">No runs yet.</p>{/if}
       <ul class="rows">
         {#each runs as run (run.id)}
-          <li>
-            {#if renaming === run.id}
-              <input class="rename" bind:value={draft} use:focusAndSelect aria-label="Run name"
-                onkeydown={(e) => (e.key === 'Enter' ? commitRename('run', run) : e.key === 'Escape' ? (renaming = null) : null)}
-                onblur={() => commitRename('run', run)} />
+          <li class:editing={editingRun === run.id}>
+            {#if editingRun === run.id}
+              <RunEditor
+                {sidecar}
+                {run}
+                onSave={(updated) => Object.assign(run, updated)}
+                onClose={() => (editingRun = null)}
+                onError={(msg) => (error = msg)}
+              />
             {:else}
               <button class="row" onclick={() => openRun(run)}>
-                <b class="name">{run.name || run.id}</b>
+                <span class="name-wrap">
+                  <b class="name">{run.name || run.id}</b>
+                  {#if run.notes?.trim()}
+                    <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
+                  {/if}
+                </span>
                 <span class="muted when">{formatWhen(run.started)}</span>
                 <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
                 <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
               </button>
-              <button class="icon" title="Rename" onclick={() => ((renaming = run.id), (draft = run.name))}>✎</button>
+              <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>✎</button>
               {#if deleting === run.id}
                 <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
                 <button class="link" onclick={() => (deleting = null)}>No</button>
@@ -175,9 +186,13 @@
   .count { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--line); margin-left: 4px; }
   .rows { list-style: none; margin: 0; padding: 0; }
   li { display: flex; align-items: center; gap: 6px; padding: 0 12px 0 0; border-bottom: 1px solid var(--line); }
-  .row { flex: 1; display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: none; border: 0; text-align: left; }
+  li.editing { padding: 0; }
+  .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
-  .name { flex: 1; }
+  .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name-wrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .name-wrap .name { flex: 0 1 auto; }
+  .note-preview { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .when { font-size: 12px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--line); }
   .tag.warn { color: var(--danger); }

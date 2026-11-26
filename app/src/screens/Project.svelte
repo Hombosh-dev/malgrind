@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import RunEditor from '../components/RunEditor.svelte';
   import TopBar from '../components/TopBar.svelte';
   import { formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
@@ -20,6 +21,7 @@
   let error = $state('');
   let renaming = $state(false);
   let draft = $state('');
+  let editingRun = $state<string | null>(null);
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -106,12 +108,30 @@
       {:else}
         <ul>
           {#each runs as run (run.id)}
-            <li><button class="row" onclick={() => open(run)}>
-              <b class="name">{run.name || run.id}</b>
-              <span class="muted when">{formatWhen(run.started)}</span>
-              <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
-              <span class="tag">{formatDuration(run.duration_ms)}</span>
-            </button></li>
+            <li>
+              {#if editingRun === run.id}
+                <RunEditor
+                  {sidecar}
+                  {run}
+                  onSave={(updated) => Object.assign(run, updated)}
+                  onClose={() => (editingRun = null)}
+                  onError={(msg) => (error = msg)}
+                />
+              {:else}
+                <button class="row" onclick={() => open(run)}>
+                  <span class="name-wrap">
+                    <b class="name">{run.name || run.id}</b>
+                    {#if run.notes?.trim()}
+                      <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
+                    {/if}
+                  </span>
+                  <span class="muted when">{formatWhen(run.started)}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
+                </button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => (editingRun = run.id)}>✎</button>
+              {/if}
+            </li>
           {/each}
         </ul>
       {/if}
@@ -134,10 +154,12 @@
   .trust .btn { margin-top: 10px; }
   .env { display: block; margin-top: 14px; }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  li { border-bottom: 1px solid var(--line); }
-  .row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 6px; background: none; border: 0; text-align: left; }
+  li { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
+  .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 6px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
-  .name { flex: 1; }
+  .name-wrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note-preview { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .when { font-size: 12px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--line); margin-right: 6px; }
   .count { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--line); }
