@@ -38,9 +38,10 @@ namespace malgrind::host {
 
 inline constexpr unsigned kEsp32AgentBaud = 921600;
 
-// Stored in the agent's rodata (agent/esp32/malgrind/autostart.cpp). A flash image that contains it is our own build,
-// and backing that up would only save the agent as if it were the user's firmware.
+// Stored in the agent's rodata (agent/esp32/malgrind/autostart.cpp). A flash image that contains either marker is
+// our own build, and backing that up would only save the agent as if it were the user's firmware.
 inline constexpr std::string_view kEsp32AgentMarker = "malgrind-agent-v1";
+inline constexpr std::string_view kEsp32AgentMarkerV2 = "malgrind-agent-v2";
 
 [[nodiscard]] const Family& esp32_family();
 

@@ -209,14 +209,28 @@ void esptool_parsing_and_agent_image() {
     assert(!parse_chip("no chip here") && !parse_chip("Chip is   \n"));
 
     const auto root = fresh("malgrind_families_img");
-    write(root / "agent.bin", std::string("\xe9\x03junk") + std::string(kEsp32AgentMarker) + "\0more");
+    write(root / "agent_v1.bin", std::string("\xe9\x03junk") + std::string(kEsp32AgentMarker) + "\0more");
+    write(root / "agent_v2.bin", std::string("\xe9\x03junk") + std::string(kEsp32AgentMarkerV2) + "\0more");
     write(root / "plain.bin", "\xe9\x03 only the user's firmware here");
-    std::string big(70000, 'a');
-    big.insert(65536 - 5, kEsp32AgentMarker); // straddles a 64 KiB read boundary
-    write(root / "big.bin", big);
+    write(root / "other_marker.bin", "\xe9\x03junkmalgrind-agent-v3\0more");
+    std::string big_v1(70000, 'a');
+    big_v1.insert(65536 - 5, kEsp32AgentMarker); // straddles a 64 KiB read boundary
+    write(root / "big_v1.bin", big_v1);
+    std::string big_v2(70000, 'b');
+    big_v2.insert(65536 - 5, kEsp32AgentMarkerV2); // straddles a 64 KiB read boundary
+    write(root / "big_v2.bin", big_v2);
+    std::string big_v2_tail(70000, 'c');
+    big_v2_tail.insert(65536 - (kEsp32AgentMarkerV2.size() - 1), kEsp32AgentMarkerV2); // 1 byte past boundary
+    write(root / "big_v2_tail.bin", big_v2_tail);
 
     const Family& esp = esp32_family();
-    assert(esp.is_agent_image(root / "agent.bin") && !esp.is_agent_image(root / "plain.bin") && esp.is_agent_image(root / "big.bin"));
+    assert(esp.is_agent_image(root / "agent_v1.bin"));
+    assert(esp.is_agent_image(root / "agent_v2.bin"));
+    assert(esp.is_agent_image(root / "big_v1.bin"));
+    assert(esp.is_agent_image(root / "big_v2.bin"));
+    assert(esp.is_agent_image(root / "big_v2_tail.bin"));
+    assert(!esp.is_agent_image(root / "plain.bin"));
+    assert(!esp.is_agent_image(root / "other_marker.bin"));
     assert(!esp.is_agent_image(root / "missing.bin"));
     fs::remove_all(root);
 }

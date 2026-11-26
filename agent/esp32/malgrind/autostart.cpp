@@ -1,5 +1,5 @@
 // Starts the profiler by itself, so the user's firmware needs no malgrind call.
-// A constructor runs before the scheduler, where malgrind_start() cannot wait, so it only creates a one-shot task.
+// A constructor runs before the scheduler, where malgrind_start_agent() cannot wait, so it only creates a one-shot task.
 #include "malgrind/platform/esp32.hpp"
 
 #include "esp_log.h"
@@ -16,14 +16,25 @@
 #endif
 #endif
 
-// Lets the host tell a flash image holding this agent from the user's own firmware (host/src/backup.hpp, kAgentMarker):
-// a board that already runs malgrind must not have its agent saved as if it were the original.
-extern "C" const char malgrind_agent_marker[] = "malgrind-agent-v1";
+// Whether sampling begins immediately on boot or the agent sleeps emitting HELLO beacons until a START command arrives.
+#ifndef MALGRIND_START_SAMPLING
+#if defined(CONFIG_MALGRIND_START_SAMPLING) && CONFIG_MALGRIND_START_SAMPLING
+#define MALGRIND_START_SAMPLING 1
+#else
+#define MALGRIND_START_SAMPLING 0
+#endif
+#endif
+
+// Lets the host tell a flash image holding this agent from the user's own firmware (host/src/families/esp32.hpp,
+// kEsp32AgentMarker / kEsp32AgentMarkerV2): a board that already runs malgrind must not have its agent saved as if it
+// were the original.
+extern "C" const char malgrind_agent_marker[] = "malgrind-agent-v2";
 
 namespace {
 
 void start_task(void*) {
-    if (!malgrind_start(MALGRIND_RATE_HZ)) ESP_LOGE("malgrind", "agent failed to start");
+    constexpr bool start_sampling = (MALGRIND_START_SAMPLING) != 0;
+    if (!malgrind_start_agent(MALGRIND_RATE_HZ, start_sampling)) ESP_LOGE("malgrind", "agent failed to start");
     vTaskDelete(nullptr);
 }
 

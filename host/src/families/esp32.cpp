@@ -5,6 +5,7 @@
 #include "os/tools.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <format>
@@ -217,12 +218,16 @@ public:
         std::ifstream in(file, std::ios::binary);
         if (!in) return false;
         // search in blocks; the last bytes of a block are kept so a marker split between two blocks is still found
+        constexpr std::array markers{kEsp32AgentMarker, kEsp32AgentMarkerV2};
+        constexpr std::size_t kKeep = std::max(kEsp32AgentMarker.size(), kEsp32AgentMarkerV2.size()) - 1;
         std::vector<char> buf(1 << 16);
         std::string window;
         while (in.read(buf.data(), static_cast<std::streamsize>(buf.size())) || in.gcount() > 0) {
             window.append(buf.data(), static_cast<std::size_t>(in.gcount()));
-            if (window.find(kEsp32AgentMarker) != std::string::npos) return true;
-            if (window.size() >= kEsp32AgentMarker.size()) window.erase(0, window.size() - (kEsp32AgentMarker.size() - 1));
+            for (const std::string_view marker : markers) {
+                if (window.find(marker) != std::string::npos) return true;
+            }
+            if (window.size() > kKeep) window.erase(0, window.size() - kKeep);
         }
         return false;
     }

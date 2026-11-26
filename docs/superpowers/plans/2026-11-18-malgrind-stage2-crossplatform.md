@@ -867,7 +867,7 @@ host `wire.hpp/.cpp` (`encode_command(Command) -> std::vector<uint8_t>`), tests 
 - Kconfig `MALGRIND_START_SAMPLING` (default **y** for compatibility with hosts ≤ 0.4: an old host expects samples at once).
 - Change `kAgentMarker`/`malgrind_agent_marker` to `"malgrind-agent-v2"` and make `is_agent_image` accept both.
 - Hardware check (human): HELLO visible while sleeping; start/stop through a scratch script; overhead while sleeping ≈ 0 (`iterations/s` A/B as in README).
-- [ ] Commit `feat(agent/esp32): sleep, hello beacon, start and stop`.
+- [x] Commit `feat(agent/esp32): sleep, hello beacon, start and stop`.
 
 ### T6.4 ESP32 agent: heap and task stats 🔌🟡
 
