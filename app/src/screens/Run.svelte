@@ -1,13 +1,25 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { bytesToBase64, defaultExportFilename, serializeFlameSvg, svgToPngBase64 } from '../lib/export';
   import { formatDuration } from '../lib/format';
+  import { formatClockMs, hasCap } from '../lib/series';
   import type { Node as FlameNode } from '../lib/blend';
   import type { Sidecar } from '../lib/sidecar';
-  import type { RunMeta } from '../lib/types';
+  import {
+    CAP_HEAP,
+    CAP_SAMPLES,
+    CAP_TASKS,
+    type FunctionsData,
+    type MemoryData,
+    type RunMeta,
+    type RunStats,
+    type TasksData,
+  } from '../lib/types';
   import Flame from '../views/Flame.svelte';
-  import Functions, { type FunctionsData } from '../views/Functions.svelte';
+  import Functions from '../views/Functions.svelte';
+  import Memory from '../views/Memory.svelte';
+  import Tasks from '../views/Tasks.svelte';
 
   interface Props {
     sidecar: Sidecar;
@@ -18,27 +30,19 @@
   }
   let { sidecar, run, live: startsLive, onClose, onRemoveAgent }: Props = $props();
 
-  interface Stats {
-    arch?: string;
-    ncores?: number;
-    cpu_mhz?: number;
-    rate_hz?: number;
-    samples_per_s?: number;
-    dropped?: number;
-    overhead_pct?: number | null;
-    duration_ms?: number;
-  }
-
   // The parent remounts this screen for every run ({#key}), so the props are read once on purpose.
   let live = $state(untrack(() => startsLive));
-  let view = $state<'flame' | 'functions'>('flame');
+  let view = $state<'flame' | 'functions' | 'memory' | 'tasks'>('flame');
   let core = $state<'all' | number>('all');
   let windowS = $state(untrack(() => startsLive) ? 10 : 0); // a stored run opens as the whole run
   let at = $state<number | null>(null); // null: the end of the run (following it, while live)
   let focus = $state('');
   let tree = $state<FlameNode | null>(null);
   let functions = $state<FunctionsData | null>(null);
-  let stats = $state<Stats>({});
+  let memory = $state<MemoryData | null>(null);
+  let tasks = $state<TasksData | null>(null);
+  let stats = $state<RunStats>({});
+  let targetCaps = $state<number | null>(null);
   let notices = $state<string[]>([]);
   let name = $state(untrack(() => run.name));
   let notes = $state(untrack(() => run.notes));
@@ -66,6 +70,26 @@
   );
   let error = $state('');
   let busy = false;
+  let dirty = false;
+  let destroyed = false;
+
+  onMount(() => () => {
+    destroyed = true;
+  });
+
+  const caps = $derived(
+    stats.caps !== undefined || targetCaps !== null
+      ? (stats.caps ?? 0) | (targetCaps ?? 0)
+      : CAP_SAMPLES,
+  );
+  const showMemory = $derived(hasCap(caps, CAP_HEAP));
+  const showTasks = $derived(hasCap(caps, CAP_TASKS));
+
+  $effect(() => {
+    if ((view === 'memory' && !showMemory) || (view === 'tasks' && !showTasks)) {
+      view = 'flame';
+    }
+  });
 
   const duration = $derived(stats.duration_ms ?? run.duration_ms);
   const position = $derived(at ?? duration);
@@ -153,38 +177,59 @@
     }
   }
 
-  async function poll() {
-    if (busy) return;
+  async function poll(force = false) {
+    if (destroyed) return;
+    if (busy) {
+      if (force) dirty = true;
+      return;
+    }
     busy = true;
     try {
-      const args: Record<string, unknown> = { window_s: windowS };
+      const timeArgs: Record<string, unknown> = { window_s: windowS };
+      if (at !== null) timeArgs.at_ms = at;
+      const args: Record<string, unknown> = { ...timeArgs };
       if (core !== 'all') args.core = core;
-      if (at !== null) args.at_ms = at;
-      const snapshot = await sidecar.call<{ tree: FlameNode | null; stats: Stats }>('snapshot', args);
+      const snapshot = await sidecar.call<{ tree: FlameNode | null; stats: RunStats }>('snapshot', args);
+      if (destroyed) return;
       tree = snapshot.tree;
       stats = snapshot.stats ?? {};
-      if (view === 'functions') functions = await sidecar.call<FunctionsData>('functions', { ...args, focus });
+      if (view === 'functions') {
+        functions = await sidecar.call<FunctionsData>('functions', { ...args, focus });
+      } else if (view === 'memory') {
+        memory = await sidecar.call<MemoryData>('memory', timeArgs);
+      } else if (view === 'tasks') {
+        tasks = await sidecar.call<TasksData>('tasks', timeArgs);
+      }
+      if (destroyed) return;
       error = '';
     } catch (e) {
-      error = String(e instanceof Error ? e.message : e);
+      if (!destroyed) error = String(e instanceof Error ? e.message : e);
+    } finally {
+      busy = false;
+      if (dirty && !destroyed) {
+        dirty = false;
+        void poll(false);
+      }
     }
-    busy = false;
   }
 
   // refresh at once when anything the picture depends on changes ...
   $effect(() => {
     void [view, core, windowS, at, focus];
-    poll();
+    poll(true);
   });
   // ... and twice a second while recording
   $effect(() => {
     if (!live) return;
-    const timer = setInterval(poll, 500);
+    const timer = setInterval(() => poll(false), 500);
     return () => clearInterval(timer);
   });
 
   $effect(() => {
     const offs = [
+      sidecar.on('target', (e) => {
+        if (typeof e?.caps === 'number') targetCaps = e.caps;
+      }),
       sidecar.on('notice', (e) => (notices = [...notices, e.text])),
       sidecar.on('ended', () => (live = false)),
     ];
@@ -211,7 +256,6 @@
     }
   }
 
-  const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const cores = $derived(Array.from({ length: stats.ncores ?? run.ncores }, (_, i) => i));
 </script>
 
@@ -291,6 +335,12 @@
     <nav>
       <button class:on={view === 'flame'} onclick={() => (view = 'flame')}>Flamegraph</button>
       <button class:on={view === 'functions'} onclick={() => (view = 'functions')}>Functions</button>
+      {#if showMemory}
+        <button class:on={view === 'memory'} onclick={() => (view = 'memory')}>Memory</button>
+      {/if}
+      {#if showTasks}
+        <button class:on={view === 'tasks'} onclick={() => (view = 'tasks')}>Tasks</button>
+      {/if}
       <div class="filters">
         <label>Core
           <select bind:value={core}><option value="all">all</option>{#each cores as c}<option value={c}>{c}</option>{/each}</select>
@@ -308,16 +358,20 @@
     <main>
       {#if view === 'flame'}
         <Flame bind:this={flame} {tree} {resetKey} />
-      {:else}
+      {:else if view === 'functions'}
         <Functions data={functions} {focus} onFocus={(f) => (focus = f)} />
+      {:else if view === 'memory'}
+        <Memory data={memory} />
+      {:else}
+        <Tasks data={tasks} />
       {/if}
     </main>
   </div>
 
   <footer>
-    <span class="clock">{clock(position)}</span>
+    <span class="clock">{formatClockMs(position)}</span>
     <input type="range" min="0" max={Math.max(duration, 1)} value={position} oninput={(e) => (at = Number(e.currentTarget.value))} aria-label="Time in the run" />
-    <span class="clock">{clock(duration)}</span>
+    <span class="clock">{formatClockMs(duration)}</span>
     {#if at !== null}<button class="btn ghost small" onclick={() => (at = null)}>{live ? 'Back to live' : 'To the end'}</button>{/if}
   </footer>
 </div>

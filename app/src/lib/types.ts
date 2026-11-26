@@ -154,3 +154,76 @@ export interface DiffResult {
   functions: DiffFunction[];
   tree: DiffNode;
 }
+
+// Agent v2 capability bits (core/include/malgrind/profiler.hpp).
+export const CAP_SAMPLES = 1;
+export const CAP_HEAP = 2;
+export const CAP_TASKS = 4;
+export const CAP_ALLOCS = 8;
+export const CAP_ERRORS = 16;
+
+export interface RunStats {
+  arch?: string;
+  ncores?: number;
+  cpu_mhz?: number;
+  rate_hz?: number;
+  samples_per_s?: number;
+  dropped?: number;
+  overhead_pct?: number | null;
+  isr_max_cycles?: number;
+  duration_ms?: number;
+  caps?: number;
+  agent_state?: number;
+}
+
+export interface TargetEvent {
+  arch: string;
+  ncores: number;
+  cpu_mhz: number;
+  elf: string | null;
+  caps?: number;
+  state?: number;
+  agent_ver?: number;
+}
+
+export interface FunctionsData {
+  total: number;
+  functions: { name: string; self: number; total: number }[];
+  callers: { name: string; count: number }[];
+  callees: { name: string; count: number }[];
+  series?: [number, number][];
+}
+
+// [t_ms, free, min_free, largest, total]
+export type HeapSamplePoint = [number, number, number, number, number];
+
+export interface HeapRegionSeries {
+  region: number;
+  name: string;
+  series: HeapSamplePoint[];
+}
+
+export interface MemoryData {
+  regions: HeapRegionSeries[];
+}
+
+export interface TaskRow {
+  handle: number;
+  name: string;
+  prio: number;
+  core: number | null;
+  state: number;
+  cpu_pct: number;
+  stack_hwm: number;
+  warn: boolean;
+}
+
+export interface TasksData {
+  tasks: TaskRow[];
+}
+
+export interface SeriesLine {
+  label: string;
+  color: string;
+  points: readonly [number, number][];
+}

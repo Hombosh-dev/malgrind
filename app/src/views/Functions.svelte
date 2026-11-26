@@ -1,10 +1,8 @@
 <script lang="ts">
-  export interface FunctionsData {
-    total: number;
-    functions: { name: string; self: number; total: number }[];
-    callers: { name: string; count: number }[];
-    callees: { name: string; count: number }[];
-  }
+  import Series from '../components/Series.svelte';
+  import type { FunctionsData } from '../lib/types';
+
+  export type { FunctionsData };
 
   interface Props {
     data: FunctionsData | null;
@@ -15,11 +13,22 @@
 
   const percent = (n: number) => (data && data.total > 0 ? (100 * n) / data.total : 0);
   const shown = (n: number) => `${percent(n).toFixed(1)} %`;
+  const formatSamples = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 </script>
 
 {#if !data || data.total === 0}
   <p class="muted">No samples in this window.</p>
 {:else}
+  {#if focus && data.series && data.series.length > 0}
+    <div class="strip">
+      <Series
+        title={`Samples/s · ${focus}`}
+        height={110}
+        series={[{ label: 'Samples/s', color: 'var(--accent)', points: data.series }]}
+        formatY={formatSamples}
+      />
+    </div>
+  {/if}
   <div class="layout">
     <table>
       <thead><tr><th class="name">Function</th><th>Self</th><th>Inclusive</th></tr></thead>
@@ -53,6 +62,7 @@
 {/if}
 
 <style>
+  .strip { margin-bottom: 14px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: right; font-weight: 600; color: var(--muted); padding: 4px 8px; border-bottom: 1px solid var(--line); }

@@ -898,7 +898,7 @@ host `wire.hpp/.cpp` (`encode_command(Command) -> std::vector<uint8_t>`), tests 
 
 - Memory: one chart per region (free, min free, largest block); Tasks: sortable table with a red stack warning.
 - Functions view: a small samples-per-second strip for the selected function (engine: add `series` to the `functions` reply as `[[t_ms, samples]]` in T6.5 if not already).
-- [ ] Commit `feat(app): Memory and Tasks views`.
+- [x] Commit `feat(app): Memory and Tasks views`.
 
 ---
 
