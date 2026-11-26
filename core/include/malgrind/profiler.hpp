@@ -29,7 +29,7 @@
 //     kind 4 ALLOCS:   seq u16 | n u16 |
 //                      { op u8 (0 alloc, 1 free), t_ms u32, addr u32, size u32 (0 for free),
 //                        depth u8, pc u32[depth] } * n
-//     kind 5 ERROR:    seq u16 | t_ms u32 | code u8 (1 heap corrupt, 2 stack overflow, 3 alloc failed) |
+//     kind 5 ERROR:    seq u16 | t_ms u32 | code u8 (1 heap corrupt, 2 stack overflow, 3 alloc failed, 4 events dropped) |
 //                      arg u32 | name char[16] | depth u8 | pc u32[depth]
 //     kind 16 COMMAND: (host -> agent) cmd u8 (1 start, 2 stop, 3 hello now) | rate_hz u16 | analyses u32
 //
@@ -84,6 +84,7 @@ inline constexpr std::uint8_t kHeapTotal = 255;
 inline constexpr std::uint8_t kErrHeapCorrupt = 1;
 inline constexpr std::uint8_t kErrStackOverflow = 2;
 inline constexpr std::uint8_t kErrAllocFailed = 3;
+inline constexpr std::uint8_t kErrEventsDropped = 4;
 
 inline constexpr std::uint8_t kCmdStart = 1;
 inline constexpr std::uint8_t kCmdStop = 2;

@@ -1,5 +1,6 @@
-// Self-check for the core: stack merging, table overflow, frame encoding, CRC, command parsing.
+// Self-check for the core: stack merging, table overflow, frame encoding, CRC, command parsing, event queue.
 #include "malgrind/command.hpp"
+#include "malgrind/events.hpp"
 #include "malgrind/profiler.hpp"
 
 #include <array>
@@ -377,6 +378,211 @@ int main() {
             for (std::size_t i = 0; i + 1 < f_stop.size(); ++i) assert(!parser.feed(f_stop[i], out));
             assert(parser.feed(f_stop.back(), out));
             assert(out.cmd == kCmdStop && out.rate_hz == 0 && out.analyses == 0);
+        }
+    }
+
+    // EventQueue: FIFO wraparound, overflow counting, non-destructive drain, clear
+    {
+        static_assert(kErrEventsDropped == 4);
+
+        // Default-sized queue sanity check
+        {
+            EventQueue<> def_q;
+            assert(def_q.alloc_count() == 0 && def_q.error_count() == 0);
+            assert(def_q.dropped_allocs() == 0 && def_q.dropped_errors() == 0);
+            assert(def_q.take_dropped() == 0);
+        }
+
+        auto make_alloc = [](std::uint32_t id) {
+            AllocEvent ev{};
+            ev.op = static_cast<std::uint8_t>(id & 1u);
+            ev.t_ms = 1000u + id;
+            ev.addr = 0x3f800000u + id * 16u;
+            ev.size = ev.op == 0 ? (64u + id) : 0u;
+            ev.depth = 2;
+            ev.pcs[0] = 0x400d0000u + id;
+            ev.pcs[1] = 0x400d1000u + id;
+            return ev;
+        };
+
+        auto make_err = [](std::uint32_t id) {
+            ErrorEvent ev{};
+            ev.seq = 99;
+            ev.t_ms = 5000u + id;
+            ev.code = kErrEventsDropped;
+            ev.arg = id;
+            std::memcpy(ev.name, "task", 5);
+            ev.depth = 1;
+            ev.pcs[0] = 0x400e0000u + id;
+            return ev;
+        };
+
+        // Ring wraparound + overflow for both allocs and errors
+        {
+            EventQueue<4, 3> q;
+
+            assert(q.push_alloc(make_alloc(1)));
+            assert(q.push_alloc(make_alloc(2)));
+            assert(q.push_alloc(make_alloc(3)));
+            assert(q.alloc_count() == 3);
+
+            AllocEvent popped[4]{};
+            assert(q.pop_allocs(nullptr, 2) == 0);
+            assert(q.pop_allocs(popped, 0) == 0);
+            assert(q.alloc_count() == 3);
+
+            assert(q.pop_allocs(popped, 2) == 2);
+            assert(popped[0].t_ms == 1001 && popped[1].t_ms == 1002);
+            assert(q.alloc_count() == 1);
+
+            // Push 3 more to wrap tail/head around capacity 4, then overflow by 2
+            assert(q.push_alloc(make_alloc(4)));
+            assert(q.push_alloc(make_alloc(5)));
+            assert(q.push_alloc(make_alloc(6)));
+            assert(q.alloc_count() == 4);
+            assert(!q.push_alloc(make_alloc(7)));
+            assert(!q.push_alloc(make_alloc(8)));
+            assert(q.alloc_count() == 4);
+            assert(q.dropped_allocs() == 2);
+
+            assert(q.pop_allocs(popped, 4) == 4);
+            assert(popped[0].t_ms == 1003 && popped[1].t_ms == 1004 &&
+                   popped[2].t_ms == 1005 && popped[3].t_ms == 1006);
+            assert(q.alloc_count() == 0);
+            assert(q.pop_allocs(popped, 4) == 0);
+
+            // Error ring wraparound + overflow
+            assert(q.push_error(make_err(1)));
+            assert(q.push_error(make_err(2)));
+            ErrorEvent err_out{};
+            assert(q.pop_error(err_out) && err_out.arg == 1);
+            assert(q.push_error(make_err(3)));
+            assert(q.push_error(make_err(4)));
+            assert(q.error_count() == 3);
+            assert(!q.push_error(make_err(5)));
+            assert(q.dropped_errors() == 1);
+
+            assert(q.take_dropped() == 3);
+            assert(q.dropped_allocs() == 0 && q.dropped_errors() == 0);
+            assert(q.take_dropped() == 0);
+
+            assert(q.pop_error(err_out) && err_out.arg == 2);
+            assert(q.pop_error(err_out) && err_out.arg == 3);
+            assert(q.pop_error(err_out) && err_out.arg == 4);
+            assert(q.error_count() == 0);
+            ErrorEvent sentinel{};
+            sentinel.arg = 0xCAFEBABEu;
+            assert(!q.pop_error(sentinel));
+            assert(sentinel.arg == 0xCAFEBABEu);
+        }
+
+        // Non-destructive drain_allocs & drain_error across wraparound + encode_* byte parity
+        {
+            EventQueue<5, 3> q;
+            std::vector<std::uint8_t> buf(512);
+
+            // Empty drains return 0
+            assert(q.drain_allocs(buf.data(), buf.size(), 1) == 0);
+            assert(q.drain_error(buf.data(), buf.size(), 1) == 0);
+
+            // Advance tail so next batch wraps across index 4 -> 0
+            for (std::uint32_t i = 0; i < 3; ++i) assert(q.push_alloc(make_alloc(i)));
+            AllocEvent discard[3]{};
+            assert(q.pop_allocs(discard, 3) == 3);
+
+            const AllocEvent wrapped_allocs[4] = {
+                make_alloc(10), make_alloc(11), make_alloc(12), make_alloc(13),
+            };
+            for (const AllocEvent& ev : wrapped_allocs) assert(q.push_alloc(ev));
+            assert(q.alloc_count() == 4);
+
+            // max_batch == 0 is non-destructive
+            assert(q.drain_allocs(buf.data(), buf.size(), 7, 0) == 0);
+            assert(q.alloc_count() == 4);
+
+            // Compute exact encoded frame for first batch of 3
+            std::vector<std::uint8_t> ref_alloc(512);
+            const std::size_t expected_alloc_len =
+                encode_allocs(ref_alloc.data(), ref_alloc.size(), 42, wrapped_allocs, 3);
+            assert(expected_alloc_len > 12);
+            ref_alloc.resize(expected_alloc_len);
+
+            // Too-small capacities (nullptr, cap == 4, cap == needed - 1) must preserve all items
+            assert(q.drain_allocs(nullptr, expected_alloc_len, 42, 3) == 0);
+            assert(q.alloc_count() == 4);
+            std::vector<std::uint8_t> small_buf(expected_alloc_len, 0x5A);
+            assert(q.drain_allocs(small_buf.data(), 4, 42, 3) == 0);
+            assert(q.drain_allocs(small_buf.data(), expected_alloc_len - 1, 42, 3) == 0);
+            for (std::uint8_t b : small_buf) assert(b == 0x5A);
+            assert(q.alloc_count() == 4);
+
+            // Exact capacity succeeds, matches encode_allocs byte-for-byte, and pops batch of 3
+            const std::size_t got_len = q.drain_allocs(buf.data(), expected_alloc_len, 42, 3);
+            assert(got_len == expected_alloc_len);
+            std::vector<std::uint8_t> drained_frame(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(got_len));
+            check_frame_envelope(drained_frame, kKindAllocs);
+            assert(drained_frame == ref_alloc);
+            assert(q.alloc_count() == 1);
+
+            // Drain remaining 1 alloc event with max_batch > alloc_count()
+            const std::size_t rem_expected =
+                encode_allocs(ref_alloc.data(), ref_alloc.capacity(), 43, &wrapped_allocs[3], 1);
+            const std::size_t rem_got = q.drain_allocs(buf.data(), buf.size(), 43, 32);
+            assert(rem_got == rem_expected);
+            assert(q.alloc_count() == 0);
+
+            // Error drain: wraparound + small cap preservation + seq override + encode_error parity
+            ErrorEvent err0 = make_err(20);
+            assert(q.push_error(err0));
+            assert(q.push_error(make_err(21)));
+            ErrorEvent tmp{};
+            assert(q.pop_error(tmp));
+            assert(q.push_error(make_err(22)));
+            assert(q.error_count() == 2);
+
+            ErrorEvent expected_ev = make_err(21);
+            expected_ev.seq = 77;
+            std::vector<std::uint8_t> ref_err(128);
+            const std::size_t expected_err_len = encode_error(ref_err.data(), ref_err.size(), expected_ev);
+            assert(expected_err_len > 12);
+            ref_err.resize(expected_err_len);
+
+            assert(q.drain_error(nullptr, expected_err_len, 77) == 0);
+            assert(q.drain_error(buf.data(), 4, 77) == 0);
+            assert(q.drain_error(buf.data(), expected_err_len - 1, 77) == 0);
+            assert(q.error_count() == 2);
+
+            const std::size_t err_got = q.drain_error(buf.data(), expected_err_len, 77);
+            assert(err_got == expected_err_len);
+            std::vector<std::uint8_t> err_frame(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(err_got));
+            check_frame_envelope(err_frame, kKindError);
+            assert(err_frame == ref_err);
+            assert(q.error_count() == 1);
+
+            assert(q.pop_error(tmp) && tmp.arg == 22);
+            assert(q.error_count() == 0);
+        }
+
+        // clear() resets counts and dropped counters and allows reuse
+        {
+            EventQueue<2, 2> q;
+            assert(q.push_alloc(make_alloc(1)));
+            assert(q.push_alloc(make_alloc(2)));
+            assert(!q.push_alloc(make_alloc(3)));
+            assert(q.push_error(make_err(1)));
+            assert(q.push_error(make_err(2)));
+            assert(!q.push_error(make_err(3)));
+            assert(q.alloc_count() == 2 && q.error_count() == 2);
+            assert(q.dropped_allocs() == 1 && q.dropped_errors() == 1);
+
+            q.clear();
+            assert(q.alloc_count() == 0 && q.error_count() == 0);
+            assert(q.dropped_allocs() == 0 && q.dropped_errors() == 0);
+            assert(q.take_dropped() == 0);
+
+            assert(q.push_alloc(make_alloc(9)));
+            assert(q.push_error(make_err(9)));
+            assert(q.alloc_count() == 1 && q.error_count() == 1);
         }
     }
 
