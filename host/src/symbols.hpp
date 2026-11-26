@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,13 +29,21 @@ public:
     Symbolizer(std::filesystem::path elf, std::filesystem::path tool, std::vector<ExtraElf> extra_elfs = {})
         : elf_(std::move(elf)), tool_(std::move(tool)), extra_elfs_(std::move(extra_elfs)) {}
 
+    void configure(std::filesystem::path elf, std::filesystem::path tool, std::vector<ExtraElf> extra_elfs = {});
+
     void prepare(const Frame& frame); // addr2line calls for all new PCs of the frame
+    void prepare(std::span<const std::uint32_t> pcs); // addr2line calls for all new PCs of one stack
 
     // Function names for one stack entry, innermost first: inlined callees come before the real
     // function that contains them. Without symbols: the raw address.
     [[nodiscard]] std::vector<std::string> frames(std::size_t index, std::uint32_t pc) const;
 
+    // Function names for one stack, outermost first (inlined frames expanded).
+    [[nodiscard]] std::vector<std::string> stack_names(std::span<const std::uint32_t> pcs) const;
+
 private:
+    void prepare_addrs(std::vector<std::uint32_t> todo);
+
     std::filesystem::path elf_, tool_;
     std::vector<ExtraElf> extra_elfs_;
     mutable std::mutex mutex_;

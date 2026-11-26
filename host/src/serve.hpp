@@ -45,6 +45,7 @@
 //   functions {core?, window_s, at_ms?, focus?} -> {total, functions, callers, callees, series}
 //   memory {window_s?, at_ms?}             -> {regions: [{region, name, series: [[t_ms, free, min_free, largest, total], ...]}]}
 //   tasks {window_s?, at_ms?}              -> {tasks: [{handle, name, prio, core, state, cpu_pct, stack_hwm, warn}]}
+//   memcheck {at_ms?, leak_age_s?}         -> {leaks: [{kind, stack, count, bytes, oldest_ms}], errors: [{t_ms, code, kind, arg, name, stack}], dropped, live_bytes, live_allocs}
 //   agent_start {rate_hz?, analyses?}      -> {}   sends a START command to the live agent
 //   agent_stop                             -> {}   sends a STOP command to the live agent
 //   diff {a, b, core?}                     -> {a, b, total_a, total_b, functions, tree}

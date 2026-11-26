@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <format>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -194,7 +195,7 @@ private:
         const json id = req.contains("id") ? req["id"] : json(nullptr);
         try {
             const auto cmd = str_arg(req, "cmd");
-            if (cmd == "snapshot" || cmd == "functions" || cmd == "memory" || cmd == "tasks") {
+            if (cmd == "snapshot" || cmd == "functions" || cmd == "memory" || cmd == "tasks" || cmd == "memcheck") {
                 return reply_raw(id, query(cmd, req));
             }
             if (cmd == "new_run" || cmd == "remove_agent" || cmd == "chip_id" || cmd == "project_add" || cmd == "install_pio" || cmd == "grant_access") return run_long(id, cmd, req);
@@ -324,7 +325,7 @@ private:
         return {{"bytes", bytes.size()}};
     }
 
-    // snapshot, functions, memory, and tasks answer with the aggregator/series JSON text directly
+    // snapshot, functions, memory, tasks, and memcheck answer with the aggregator/series/memcheck JSON text directly
     std::string query(const std::string& cmd, const json& req) {
         const auto q = parse_query_window(req, 10);
         const auto session = current();
@@ -337,6 +338,19 @@ private:
         }
         if (cmd == "tasks") {
             return session ? session->tasks_json(q.window, q.at) : R"({"tasks":[]})";
+        }
+        if (cmd == "memcheck") {
+            unsigned leak_age_s = 30;
+            if (req.contains("leak_age_s") && !req["leak_age_s"].is_null()) {
+                if (!req["leak_age_s"].is_number_integer()) throw std::runtime_error("invalid argument: leak_age_s");
+                const auto v = req["leak_age_s"].get<long long>();
+                if (v < 0 || v > std::numeric_limits<unsigned>::max()) {
+                    throw std::runtime_error("invalid argument: leak_age_s out of range");
+                }
+                leak_age_s = static_cast<unsigned>(v);
+            }
+            return session ? session->memcheck_json(q.at, leak_age_s)
+                           : R"({"leaks":[],"errors":[],"dropped":0,"live_bytes":0,"live_allocs":0})";
         }
         auto result =
             session ? session->functions(q.core, q.window, q.at, opt_str_arg(req, "focus").value_or("")) : std::nullopt;

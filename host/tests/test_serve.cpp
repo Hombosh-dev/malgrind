@@ -208,6 +208,8 @@ void attach_snapshot_stop() {
     assert(v1_snap["stats"]["caps"] == malgrind::kCapSamples && v1_snap["stats"]["agent_state"] == 1);
     assert(h.call({{"cmd", "memory"}})["result"] == json({{"regions", json::array()}}));
     assert(h.call({{"cmd", "tasks"}})["result"] == json({{"tasks", json::array()}}));
+    assert(h.call({{"cmd", "memcheck"}})["result"] ==
+           json({{"leaks", json::array()}, {"errors", json::array()}, {"dropped", 0}, {"live_bytes", 0}, {"live_allocs", 0}}));
 
     auto runs = h.runs();
     assert(runs.size() == 1 && runs[0]["id"] == id && runs[0]["live"] == true);
@@ -953,6 +955,8 @@ void v2_probe_memory_tasks_and_commands() {
     // Empty session defaults and live-only control errors.
     assert(h.call({{"cmd", "memory"}})["result"] == json({{"regions", json::array()}}));
     assert(h.call({{"cmd", "tasks"}})["result"] == json({{"tasks", json::array()}}));
+    assert(h.call({{"cmd", "memcheck"}})["result"] ==
+           json({{"leaks", json::array()}, {"errors", json::array()}, {"dropped", 0}, {"live_bytes", 0}, {"live_allocs", 0}}));
     const auto no_live_start = h.call({{"cmd", "agent_start"}, {"rate_hz", 500}});
     assert(no_live_start["ok"] == false && contains(no_live_start["error"], "no run is live"));
     const auto no_live_stop = h.call({{"cmd", "agent_stop"}});
@@ -1097,6 +1101,109 @@ void v2_probe_memory_tasks_and_commands() {
     assert(h.call({{"cmd", "stop"}})["ok"]);
 }
 
+void v2_memcheck_rpc() {
+    Harness h("malgrind_serve_memcheck");
+    const auto dev = h.plug("fake-mc", "usb-10c4-ea60-sn-mc", "ttyUSB0");
+
+    const json empty_mc = {
+        {"leaks", json::array()},
+        {"errors", json::array()},
+        {"dropped", 0},
+        {"live_bytes", 0},
+        {"live_allocs", 0},
+    };
+    assert(h.call({{"cmd", "memcheck"}})["result"] == empty_mc);
+
+    const auto attached =
+        h.call({{"cmd", "attach"}, {"device", dev.id}, {"name", "mc-run"}, {"settings", {{"rate_hz", 500}}}});
+    assert(attached["ok"]);
+    const std::string run_id = attached["result"]["run"]["id"];
+    assert(h.call({{"cmd", "memcheck"}})["result"] == empty_mc);
+
+    const std::uint32_t mc_caps = malgrind::kCapSamples | malgrind::kCapAllocs | malgrind::kCapErrors;
+    h.source()->push(make_hello_frame({
+        .seq = 1,
+        .arch = malgrind::Arch::Xtensa,
+        .ncores = 2,
+        .cpu_hz = 240'000'000,
+        .agent_ver = 2,
+        .caps = mc_caps,
+        .state = 0,
+        .rate_hz = 997,
+        .analyses = 0,
+    }));
+    assert(wait_for([&] { return decode_commands(h.source()->written()).size() == 1; }));
+    assert(decode_commands(h.source()->written())[0].analyses == mc_caps);
+
+    const malgrind::AllocEvent allocs[] = {
+        {.op = 0, .t_ms = 1000, .addr = 0x3f801000, .size = 200, .depth = 2, .pcs = {0x400d1000, 0x400d2000}},
+        {.op = 0, .t_ms = 2000, .addr = 0x3f802000, .size = 100, .depth = 1, .pcs = {0x400d3000}},
+        {.op = 1, .t_ms = 5000, .addr = 0x3f802000, .size = 0, .depth = 0, .pcs = {}},
+        {.op = 0, .t_ms = 15000, .addr = 0x3f803000, .size = 50, .depth = 1, .pcs = {0x400d4000}},
+    };
+    h.source()->push(make_allocs_frame(2, allocs));
+
+    malgrind::ErrorEvent err_oom{
+        .seq = 3,
+        .t_ms = 15000,
+        .code = malgrind::kErrAllocFailed,
+        .arg = 8192,
+        .name = {},
+        .depth = 1,
+        .pcs = {0x400d5000},
+    };
+    std::memcpy(err_oom.name, "worker", 6);
+    h.source()->push(make_error_frame(err_oom));
+
+    malgrind::ErrorEvent err_drop{
+        .seq = 4,
+        .t_ms = 15000,
+        .code = malgrind::kErrEventsDropped,
+        .arg = 4,
+        .name = {},
+        .depth = 0,
+        .pcs = {},
+    };
+    std::memcpy(err_drop.name, "events", 6);
+    h.source()->push(make_error_frame(err_drop));
+
+    assert(wait_for([&] {
+        const auto mc = h.call({{"cmd", "memcheck"}});
+        return mc["ok"] && mc["result"]["live_allocs"] == 2 && mc["result"]["dropped"] == 4 &&
+               mc["result"]["errors"].size() == 1;
+    }));
+
+    // Default leak_age_s=30 at max_t_ms=15000 -> both live allocs are "possibly".
+    const auto mc_default = h.call({{"cmd", "memcheck"}})["result"];
+    assert(mc_default["live_bytes"] == 250 && mc_default["live_allocs"] == 2 && mc_default["dropped"] == 4);
+    assert(mc_default["leaks"][0]["kind"] == "possibly" && mc_default["leaks"][0]["bytes"] == 200);
+    assert(mc_default["leaks"][1]["kind"] == "possibly" && mc_default["leaks"][1]["bytes"] == 50);
+    assert(mc_default["errors"][0]["kind"] == "alloc_failed" && mc_default["errors"][0]["arg"] == 8192);
+
+    // Custom leak_age_s=10 -> 1000ms allocation (age 14s >= 10s) becomes "definitely".
+    const auto mc_age10 = h.call({{"cmd", "memcheck"}, {"leak_age_s", 10}})["result"];
+    assert(mc_age10["leaks"][0]["kind"] == "definitely" && mc_age10["leaks"][0]["bytes"] == 200);
+    assert(mc_age10["leaks"][1]["kind"] == "possibly" && mc_age10["leaks"][1]["bytes"] == 50);
+
+    // Scrubbing at_ms=3000 with leak_age_s=2 shows state before the free at 5000ms.
+    const auto mc_scrub = h.call({{"cmd", "memcheck"}, {"at_ms", 3000}, {"leak_age_s", 2}})["result"];
+    assert(mc_scrub["live_bytes"] == 300 && mc_scrub["live_allocs"] == 2 && mc_scrub["errors"].empty());
+    assert(mc_scrub["leaks"][0]["kind"] == "definitely" && mc_scrub["leaks"][0]["bytes"] == 200);
+    assert(mc_scrub["leaks"][1]["kind"] == "possibly" && mc_scrub["leaks"][1]["bytes"] == 100);
+
+    // Invalid leak_age_s is rejected cleanly.
+    assert(h.call({{"cmd", "memcheck"}, {"leak_age_s", -1}})["ok"] == false);
+    assert(h.call({{"cmd", "memcheck"}, {"leak_age_s", "10"}})["ok"] == false);
+    assert(h.call({{"cmd", "memcheck"}, {"leak_age_s", 1.5}})["ok"] == false);
+
+    // Stop and open replay -> memcheck reports match live.
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+    assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
+    assert(h.call({{"cmd", "memcheck"}, {"leak_age_s", 10}})["result"] == mc_age10);
+    assert(h.call({{"cmd", "memcheck"}, {"at_ms", 3000}, {"leak_age_s", 2}})["result"] == mc_scrub);
+    assert(h.call({{"cmd", "stop"}})["ok"]);
+}
+
 #ifndef _WIN32
 void pty_serial_attach_and_busy() {
     Harness h("malgrind_serve_pty", /*real_serial=*/true);
@@ -1150,6 +1257,7 @@ int main() {
     eof_finishes_run();
     open_after_upload_reenumerates();
     v2_probe_memory_tasks_and_commands();
+    v2_memcheck_rpc();
 #ifndef _WIN32
     pty_serial_attach_and_busy();
 #endif

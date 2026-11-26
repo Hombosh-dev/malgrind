@@ -79,10 +79,7 @@ Aggregator::Ms Aggregator::duration() const {
 Aggregator::Ms Aggregator::duration_unlocked() const { return frames_.empty() ? Ms{0} : frames_.back().first; }
 
 std::vector<std::string> Aggregator::names(const std::vector<std::uint32_t>& pcs) const {
-    std::vector<std::string> out;
-    for (const auto i : std::views::iota(std::size_t{0}, pcs.size()) | std::views::reverse) // outermost first
-        for (auto& name : symbols_.frames(i, pcs[i]) | std::views::reverse) out.push_back(std::move(name)); // inlined frames too
-    return out;
+    return symbols_.stack_names(pcs);
 }
 
 template <class F>

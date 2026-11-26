@@ -930,7 +930,7 @@ drains into ALLOCS/ERROR frames (encoders exist since T6.1). Tests in `test_core
   `{stack, count, bytes, oldest_ms}`; "definitely" when older than the user's `leak_age_s` (default 30) and the stack is not
   in the top-N steady-state set; otherwise "possibly". `AgentError` list with symbolized stacks. Dropped events counted and shown.
 - Command `memcheck {at_ms?, leak_age_s?}` → `{leaks: [...], errors: [...], dropped}`.
-- [ ] Tests with synthetic ALLOCS/ERROR frames. Commit `feat(engine): memcheck-like leak and error reports`.
+- [x] Tests with synthetic ALLOCS/ERROR frames. Commit `feat(engine): memcheck-like leak and error reports`.
 
 ### T7.4 UI: Memcheck tab and the checkbox 🟢
 

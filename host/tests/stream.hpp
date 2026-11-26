@@ -53,6 +53,21 @@ inline std::vector<std::uint8_t> make_tasks_frame(std::uint16_t seq, std::uint32
     return {buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)};
 }
 
+inline std::vector<std::uint8_t> make_allocs_frame(std::uint16_t seq, std::span<const malgrind::AllocEvent> events) {
+    std::vector<std::uint8_t> buf(32 + events.size() * (14 + 4 * malgrind::kMaxDepth));
+    const std::size_t n = malgrind::encode_allocs(buf.data(), buf.size(), seq, events.data(), events.size());
+    assert(n > 0);
+    buf.resize(n);
+    return buf;
+}
+
+inline std::vector<std::uint8_t> make_error_frame(const malgrind::ErrorEvent& err) {
+    std::array<std::uint8_t, 256> buf{};
+    const std::size_t n = malgrind::encode_error(buf.data(), buf.size(), err);
+    assert(n > 0);
+    return {buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(n)};
+}
+
 inline std::vector<malgrind::Command> decode_commands(std::span<const std::uint8_t> bytes) {
     malgrind::CommandParser parser;
     std::vector<malgrind::Command> out;

@@ -227,14 +227,14 @@ void v2_hello_autostart_heap_tasks_and_replay() {
     auto writer = store.create({.name = "v2", .settings = RunSettings{.rate_hz = 500}});
     auto session = Session::live(std::move(source), std::move(writer), {}, root / "project", ev.sink());
 
-    const std::uint32_t adv_caps = kCapSamples | kCapHeap | kCapTasks | kCapAllocs;
+    const std::uint32_t adv_caps = kCapSamples | kCapHeap | kCapTasks | kCapAllocs | kCapErrors;
     HelloPayload sleeping{
         .seq = 1,
         .arch = Arch::Xtensa,
         .ncores = 2,
         .cpu_hz = 240'000'000,
         .agent_ver = 2,
-        .caps = adv_caps,
+        .caps = adv_caps | (1u << 10),
         .state = 0,
         .rate_hz = 997,
         .analyses = 0,
@@ -246,18 +246,18 @@ void v2_hello_autostart_heap_tasks_and_replay() {
     const auto targets = ev.named("target");
     assert(targets.size() == 1);
     assert(targets[0]["arch"] == "xtensa" && targets[0]["ncores"] == 2);
-    assert(targets[0]["caps"] == adv_caps && targets[0]["state"] == 0 && targets[0]["agent_ver"] == 2);
+    assert(targets[0]["caps"] == (adv_caps | (1u << 10)) && targets[0]["state"] == 0 && targets[0]["agent_ver"] == 2);
 
     const auto init_cmds = decode_commands(src->written());
     assert(init_cmds.size() == 1);
     assert(init_cmds[0].cmd == kCmdStart && init_cmds[0].rate_hz == 500);
-    assert(init_cmds[0].analyses == (kCapSamples | kCapHeap | kCapTasks));
+    assert(init_cmds[0].analyses == adv_caps);
 
     const auto pre_snap_raw = session->snapshot(std::nullopt, kAll, std::nullopt);
     assert(pre_snap_raw.has_value());
     const auto pre_snap = json::parse(*pre_snap_raw);
     assert(pre_snap["tree"]["value"] == 0);
-    assert(pre_snap["stats"]["caps"] == adv_caps && pre_snap["stats"]["agent_state"] == 0);
+    assert(pre_snap["stats"]["caps"] == (adv_caps | (1u << 10)) && pre_snap["stats"]["agent_state"] == 0);
 
     // Agent wakes up (HELLO state=1) and streams HEAP, TASKS, and v2 SAMPLES.
     HelloPayload sampling = sleeping;
@@ -342,12 +342,125 @@ void v2_hello_autostart_heap_tasks_and_replay() {
     assert(replay && !replay->live());
     assert(!replay->agent_start(500, kCapSamples));
     assert(!replay->agent_stop());
-    assert(replay->caps() == adv_caps && replay->agent_state() == 0);
+    assert(replay->caps() == (adv_caps | (1u << 10)) && replay->agent_state() == 0);
     assert(replay->snapshot(std::nullopt, kAll, std::nullopt) == snap_live);
     assert(replay->memory_json(kAll) == mem_live.dump());
     assert(replay->tasks_json(kAll) == tasks_live.dump());
     const auto replay_targets = replay_ev.named("target");
-    assert(replay_targets.size() == 1 && replay_targets[0]["caps"] == adv_caps && replay_targets[0]["agent_ver"] == 2);
+    assert(replay_targets.size() == 1 && replay_targets[0]["caps"] == (adv_caps | (1u << 10)) &&
+           replay_targets[0]["agent_ver"] == 2);
+    fs::remove_all(root);
+}
+
+void v2_memcheck_allocs_errors_and_replay() {
+    const auto root = fresh("malgrind_session_memcheck");
+    RunStore store(root / "runs");
+    Events ev;
+    auto source = std::make_unique<MemorySource>("mc-mem");
+    auto* src = source.get();
+    auto writer = store.create({.name = "mc", .settings = RunSettings{.rate_hz = 500, .check_memory = true}});
+    auto session = Session::live(std::move(source), std::move(writer), {}, root / "project", ev.sink());
+
+    const std::uint32_t mc_caps = kCapSamples | kCapHeap | kCapTasks | kCapAllocs | kCapErrors;
+    HelloPayload sleeping{
+        .seq = 1,
+        .arch = Arch::Xtensa,
+        .ncores = 2,
+        .cpu_hz = 240'000'000,
+        .agent_ver = 2,
+        .caps = mc_caps,
+        .state = 0,
+        .rate_hz = 997,
+        .analyses = 0,
+    };
+    src->push(make_hello_frame(sleeping));
+    assert(wait_for([&] { return decode_commands(src->written()).size() == 1; }));
+    assert(decode_commands(src->written())[0].analyses == mc_caps);
+
+    const AllocEvent allocs[] = {
+        {.op = 0, .t_ms = 1000, .addr = 0x3f801000, .size = 256, .depth = 2, .pcs = {0x400d1000, 0x400d2000}},
+        {.op = 0, .t_ms = 1200, .addr = 0x3f802000, .size = 64, .depth = 1, .pcs = {0x400d3000}},
+        {.op = 1, .t_ms = 2000, .addr = 0x3f802000, .size = 0, .depth = 0, .pcs = {}},
+        {.op = 0, .t_ms = 35000, .addr = 0x3f803000, .size = 128, .depth = 1, .pcs = {0x400d4000}},
+    };
+    src->push(make_allocs_frame(2, allocs));
+
+    ErrorEvent err_corrupt{
+        .seq = 3,
+        .t_ms = 5000,
+        .code = kErrHeapCorrupt,
+        .arg = 0x3f809000,
+        .name = {},
+        .depth = 1,
+        .pcs = {0x400d5000},
+    };
+    std::memcpy(err_corrupt.name, "heap_check", 10);
+    src->push(make_error_frame(err_corrupt));
+
+    ErrorEvent err_drop{
+        .seq = 4,
+        .t_ms = 6000,
+        .code = kErrEventsDropped,
+        .arg = 9,
+        .name = {},
+        .depth = 0,
+        .pcs = {},
+    };
+    std::memcpy(err_drop.name, "events", 6);
+    src->push(make_error_frame(err_drop));
+
+    assert(wait_for([&] {
+        const auto mc = json::parse(session->memcheck_json());
+        return mc["live_allocs"] == 2 && mc["dropped"] == 9 && mc["errors"].size() == 1;
+    }));
+
+    const auto mc_live = json::parse(session->memcheck_json());
+    assert(mc_live["live_bytes"] == 384 && mc_live["live_allocs"] == 2 && mc_live["dropped"] == 9);
+    assert(mc_live["leaks"].size() == 2);
+    assert(mc_live["leaks"][0]["kind"] == "definitely" && mc_live["leaks"][0]["bytes"] == 256);
+    assert(mc_live["leaks"][1]["kind"] == "possibly" && mc_live["leaks"][1]["bytes"] == 128);
+    assert(mc_live["errors"][0]["kind"] == "heap_corrupt" && mc_live["errors"][0]["name"] == "heap_check");
+
+    // Scrubbing before the free at 2000ms shows both 0x3f801000 and 0x3f802000 live and no errors yet.
+    const auto mc_early = json::parse(session->memcheck_json(1500ms));
+    assert(mc_early["live_allocs"] == 2 && mc_early["live_bytes"] == 320 && mc_early["errors"].empty());
+
+    const std::string id = session->run_id();
+    src->close();
+    src = nullptr;
+    assert(wait_for([&] { return !ev.named("ended").empty(); }, 1000ms));
+    session.reset();
+
+    Events replay_ev;
+    const auto replay = Session::replay(store, id, replay_ev.sink());
+    assert(replay && replay->caps() == mc_caps);
+    assert(replay->memcheck_json() == mc_live.dump());
+    assert(replay->memcheck_json(1500ms) == mc_early.dump());
+
+    // Early ALLOCS/ERROR arriving before HELLO/Frame safely initializes memcheck and survives later setup_target.
+    {
+        auto early_src_owned = std::make_unique<MemorySource>("early-mc");
+        auto* early_src = early_src_owned.get();
+        Events early_ev;
+        auto early_sess = Session::live(std::move(early_src_owned), store.create({.name = "early"}), {},
+                                        root / "project", early_ev.sink());
+        const AllocEvent early_alloc[] = {
+            {.op = 0, .t_ms = 500, .addr = 0x3f804000, .size = 96, .depth = 1, .pcs = {0x400d6000}},
+        };
+        early_src->push(make_allocs_frame(1, early_alloc));
+        assert(wait_for([&] { return json::parse(early_sess->memcheck_json())["live_bytes"] == 96; }));
+        assert(!early_sess->snapshot(std::nullopt, kAll, std::nullopt).has_value());
+
+        early_src->push(make_stream(1));
+        assert(wait_for([&] {
+            auto s = early_sess->snapshot(std::nullopt, kAll, std::nullopt);
+            return s && contains(*s, R"("name":"all","value":4)");
+        }));
+        assert((early_sess->caps() & (kCapSamples | kCapAllocs)) == (kCapSamples | kCapAllocs));
+        assert(json::parse(early_sess->memcheck_json())["live_bytes"] == 96);
+        early_sess.reset();
+    }
+
     fs::remove_all(root);
 }
 
@@ -384,6 +497,7 @@ int main() {
     survives_a_broken_disk();
     large_run_notice_emitted_once();
     v2_hello_autostart_heap_tasks_and_replay();
+    v2_memcheck_allocs_errors_and_replay();
 #ifndef _WIN32
     pty_serial_records_live();
 #endif

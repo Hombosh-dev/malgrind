@@ -4,6 +4,7 @@
 // decoded, symbolized and aggregated. A live session also records every byte into the run store.
 
 #include "aggregate.hpp"
+#include "memcheck.hpp"
 #include "series.hpp"
 #include "source.hpp"
 #include "store.hpp"
@@ -55,6 +56,8 @@ public:
                                                        std::optional<Aggregator::Ms> at, std::string_view focus) const;
     [[nodiscard]] std::string memory_json(Aggregator::Ms window, std::optional<Aggregator::Ms> at = std::nullopt) const;
     [[nodiscard]] std::string tasks_json(Aggregator::Ms window, std::optional<Aggregator::Ms> at = std::nullopt) const;
+    [[nodiscard]] std::string memcheck_json(std::optional<Aggregator::Ms> at = std::nullopt,
+                                            unsigned leak_age_s = 30) const;
 
     [[nodiscard]] std::uint32_t caps() const { return caps_.load(); }
     [[nodiscard]] std::uint8_t agent_state() const { return agent_state_.load(); }
@@ -83,6 +86,7 @@ public:
 private:
     Session(Emit emit, std::filesystem::path elf, std::filesystem::path project, bool search_elf);
     void on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t); // decode, then aggregate
+    void ensure_memcheck();
     void setup_target(Arch arch, std::uint8_t ncores, std::uint32_t cpu_hz, std::uint16_t rate_hz,
                       std::uint32_t caps, std::uint8_t state, std::uint16_t agent_ver);
     bool send_command(const Command& cmd);
@@ -103,8 +107,10 @@ private:
     HeapSeries heap_series_;
     TaskTable task_table_;
     std::optional<Symbolizer> symbols_;
-    std::optional<Aggregator> aggregator_; // after symbols_: destroyed first
+    std::optional<LeakTracker> memcheck_;   // after symbols_: destroyed before symbols_
+    std::optional<Aggregator> aggregator_;  // after symbols_: destroyed first
     std::atomic<Aggregator*> ready_{nullptr}; // set once setup_target() is complete; queries from other threads use it
+    std::atomic<LeakTracker*> memcheck_ready_{nullptr};
     std::atomic<std::uint32_t> caps_{kCapSamples};
     std::atomic<std::uint32_t> observed_caps_{0};
     std::atomic<std::uint8_t> agent_state_{0};

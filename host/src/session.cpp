@@ -148,7 +148,8 @@ void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
                     }
                     if (live_ && m.state == 0 && !auto_started_.exchange(true)) {
                         (void)send_command(
-                            Command{kCmdStart, desired_rate_hz_, m.caps & (kCapSamples | kCapHeap | kCapTasks)});
+                            Command{kCmdStart, desired_rate_hz_,
+                                    m.caps & (kCapSamples | kCapHeap | kCapTasks | kCapAllocs | kCapErrors)});
                     }
                 } else if constexpr (std::is_same_v<T, HeapStats>) {
                     observed_caps_.fetch_or(kCapHeap);
@@ -159,6 +160,18 @@ void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
                     observed_caps_.fetch_or(kCapTasks);
                     const std::uint32_t updated_caps = caps_.fetch_or(kCapTasks) | kCapTasks;
                     task_table_.add(std::move(m));
+                    if (auto* agg = ready_.load()) agg->set_agent_status(updated_caps, agent_state_.load());
+                } else if constexpr (std::is_same_v<T, AllocBatch>) {
+                    observed_caps_.fetch_or(kCapAllocs);
+                    const std::uint32_t updated_caps = caps_.fetch_or(kCapAllocs) | kCapAllocs;
+                    ensure_memcheck();
+                    memcheck_->add_allocs(m);
+                    if (auto* agg = ready_.load()) agg->set_agent_status(updated_caps, agent_state_.load());
+                } else if constexpr (std::is_same_v<T, AgentError>) {
+                    observed_caps_.fetch_or(kCapErrors);
+                    const std::uint32_t updated_caps = caps_.fetch_or(kCapErrors) | kCapErrors;
+                    ensure_memcheck();
+                    memcheck_->add_error(m);
                     if (auto* agg = ready_.load()) agg->set_agent_status(updated_caps, agent_state_.load());
                 }
             },
@@ -175,6 +188,14 @@ void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
             agg->set_agent_status(updated_caps, agent_state_.load());
         }
         ready_.load()->add(std::move(frame), t);
+    }
+}
+
+void Session::ensure_memcheck() {
+    if (!symbols_) symbols_.emplace(fs::path{}, fs::path{}, std::vector<ExtraElf>{});
+    if (!memcheck_) {
+        memcheck_.emplace(*symbols_);
+        memcheck_ready_.store(&*memcheck_, std::memory_order_release);
     }
 }
 
@@ -196,7 +217,17 @@ void Session::setup_target(Arch arch, std::uint8_t ncores, std::uint32_t cpu_hz,
     if (const Family* family = family_for_arch(arch)) {
         extras = family->extra_symbol_files(os::home_dir(), arch, elf);
     }
-    symbols_.emplace(elf, tool, std::move(extras));
+    if (!symbols_) {
+        symbols_.emplace(elf, tool, std::move(extras));
+    } else {
+        symbols_->configure(elf, tool, std::move(extras));
+    }
+    if (!memcheck_) {
+        memcheck_.emplace(*symbols_);
+        memcheck_ready_.store(&*memcheck_, std::memory_order_release);
+    } else {
+        memcheck_->resymbolize();
+    }
     aggregator_.emplace(*symbols_);
     aggregator_->set_target(arch, ncores, cpu_hz, rate_hz);
     aggregator_->set_agent_status(caps, state);
@@ -238,6 +269,11 @@ std::string Session::memory_json(Aggregator::Ms window, std::optional<Aggregator
 
 std::string Session::tasks_json(Aggregator::Ms window, std::optional<Aggregator::Ms> at) const {
     return task_table_.json(window, at);
+}
+
+std::string Session::memcheck_json(std::optional<Aggregator::Ms> at, unsigned leak_age_s) const {
+    const auto* mc = memcheck_ready_.load(std::memory_order_acquire);
+    return mc ? mc->json(at, leak_age_s) : R"({"leaks":[],"errors":[],"dropped":0,"live_bytes":0,"live_allocs":0})";
 }
 
 std::optional<std::string> Session::snapshot(std::optional<unsigned> core, Aggregator::Ms window,

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <format>
+#include <ranges>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -17,6 +18,13 @@ namespace {
 
 // Return addresses point after the call; step back one byte so the call stays inside its function.
 std::uint32_t lookup_addr(std::size_t index, std::uint32_t pc) { return index == 0 ? pc : pc - 1; }
+
+void append_missing(const std::unordered_map<std::uint32_t, std::vector<std::string>>& cache,
+                    std::span<const std::uint32_t> pcs, std::vector<std::uint32_t>& todo) {
+    for (std::size_t i = 0; i < pcs.size(); ++i) {
+        if (const auto a = lookup_addr(i, pcs[i]); !cache.contains(a)) todo.push_back(a);
+    }
+}
 
 std::vector<std::string> tool_names(Arch arch) {
     if (arch == Arch::Host) return {"addr2line"};
@@ -90,24 +98,53 @@ fs::path find_addr2line(Arch arch) {
     return {};
 }
 
+void Symbolizer::configure(fs::path elf, fs::path tool, std::vector<ExtraElf> extra_elfs) {
+    std::scoped_lock lock(mutex_);
+    elf_ = std::move(elf);
+    tool_ = std::move(tool);
+    extra_elfs_ = std::move(extra_elfs);
+    cache_.clear();
+}
+
 void Symbolizer::prepare(const Frame& frame) {
     std::vector<std::uint32_t> todo;
     {
         std::scoped_lock lock(mutex_);
-        for (const auto& stack : frame.stacks)
-            for (std::size_t i = 0; i < stack.pcs.size(); ++i)
-                if (const auto a = lookup_addr(i, stack.pcs[i]); !cache_.contains(a)) todo.push_back(a);
+        for (const auto& stack : frame.stacks) append_missing(cache_, stack.pcs, todo);
     }
+    prepare_addrs(std::move(todo));
+}
+
+void Symbolizer::prepare(std::span<const std::uint32_t> pcs) {
+    if (pcs.empty()) return;
+    std::vector<std::uint32_t> todo;
+    {
+        std::scoped_lock lock(mutex_);
+        append_missing(cache_, pcs, todo);
+    }
+    prepare_addrs(std::move(todo));
+}
+
+void Symbolizer::prepare_addrs(std::vector<std::uint32_t> todo) {
     std::ranges::sort(todo);
     todo.erase(std::ranges::unique(todo).begin(), todo.end());
     if (todo.empty()) return;
 
+    fs::path elf, tool;
+    std::vector<ExtraElf> extra_elfs;
+    {
+        std::scoped_lock lock(mutex_);
+        elf = elf_;
+        tool = tool_;
+        extra_elfs = extra_elfs_;
+    }
+
     std::vector<std::vector<std::string>> chains(todo.size());
-    if (!tool_.empty()) {
-        std::vector<bool> extra_available(extra_elfs_.size(), false);
-        for (std::size_t j = 0; j < extra_elfs_.size(); ++j) {
+    if (!tool.empty()) {
+        std::vector<bool> extra_available(extra_elfs.size(), false);
+        for (std::size_t j = 0; j < extra_elfs.size(); ++j) {
             std::error_code ec;
-            extra_available[j] = !extra_elfs_[j].elf.empty() && fs::exists(extra_elfs_[j].elf, ec);
+            extra_available[j] = !extra_elfs[j].elf.empty() && fs::exists(extra_elfs[j].elf, ec);
         }
 
         struct ExtraGroup {
@@ -118,9 +155,9 @@ void Symbolizer::prepare(const Frame& frame) {
         std::vector<ExtraGroup> extra_groups;
         for (std::size_t i = 0; i < todo.size(); ++i) {
             const std::uint32_t a = todo[i];
-            for (std::size_t j = 0; j < extra_elfs_.size(); ++j) {
-                if (extra_available[j] && a >= extra_elfs_[j].start && a <= extra_elfs_[j].end) {
-                    const fs::path& target = extra_elfs_[j].elf;
+            for (std::size_t j = 0; j < extra_elfs.size(); ++j) {
+                if (extra_available[j] && a >= extra_elfs[j].start && a <= extra_elfs[j].end) {
+                    const fs::path& target = extra_elfs[j].elf;
                     auto it = std::ranges::find_if(extra_groups, [&](const ExtraGroup& g) { return g.elf == target; });
                     if (it == extra_groups.end()) {
                         extra_groups.push_back({target, {i}, {a}});
@@ -134,13 +171,13 @@ void Symbolizer::prepare(const Frame& frame) {
         }
 
         for (const auto& group : extra_groups) {
-            auto resolved = query_addr2line(tool_, group.elf, group.addrs);
+            auto resolved = query_addr2line(tool, group.elf, group.addrs);
             for (std::size_t k = 0; k < group.indices.size(); ++k) {
                 chains[group.indices[k]] = std::move(resolved[k]);
             }
         }
 
-        if (!elf_.empty()) {
+        if (!elf.empty()) {
             std::vector<std::size_t> primary_indices;
             std::vector<std::uint32_t> primary_addrs;
             for (std::size_t i = 0; i < todo.size(); ++i) {
@@ -150,7 +187,7 @@ void Symbolizer::prepare(const Frame& frame) {
                 }
             }
             if (!primary_addrs.empty()) {
-                auto resolved = query_addr2line(tool_, elf_, primary_addrs);
+                auto resolved = query_addr2line(tool, elf, primary_addrs);
                 for (std::size_t k = 0; k < primary_indices.size(); ++k) {
                     chains[primary_indices[k]] = std::move(resolved[k]);
                 }
@@ -166,6 +203,19 @@ std::vector<std::string> Symbolizer::frames(std::size_t index, std::uint32_t pc)
     std::scoped_lock lock(mutex_);
     const auto it = cache_.find(lookup_addr(index, pc));
     return it != cache_.end() ? it->second : std::vector<std::string>{std::format("0x{:x}", pc)};
+}
+
+std::vector<std::string> Symbolizer::stack_names(std::span<const std::uint32_t> pcs) const {
+    std::vector<std::string> out;
+    std::scoped_lock lock(mutex_);
+    for (const auto i : std::views::iota(std::size_t{0}, pcs.size()) | std::views::reverse) {
+        if (const auto it = cache_.find(lookup_addr(i, pcs[i])); it != cache_.end()) {
+            for (const auto& name : it->second | std::views::reverse) out.push_back(name);
+        } else {
+            out.push_back(std::format("0x{:x}", pcs[i]));
+        }
+    }
+    return out;
 }
 
 } // namespace malgrind::host
