@@ -35,3 +35,5 @@ jobs:
       - run: node --test scripts/version.test.mjs
       - run: node scripts/check-portability.mjs
       - run: node --test scripts/check-portability.test.mjs
+      - run: node scripts/cpp-share.mjs
+      - run: node --test scripts/cpp-share.test.mjs
