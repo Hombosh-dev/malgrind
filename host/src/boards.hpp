@@ -19,6 +19,7 @@ using os::UsbInfo;
 
 struct DebugProbe {
     std::string name, vid, pid, serial, location;
+    std::string product{}, manufacturer{};
 };
 
 // Map a USB VID/PID (4-digit lower-case hex) to a known debug probe name, or nullopt if not a probe.

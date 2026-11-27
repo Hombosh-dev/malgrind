@@ -119,7 +119,7 @@ void find_openocd_checks() {
     found = find_openocd(home, "tool-openocd-alt");
     assert(found.has_value() && found->exe == alt_exe);
 
-    // 4. PATH takes precedence over PlatformIO packages.
+    // 4. PATH takes precedence over default "tool-openocd", while explicit packages still prefer packages/<package>.
     const auto path_prefix = root / "sys";
     const auto path_exe = path_prefix / "bin" / os::exe_name("openocd");
     const auto path_scripts = path_prefix / "share/openocd/scripts";
@@ -134,6 +134,28 @@ void find_openocd_checks() {
     assert(found.has_value());
     assert(found->exe == path_exe);
     assert(found->scripts == path_scripts);
+
+    found = find_openocd(home, "tool-openocd-alt");
+    assert(found.has_value());
+    assert(found->exe == alt_exe);
+    assert(found->scripts == alt_scripts);
+
+    // Versioned explicit package also takes precedence over PATH, and falls back to PATH if missing.
+    const auto esp_pkg = custom_core / "packages/tool-openocd-esp32@20241016";
+    const auto esp_exe = esp_pkg / "bin" / os::exe_name("openocd");
+    const auto esp_scripts = esp_pkg / "share/openocd/scripts";
+    write_file(esp_exe);
+    write_file(esp_scripts / "interface/esp_usb_jtag.cfg");
+    write_file(esp_scripts / "target/esp32s3.cfg");
+
+    found = find_openocd(home, "tool-openocd-esp32");
+    assert(found.has_value());
+    assert(found->exe == esp_exe);
+    assert(found->scripts == esp_scripts);
+
+    found = find_openocd(home, "tool-openocd-missing");
+    assert(found.has_value());
+    assert(found->exe == path_exe);
 
     fs::remove_all(root);
 }

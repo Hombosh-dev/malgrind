@@ -19,9 +19,10 @@ struct ProjectInfo {
     std::filesystem::path dir;
     std::vector<std::string> envs; // [env:NAME] sections, in file order
     std::string default_env;       // first of [platformio] default_envs that exists, else the first env
-    // `platform` and `framework` of each env (its own, else the shared [env] section's); an env that says nothing has no entry
-    // (it may inherit through `extends`, which is not followed)
-    std::map<std::string, std::string> platforms, frameworks;
+    // `platform`, `framework`, `board`, and `board_build.mcu` of each env (its own, else the shared [env] section's);
+    // an env that says nothing has no entry (it may inherit through `extends`, which is not followed)
+    std::map<std::string, std::string> platforms{}, frameworks{};
+    std::map<std::string, std::string> boards{}, mcus{};
 };
 
 // Reads dir/platformio.ini. On failure `why` says what is wrong (no file, no env).

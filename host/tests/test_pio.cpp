@@ -48,6 +48,16 @@ void read_envs() {
     std::string why;
     const auto p = read_project(dir, why);
     assert(p && p->dir == dir && p->envs == (std::vector<std::string>{"a", "b"}) && p->default_env == "b"); // bare [env] is no env
+    assert(p->boards.at("a") == "x" && !p->boards.contains("b"));
+
+    write(dir / "platformio.ini",
+          "[env]\nboard = shared_board\nboard_build.mcu = esp32\n"
+          "[env:s3]\nplatform = espressif32\nboard = esp32-s3-devkitc-1\nboard_build.mcu = esp32s3\n"
+          "[env:base]\nplatform = espressif32\n");
+    const auto bm = read_project(dir, why);
+    assert(bm);
+    assert(bm->boards.at("s3") == "esp32-s3-devkitc-1" && bm->mcus.at("s3") == "esp32s3");
+    assert(bm->boards.at("base") == "shared_board" && bm->mcus.at("base") == "esp32");
 
     write(dir / "platformio.ini", "[env:only]\n");
     assert(read_project(dir, why)->default_env == "only");

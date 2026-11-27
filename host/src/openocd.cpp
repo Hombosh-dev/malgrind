@@ -122,36 +122,49 @@ std::string format_with_logs(std::string_view headline, const std::vector<std::s
     return std::format("{}:\n{}", headline, join_recent_lines(lines));
 }
 
-} // namespace
-
-std::optional<OpenOcdInstall> find_openocd(const fs::path& home, std::string_view package) {
-    const std::string bin_name = os::exe_name("openocd");
-
-    if (const auto from_path = os::find_in_path("openocd")) {
-        return OpenOcdInstall{*from_path, find_scripts_near_exe(*from_path)};
-    }
-
-    const std::string_view effective_pkg = package.empty() ? std::string_view("tool-openocd") : package;
+std::optional<OpenOcdInstall> find_in_pio_packages(const fs::path& home, std::string_view effective_pkg,
+                                                   const std::string& bin_name) {
     for (const auto& core : os::platformio_core_dirs(home)) {
         const fs::path packages_dir = core / "packages";
         const fs::path preferred = packages_dir / os::from_utf8(effective_pkg);
         if (auto found = inspect_package_dir(preferred, bin_name)) return found;
 
-        if (effective_pkg == "tool-openocd") {
-            std::error_code ec;
-            std::vector<fs::path> matches;
-            for (const auto& entry : fs::directory_iterator(packages_dir, ec)) {
-                if (!entry.is_directory(ec)) continue;
-                const std::string name = os::to_utf8(entry.path().filename());
-                if (name.starts_with("tool-openocd") && name != effective_pkg) {
-                    matches.push_back(entry.path());
-                }
-            }
-            std::ranges::sort(matches);
-            for (const auto& pkg : matches) {
-                if (auto found = inspect_package_dir(pkg, bin_name)) return found;
-            }
+        std::error_code ec;
+        std::vector<fs::path> matches;
+        const std::string versioned_prefix = std::string(effective_pkg) + "@";
+        for (const auto& entry : fs::directory_iterator(packages_dir, ec)) {
+            if (!entry.is_directory(ec)) continue;
+            const std::string name = os::to_utf8(entry.path().filename());
+            const bool match = effective_pkg == "tool-openocd"
+                                   ? (name.starts_with("tool-openocd") && name != effective_pkg)
+                                   : name.starts_with(versioned_prefix);
+            if (match) matches.push_back(entry.path());
         }
+        std::ranges::sort(matches);
+        for (const auto& pkg : matches) {
+            if (auto found = inspect_package_dir(pkg, bin_name)) return found;
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<OpenOcdInstall> find_openocd(const fs::path& home, std::string_view package) {
+    const std::string bin_name = os::exe_name("openocd");
+    const std::string_view effective_pkg = package.empty() ? std::string_view("tool-openocd") : package;
+
+    // Non-default packages (vendor forks) must not be shadowed by a generic system openocd on PATH.
+    if (effective_pkg != "tool-openocd") {
+        if (auto found = find_in_pio_packages(home, effective_pkg, bin_name)) return found;
+    }
+
+    if (const auto from_path = os::find_in_path("openocd")) {
+        return OpenOcdInstall{*from_path, find_scripts_near_exe(*from_path)};
+    }
+
+    if (effective_pkg == "tool-openocd") {
+        if (auto found = find_in_pio_packages(home, effective_pkg, bin_name)) return found;
     }
 
     if constexpr (os::kind() != os::Kind::Windows) {

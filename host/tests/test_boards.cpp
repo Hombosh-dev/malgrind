@@ -46,8 +46,11 @@ void probe_name_checks() {
 
     assert(probe_name("15ba", "002a") == "Olimex debugger");
 
-    assert(probe_name("0403", "6010") == "FTDI FT2232/FT232H (can be a JTAG adapter, e.g. ESP-Prog)");
-    assert(probe_name("0403", "6014") == "FTDI FT2232/FT232H (can be a JTAG adapter, e.g. ESP-Prog)");
+    assert(probe_name("303a", "1001") == "ESP USB JTAG (built-in)");
+    assert(!probe_name("303a", "0002"));
+
+    assert(probe_name("0403", "6010") == "FTDI FT2232/FT232H (multi-purpose USB-JTAG adapter)");
+    assert(probe_name("0403", "6014") == "FTDI FT2232/FT232H (multi-purpose USB-JTAG adapter)");
     assert(!probe_name("0403", "6001"));
 
     assert(!probe_name("1a86", "55d3"));
@@ -88,6 +91,8 @@ std::vector<DebugProbe> filter_and_sort_probes(std::vector<os::UsbInfo> devices)
             std::move(info.pid),
             std::move(info.serial),
             std::move(info.location),
+            std::move(info.product),
+            std::move(info.manufacturer),
         });
     }
     std::ranges::sort(probes, [](const DebugProbe& a, const DebugProbe& b) {
@@ -101,25 +106,29 @@ void list_usb_devices_linux_checks() {
     fs::remove_all(sys);
 
     usb_device(sys, "1-1", "1A86", "55D3", "USB Single Serial", "WCH", "0001"); // serial adapter, not a probe
+    usb_device(sys, "1-2", "303A", "1001", "USB JTAG/serial debug unit", "Espressif", "DC:54:75:00:00:01");
     usb_device(sys, "1-3", "0483", "374B", "STM32 STLink", "STMicroelectronics", "ST002");
     usb_device(sys, "1-6", "0483", "374b", "STM32 STLink", "STMicroelectronics", "ST001");
     usb_device(sys, "1-4", "0D28", "0204", "DAPLink CMSIS-DAP", "Arm");
     usb_device(sys, "1-5", "1d6b", "0002", "xHCI Host Controller", "Linux");
 
     const auto devices = os::list_usb_devices_linux(sys);
-    assert(devices.size() == 5);
+    assert(devices.size() == 6);
     assert(devices[0].location == "1-1" && devices[0].vid == "1a86" && devices[0].pid == "55d3");
     assert(devices[0].product == "USB Single Serial" && devices[0].manufacturer == "WCH" && devices[0].serial == "0001");
-    assert(devices[2].location == "1-4" && devices[2].serial.empty());
+    assert(devices[3].location == "1-4" && devices[3].serial.empty());
 
     const auto probes = filter_and_sort_probes(devices);
-    assert(probes.size() == 3);
+    assert(probes.size() == 4);
     assert(probes[0].name == "CMSIS-DAP (DAPLink)" && probes[0].vid == "0d28" && probes[0].pid == "0204"
            && probes[0].serial.empty() && probes[0].location == "1-4");
-    assert(probes[1].name == "ST-Link" && probes[1].vid == "0483" && probes[1].pid == "374b"
-           && probes[1].serial == "ST001" && probes[1].location == "1-6");
+    assert(probes[1].name == "ESP USB JTAG (built-in)" && probes[1].vid == "303a" && probes[1].pid == "1001"
+           && probes[1].serial == "DC:54:75:00:00:01" && probes[1].location == "1-2"
+           && probes[1].product == "USB JTAG/serial debug unit" && probes[1].manufacturer == "Espressif");
     assert(probes[2].name == "ST-Link" && probes[2].vid == "0483" && probes[2].pid == "374b"
-           && probes[2].serial == "ST002" && probes[2].location == "1-3");
+           && probes[2].serial == "ST001" && probes[2].location == "1-6");
+    assert(probes[3].name == "ST-Link" && probes[3].vid == "0483" && probes[3].pid == "374b"
+           && probes[3].serial == "ST002" && probes[3].location == "1-3");
 
     // Empty bus/usb/devices and missing sysfs both return empty cleanly.
     const auto empty_sys = fs::canonical(fs::temp_directory_path()) / "malgrind_boards_empty";

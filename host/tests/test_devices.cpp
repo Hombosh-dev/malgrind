@@ -145,6 +145,8 @@ void list_devices_smoke_check() {
         }
         if (d.kind == DeviceKind::Probe) {
             assert(d.path.empty());
+            assert(d.usb.has_value());
+            assert(!d.usb->vid.empty() && !d.usb->pid.empty());
         } else {
             assert(!d.path.empty());
         }

@@ -93,7 +93,15 @@ std::vector<Device> list_devices() {
         d.path = "";
         d.name = probe.name;
         d.title = probe.name;
-        d.usb = os::UsbInfo{probe.vid, probe.pid, "", "", probe.serial, probe.location};
+        d.family_hint = family_hint_for_usb(probe.vid, probe.pid);
+        d.usb = os::UsbInfo{
+            .vid = std::move(probe.vid),
+            .pid = std::move(probe.pid),
+            .product = std::move(probe.product),
+            .manufacturer = std::move(probe.manufacturer),
+            .serial = std::move(probe.serial),
+            .location = std::move(probe.location),
+        };
         d.access = {};
         out.push_back(std::move(d));
     }

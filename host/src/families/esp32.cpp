@@ -81,6 +81,86 @@ std::string lower_ascii(std::string_view s) {
     return out;
 }
 
+std::vector<std::string_view> split_alnum_tokens(std::string_view s) {
+    std::vector<std::string_view> tokens;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        while (i < s.size() && !std::isalnum(static_cast<unsigned char>(s[i]))) ++i;
+        const std::size_t start = i;
+        while (i < s.size() && std::isalnum(static_cast<unsigned char>(s[i]))) ++i;
+        if (i > start) tokens.push_back(s.substr(start, i - start));
+    }
+    return tokens;
+}
+
+std::string infer_esp32_target_from_text(std::string_view raw, bool& recognized_other_variant) {
+    const std::string lower = lower_ascii(raw);
+    if (lower.empty()) return {};
+
+    if (lower == "arduino_nano_esp32") return "target/esp32s3.cfg";
+
+    for (const std::string_view pat : {"esp32s3", "esp32-s3", "esp32_s3"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32s3.cfg";
+    }
+    for (const std::string_view pat : {"esp32s2", "esp32-s2", "esp32_s2"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32s2.cfg";
+    }
+    for (const std::string_view pat : {"esp32c3", "esp32-c3", "esp32_c3"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32c3.cfg";
+    }
+    for (const std::string_view pat : {"esp32c6", "esp32-c6", "esp32_c6"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32c6.cfg";
+    }
+    for (const std::string_view pat : {"esp32c2", "esp32-c2", "esp32_c2", "esp32c5", "esp32-c5", "esp32_c5",
+                                       "esp32h2", "esp32-h2", "esp32_h2", "esp32p4", "esp32-p4", "esp32_p4"}) {
+        if (lower.find(pat) != std::string::npos) {
+            recognized_other_variant = true;
+            return {};
+        }
+    }
+
+    for (const std::string_view tok : split_alnum_tokens(lower)) {
+        if (tok == "s3") return "target/esp32s3.cfg";
+        if (tok == "s2") return "target/esp32s2.cfg";
+        if (tok == "c3") return "target/esp32c3.cfg";
+        if (tok == "c6") return "target/esp32c6.cfg";
+        if (tok == "c2" || tok == "c5" || tok == "h2" || tok == "p4") {
+            recognized_other_variant = true;
+            return {};
+        }
+    }
+
+    for (const std::string_view pat : {"esp32", "esp-wroom", "esp-wrover", "lolin32", "lolin_d32", "nodemcu-32s", "d1_mini32", "pico32"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32.cfg";
+    }
+    return {};
+}
+
+std::string sdkconfig_idf_target(const fs::path& project_dir, std::string_view env) {
+    if (project_dir.empty()) return {};
+    std::vector<fs::path> candidates;
+    if (!env.empty()) candidates.push_back(project_dir / ("sdkconfig." + std::string(env)));
+    candidates.push_back(project_dir / "sdkconfig");
+    for (const auto& file : candidates) {
+        std::ifstream in(file);
+        if (!in) continue;
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.starts_with("CONFIG_IDF_TARGET=\"")) {
+                const auto start = std::string_view("CONFIG_IDF_TARGET=\"").size();
+                const auto end = line.find('"', start);
+                if (end != std::string::npos && end > start) return line.substr(start, end - start);
+            }
+            if (line.starts_with("CONFIG_IDF_TARGET_") && line.ends_with("=y")) {
+                const auto start = std::string_view("CONFIG_IDF_TARGET_").size();
+                const std::string_view key = std::string_view(line).substr(start, line.size() - start - 2);
+                if (!key.empty() && key.find('_') == std::string_view::npos) return std::string(key);
+            }
+        }
+    }
+    return {};
+}
+
 std::string_view esp32_rom_chip(Arch arch, const fs::path& firmware_elf) {
     const std::string lower = lower_ascii(os::to_utf8(firmware_elf));
     if (arch == Arch::Xtensa) {
@@ -267,8 +347,73 @@ public:
         return {};
     }
     [[nodiscard]] std::string usb_adapter_name(std::string_view vid, std::string_view /*pid*/) const override {
-        if (vid == "303a") return "Espressif USB-Serial/JTAG (built-in debug port)";
+        if (lower_ascii(vid) == "303a") return "Espressif USB-Serial/JTAG (built-in debug port)";
         return {};
+    }
+    [[nodiscard]] std::string usb_probe_name(std::string_view vid, std::string_view pid) const override {
+        if (lower_ascii(vid) == "303a" && lower_ascii(pid) == "1001") return "ESP USB JTAG (built-in)";
+        return {};
+    }
+    [[nodiscard]] std::string openocd_package() const override { return "tool-openocd-esp32"; }
+    [[nodiscard]] std::vector<std::string> openocd_interface_args(std::string_view vid, std::string_view pid,
+                                                                  std::string_view /*description*/) const override {
+        const std::string v = lower_ascii(vid);
+        const std::string p = lower_ascii(pid);
+        if (v == "303a" && p == "1001") return {"-f", "interface/esp_usb_jtag.cfg"};
+        if (v == "0403" && (p == "6010" || p == "6014")) return {"-f", "interface/ftdi/esp32_devkitj_v1.cfg"};
+        return {};
+    }
+    [[nodiscard]] bool handles_project(const ProjectInfo& project, const std::string& env) const override {
+        const std::string effective_env = env.empty() ? project.default_env : env;
+        if (!project.envs.empty() && !effective_env.empty() &&
+            std::ranges::find(project.envs, effective_env) == project.envs.end()) {
+            return false;
+        }
+        if (const auto platform = project.platforms.find(effective_env); platform != project.platforms.end()) {
+            return platform->second.starts_with("espressif32");
+        }
+        return !openocd_target_cfg(project, env).empty();
+    }
+    [[nodiscard]] std::string openocd_target_cfg(const ProjectInfo& project, const std::string& env) const override {
+        const std::string effective_env = env.empty() ? project.default_env : env;
+        if (!project.envs.empty() && !effective_env.empty() &&
+            std::ranges::find(project.envs, effective_env) == project.envs.end()) {
+            return {};
+        }
+        if (const auto platform = project.platforms.find(effective_env);
+            platform != project.platforms.end() && !platform->second.starts_with("espressif32")) {
+            return {};
+        }
+        bool other_variant = false;
+        auto check_text = [&](std::string_view text) -> std::string {
+            return infer_esp32_target_from_text(text, other_variant);
+        };
+        if (const auto mcu = project.mcus.find(effective_env); mcu != project.mcus.end()) {
+            if (auto cfg = check_text(mcu->second); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (const auto board = project.boards.find(effective_env); board != project.boards.end()) {
+            if (auto cfg = check_text(board->second); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (const auto idf_target = sdkconfig_idf_target(project.dir, effective_env); !idf_target.empty()) {
+            if (auto cfg = check_text(idf_target); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (!effective_env.empty()) {
+            if (auto cfg = check_text(effective_env); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        return {};
+    }
+    [[nodiscard]] std::vector<ProbeTargetOption> probe_target_options() const override {
+        return {
+            {"target/esp32.cfg", "ESP32"},
+            {"target/esp32s3.cfg", "ESP32-S3"},
+            {"target/esp32s2.cfg", "ESP32-S2"},
+            {"target/esp32c3.cfg", "ESP32-C3"},
+            {"target/esp32c6.cfg", "ESP32-C6"},
+        };
     }
 };
 

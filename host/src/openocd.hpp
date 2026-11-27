@@ -21,10 +21,14 @@ struct OpenOcdInstall {
 };
 
 // Locates OpenOCD:
-//   1. PATH (via os::find_in_path("openocd"))
-//   2. PlatformIO packages under os::platformio_core_dirs(home): packages/<package>, then (when package is
-//      "tool-openocd") any packages/tool-openocd* directory
-//   3. POSIX only: home / ".local/bin" / exe_name("openocd")
+//   - When `package` is non-default (not empty and not "tool-openocd"):
+//       1. PlatformIO packages under os::platformio_core_dirs(home): packages/<package> (or <package>@*)
+//       2. PATH (via os::find_in_path("openocd"))
+//       3. POSIX only: home / ".local/bin" / exe_name("openocd")
+//   - When `package` is "tool-openocd" (default):
+//       1. PATH (via os::find_in_path("openocd"))
+//       2. PlatformIO packages under os::platformio_core_dirs(home): packages/tool-openocd, then packages/tool-openocd*
+//       3. POSIX only: home / ".local/bin" / exe_name("openocd")
 // `scripts` is the first directory under the package (depth <= 3) containing interface/stlink.cfg (or standard
 // relative script directories for PATH / local installs).
 [[nodiscard]] std::optional<OpenOcdInstall> find_openocd(const std::filesystem::path& home,

@@ -5,11 +5,13 @@
 #include "os/tools.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace fs = std::filesystem;
 
@@ -55,7 +57,7 @@ std::optional<ProjectInfo> read_project(const fs::path& given, std::string& why)
         why = "no platformio.ini in " + os::to_utf8(dir);
         return std::nullopt;
     }
-    ProjectInfo info{dir, {}, {}, {}, {}};
+    ProjectInfo info{dir, {}, {}, {}, {}, {}, {}};
     std::vector<std::string> default_envs;
     std::string section;
     std::map<std::string, std::map<std::string, std::string>> settings; // section -> key -> value
@@ -84,12 +86,17 @@ std::optional<ProjectInfo> read_project(const fs::path& given, std::string& why)
         }
     }
     for (const auto& env : info.envs) {
-        for (const char* key : {"platform", "framework"}) {
-            auto& target = std::string_view(key) == "platform" ? info.platforms : info.frameworks;
+        const std::array<std::pair<const char*, std::map<std::string, std::string>*>, 4> fields{{
+            {"platform", &info.platforms},
+            {"framework", &info.frameworks},
+            {"board", &info.boards},
+            {"board_build.mcu", &info.mcus},
+        }};
+        for (const auto& [key, target] : fields) {
             for (const auto& sec : {"env:" + env, std::string("env")}) {
                 const auto s = settings.find(sec);
                 if (s == settings.end() || !s->second.contains(key)) continue;
-                target[env] = s->second.at(key);
+                (*target)[env] = s->second.at(key);
                 break;
             }
         }

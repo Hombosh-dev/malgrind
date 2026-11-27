@@ -42,6 +42,12 @@ struct FamilyCaps {
     bool memcheck = false;              // supports opt-in memory error/allocation checks
 };
 
+struct ProbeTargetOption {
+    std::string cfg;                    // OpenOCD config path relative to scripts dir, e.g. "target/esp32s3.cfg"
+    std::string label;                  // Human-readable target label, e.g. "ESP32-S3"
+    bool operator==(const ProbeTargetOption&) const = default;
+};
+
 class Family {
 public:
     virtual ~Family() = default;
@@ -75,6 +81,13 @@ public:
         (void)pid;
         return {};
     }
+    [[nodiscard]] virtual std::string usb_probe_name(std::string_view vid, std::string_view pid) const;
+    [[nodiscard]] virtual std::string openocd_package() const;
+    [[nodiscard]] virtual std::vector<std::string> openocd_interface_args(std::string_view vid, std::string_view pid,
+                                                                          std::string_view description = {}) const;
+    [[nodiscard]] virtual bool handles_project(const ProjectInfo& project, const std::string& env) const;
+    [[nodiscard]] virtual std::string openocd_target_cfg(const ProjectInfo& project, const std::string& env) const;
+    [[nodiscard]] virtual std::vector<ProbeTargetOption> probe_target_options() const;
 };
 
 [[nodiscard]] const std::vector<const Family*>& all_families();

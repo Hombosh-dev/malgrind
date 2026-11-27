@@ -85,6 +85,12 @@ void base_family_defaults() {
     assert(stub.extra_symbol_files({}, Arch::Xtensa, {}).empty());
     assert(stub.family_hint_for_usb("303a", "1001").empty());
     assert(stub.usb_adapter_name("303a", "1001").empty());
+    assert(stub.usb_probe_name("303a", "1001").empty());
+    assert(stub.openocd_package() == "tool-openocd");
+    assert(stub.openocd_interface_args("303a", "1001").empty());
+    assert(stub.openocd_target_cfg({}, "").empty());
+    assert(stub.probe_target_options().empty());
+    assert(!stub.handles_project({}, ""));
 
     auto threw = [](auto&& fn) {
         try {
@@ -117,6 +123,26 @@ void esp32_metadata_and_usb() {
     assert(esp.usb_adapter_name("10c4", "ea60").empty());
     assert(esp.family_hint_for_usb("303a", "1001") == "esp32");
     assert(esp.family_hint_for_usb("10c4", "ea60").empty());
+
+    assert(esp.usb_probe_name("303a", "1001") == "ESP USB JTAG (built-in)");
+    assert(esp.usb_probe_name("303A", "1001") == "ESP USB JTAG (built-in)");
+    assert(esp.usb_probe_name("303a", "0002").empty());
+    assert(esp.usb_probe_name("0483", "374b").empty());
+    assert(esp.openocd_package() == "tool-openocd-esp32");
+    assert((esp.openocd_interface_args("303a", "1001") == std::vector<std::string>{"-f", "interface/esp_usb_jtag.cfg"}));
+    assert((esp.openocd_interface_args("0403", "6010") == std::vector<std::string>{"-f", "interface/ftdi/esp32_devkitj_v1.cfg"}));
+    assert((esp.openocd_interface_args("0403", "6014") == std::vector<std::string>{"-f", "interface/ftdi/esp32_devkitj_v1.cfg"}));
+    assert(esp.openocd_interface_args("0483", "374b").empty());
+    assert(esp.openocd_interface_args("1366", "0101").empty());
+
+    const auto opts = esp.probe_target_options();
+    assert((opts == std::vector<ProbeTargetOption>{
+                        {"target/esp32.cfg", "ESP32"},
+                        {"target/esp32s3.cfg", "ESP32-S3"},
+                        {"target/esp32s2.cfg", "ESP32-S2"},
+                        {"target/esp32c3.cfg", "ESP32-C3"},
+                        {"target/esp32c6.cfg", "ESP32-C6"},
+                    }));
 }
 
 void project_matching_and_problems() {
@@ -343,6 +369,77 @@ void esp32_extra_symbol_files() {
     fs::remove_all(root);
 }
 
+void esp32_openocd_target_inference() {
+    const auto root = fresh("malgrind_families_ocd_target");
+    const Family& esp = esp32_family();
+    std::string why;
+
+    // 1. board_build.mcu overrides board/env cleanly
+    write(root / "mcu/platformio.ini",
+          "[env:s3]\nplatform = espressif32\nboard = custom\nboard_build.mcu = esp32s3\n"
+          "[env:s2]\nplatform = espressif32\nboard_build.mcu = esp32s2\n"
+          "[env:c3]\nplatform = espressif32\nboard_build.mcu = esp32c3\n"
+          "[env:c6]\nplatform = espressif32\nboard_build.mcu = esp32c6\n"
+          "[env:classic]\nplatform = espressif32\nboard_build.mcu = esp32\n"
+          "[env:h2]\nplatform = espressif32\nboard_build.mcu = esp32h2\n");
+    const auto mcu_proj = read_project(root / "mcu", why);
+    assert(mcu_proj);
+    assert(esp.openocd_target_cfg(*mcu_proj, "s3") == "target/esp32s3.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "s2") == "target/esp32s2.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "c3") == "target/esp32c3.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "c6") == "target/esp32c6.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "classic") == "target/esp32.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "h2").empty()); // unsupported variant does not falsely fall back to esp32
+    assert(esp.openocd_target_cfg(*mcu_proj, "") == "target/esp32s3.cfg");
+    assert(esp.openocd_target_cfg(*mcu_proj, "missing").empty());
+
+    // 2. Board names (including Arduino framework and space in path)
+    write(root / "with space/platformio.ini",
+          "[env:a]\nplatform = espressif32\nframework = arduino\nboard = esp32-s3-devkitc-1\n"
+          "[env:b]\nplatform = espressif32\nboard = lolin_s2_mini\n"
+          "[env:c]\nplatform = espressif32\nboard = esp32-c3-devkitm-1\n"
+          "[env:d]\nplatform = espressif32\nboard = seeed_xiao_esp32c6\n"
+          "[env:e]\nplatform = espressif32\nboard = esp32dev\n"
+          "[env:f]\nplatform = espressif32\nboard = esp-wrover-kit\n"
+          "[env:nano]\nplatform = espressif32\nboard = arduino_nano_esp32\n"
+          "[env:ambig]\nplatform = espressif32\nboard = custom_board\n");
+    const auto board_proj = read_project(root / "with space", why);
+    assert(board_proj);
+    assert(esp.handles_project(*board_proj, "a"));
+    assert(esp.handles_project(*board_proj, "ambig"));
+    assert(esp.openocd_target_cfg(*board_proj, "a") == "target/esp32s3.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "b") == "target/esp32s2.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "c") == "target/esp32c3.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "d") == "target/esp32c6.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "e") == "target/esp32.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "f") == "target/esp32.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "nano") == "target/esp32s3.cfg");
+    assert(esp.openocd_target_cfg(*board_proj, "ambig").empty());
+
+    // 3. sdkconfig fallback & env-name inference
+    write(root / "sdk/platformio.ini",
+          "[env:release]\nplatform = espressif32\nframework = espidf\nboard = my_board\n"
+          "[env:esp32c3]\nplatform = espressif32\n"
+          "[env:esp32dev]\nplatform = espressif32\n"
+          "[env:plain]\nplatform = espressif32\n");
+    write(root / "sdk/sdkconfig.release", "CONFIG_IDF_TARGET_ARCH_XTENSA=y\nCONFIG_IDF_TARGET=\"esp32s3\"\n");
+    const auto sdk_proj = read_project(root / "sdk", why);
+    assert(sdk_proj);
+    assert(esp.openocd_target_cfg(*sdk_proj, "release") == "target/esp32s3.cfg");
+    assert(esp.openocd_target_cfg(*sdk_proj, "esp32c3") == "target/esp32c3.cfg");
+    assert(esp.openocd_target_cfg(*sdk_proj, "esp32dev") == "target/esp32.cfg");
+    assert(esp.openocd_target_cfg(*sdk_proj, "plain").empty());
+
+    // 4. Non-espressif32 platform must not match
+    write(root / "stm/platformio.ini", "[env:esp32dev]\nplatform = ststm32\nboard = esp32dev\n");
+    const auto other_proj = read_project(root / "stm", why);
+    assert(other_proj);
+    assert(!esp.handles_project(*other_proj, "esp32dev"));
+    assert(esp.openocd_target_cfg(*other_proj, "esp32dev").empty());
+
+    fs::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -354,5 +451,6 @@ int main() {
     esptool_parsing_and_agent_image();
     sdkconfig_merge_checks();
     esp32_extra_symbol_files();
+    esp32_openocd_target_inference();
     std::puts("families ok");
 }

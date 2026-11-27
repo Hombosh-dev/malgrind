@@ -26,6 +26,22 @@ std::vector<ExtraElf> Family::extra_symbol_files(const std::filesystem::path&, A
     return {};
 }
 
+std::string Family::usb_probe_name(std::string_view, std::string_view) const { return {}; }
+
+std::string Family::openocd_package() const { return "tool-openocd"; }
+
+std::vector<std::string> Family::openocd_interface_args(std::string_view, std::string_view, std::string_view) const {
+    return {};
+}
+
+bool Family::handles_project(const ProjectInfo& project, const std::string& env) const {
+    return !openocd_target_cfg(project, env).empty();
+}
+
+std::string Family::openocd_target_cfg(const ProjectInfo&, const std::string&) const { return {}; }
+
+std::vector<ProbeTargetOption> Family::probe_target_options() const { return {}; }
+
 const std::vector<const Family*>& all_families() {
     static const std::vector<const Family*> families{&esp32_family()};
     return families;

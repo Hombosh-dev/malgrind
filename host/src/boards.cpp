@@ -20,13 +20,16 @@ std::string adapter_name(const UsbInfo& info) {
 }
 
 std::optional<std::string> probe_name(std::string_view vid, std::string_view pid) {
+    for (const Family* f : all_families()) {
+        if (auto name = f->usb_probe_name(vid, pid); !name.empty()) return name;
+    }
     if (vid == "0483" && (pid == "3744" || pid == "3748" || pid == "374b" || pid == "374d" || pid == "374e" || pid == "374f" || pid == "3752" || pid == "3753"))
         return "ST-Link";
     if (vid == "1366") return "SEGGER J-Link";
     if (vid == "0d28" && pid == "0204") return "CMSIS-DAP (DAPLink)";
     if (vid == "2e8a" && pid == "000c") return "Raspberry Pi Debug Probe";
     if (vid == "15ba") return "Olimex debugger";
-    if (vid == "0403" && (pid == "6010" || pid == "6014")) return "FTDI FT2232/FT232H (can be a JTAG adapter, e.g. ESP-Prog)";
+    if (vid == "0403" && (pid == "6010" || pid == "6014")) return "FTDI FT2232/FT232H (multi-purpose USB-JTAG adapter)";
     return std::nullopt;
 }
 
@@ -41,6 +44,8 @@ std::vector<DebugProbe> find_probes() {
             std::move(info.pid),
             std::move(info.serial),
             std::move(info.location),
+            std::move(info.product),
+            std::move(info.manufacturer),
         });
     }
     std::ranges::sort(probes, [](const DebugProbe& a, const DebugProbe& b) {
