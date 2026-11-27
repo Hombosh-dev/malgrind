@@ -27,6 +27,9 @@ endif()
 # Platform-agnostic core (no SDK, no heap)
 add_subdirectory(core)
 
+# Shared Cortex-M port (freestanding C++20, no SDK, no heap; tested on host)
+add_subdirectory(platforms/cortexm)
+
 # Host tool: `malgrind` command line (frame decoder, symbolizer, live flamegraph server). Linux and macOS.
 add_subdirectory(host)
 

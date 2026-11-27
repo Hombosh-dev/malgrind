@@ -151,6 +151,9 @@ add_dependencies(test_openocd_source fake_tool)
 malgrind_add_test(probe_config tests/test_probe_config.cpp)
 target_link_libraries(test_probe_config PRIVATE malgrind_host)
 
+malgrind_add_test(cortexm tests/test_cortexm.cpp)
+target_link_libraries(test_cortexm PRIVATE malgrind_platform_cortexm malgrind_host)
+
 if(NOT WIN32)
     malgrind_add_test(access tests/test_access.cpp)
     target_link_libraries(test_access PRIVATE malgrind_host)
