@@ -65,7 +65,7 @@ bool approx(double a, double b) { return std::abs(a - b) < 1e-9; }
 
 const json& find_fn(const json& functions, std::string_view name) {
     for (const auto& f : functions) {
-        if (f["name"] == name) return f;
+        if (f.value("name", "") == name) return f;
     }
     assert(false && "function missing from diff output");
     static const json empty;
