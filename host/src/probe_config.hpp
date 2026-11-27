@@ -27,6 +27,8 @@ struct ProbeConfig {
     std::string interface_desc;             // Human-readable interface description (e.g. "ST-Link")
     std::string target_cfg;                 // Selected OpenOCD target config (e.g. "target/<chip>.cfg")
     std::vector<std::string> openocd_args;  // Arguments passed to OpenOCD (-f <iface>, optional -c ..., -f <target>)
+    ProbeSampleMode sample_mode = ProbeSampleMode::Auto;
+    std::optional<Arch> target_arch{};
 
     bool operator==(const ProbeConfig&) const = default;
 };

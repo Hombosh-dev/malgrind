@@ -42,6 +42,10 @@ std::string Family::openocd_target_cfg(const ProjectInfo&, const std::string&) c
 
 std::vector<ProbeTargetOption> Family::probe_target_options() const { return {}; }
 
+ProbeSampleMode Family::probe_sample_mode(std::string_view) const { return ProbeSampleMode::Auto; }
+
+std::optional<Arch> Family::probe_target_arch(std::string_view) const { return std::nullopt; }
+
 const std::vector<const Family*>& all_families() {
     static const std::vector<const Family*> families{&esp32_family()};
     return families;

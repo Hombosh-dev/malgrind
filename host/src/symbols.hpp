@@ -12,6 +12,8 @@
 
 namespace malgrind::host {
 
+inline constexpr std::uint32_t kSleepPseudoPc = 0xFFFFFFF0u;
+
 // addr2line for the target's architecture: PATH first, then the toolchains PlatformIO installs.
 [[nodiscard]] std::filesystem::path find_addr2line(Arch arch);
 

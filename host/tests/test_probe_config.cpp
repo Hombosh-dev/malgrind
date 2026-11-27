@@ -106,6 +106,8 @@ void generic_probe_table_cases() {
         assert(res.config->package == "tool-openocd");
         assert(res.config->interface_desc == "ST-Link");
         assert(res.config->target_cfg == "target/stm32f4x.cfg");
+        assert(res.config->sample_mode == ProbeSampleMode::Auto);
+        assert(!res.config->target_arch.has_value());
         assert((res.config->openocd_args == std::vector<std::string>{
                                                 "-f",
                                                 "interface/stlink.cfg",
@@ -187,6 +189,8 @@ void family_and_project_resolution_cases() {
     assert(res.config->package == "tool-openocd-esp32");
     assert(res.config->interface_desc == "ESP USB JTAG (built-in)");
     assert(res.config->target_cfg == "target/esp32s3.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
+    assert(res.config->target_arch == malgrind::Arch::Xtensa);
     assert((res.config->openocd_args == std::vector<std::string>{
                                             "-f",
                                             "interface/esp_usb_jtag.cfg",
@@ -208,6 +212,8 @@ void family_and_project_resolution_cases() {
     assert(res.config.has_value());
     assert(res.config->package == "tool-openocd-esp32");
     assert(res.config->target_cfg == "target/esp32c3.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
+    assert(res.config->target_arch == malgrind::Arch::RiscV32);
     assert((res.config->openocd_args == std::vector<std::string>{
                                             "-f",
                                             "interface/esp_usb_jtag.cfg",

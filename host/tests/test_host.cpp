@@ -1,6 +1,7 @@
 // Host tool self-check: frame decoding/resync and the aggregation tree.
 #include "aggregate.hpp"
 #include "discover.hpp"
+#include "env.hpp"
 #include "os/paths.hpp"
 #include "session.hpp"
 #include "source.hpp"
@@ -523,6 +524,9 @@ int main() {
     fake_elf(root / "build/app.elf", 94);                                  // Xtensa, newest
     fs::last_write_time(root / "build/app.elf", fs::file_time_type::clock::now() + 10s);
     assert(elf_machine(root / "firmware/a/.pio/build/esp32dev/firmware.elf") == 94);
+    assert(elf_arch(root / "firmware/a/.pio/build/esp32dev/firmware.elf") == Arch::Xtensa);
+    assert(elf_arch(root / "firmware/b/.pio/build/stm/firmware.elf") == Arch::ArmV7M);
+    assert(!elf_arch(root / "firmware/a/platformio.ini").has_value());
     assert(find_elf(Arch::Xtensa, root) == root / "build/app.elf");         // newest of the matching ones
     assert(find_elf(Arch::ArmV7M, root) == root / "firmware/b/.pio/build/stm/firmware.elf");
     assert(!find_elf(Arch::RiscV32, root));                                  // nothing built for it
@@ -600,6 +604,51 @@ int main() {
         assert(extra_only.frames(0, 0x40001000) == (std::vector<std::string>{"extra_leaf"}));
         assert(extra_only.frames(1, 0x40005001) == (std::vector<std::string>{"0x40005000"}));
         assert(extra_only.frames(2, 0x400d2000) == (std::vector<std::string>{"0x400d1fff"}));
+
+        // kSleepPseudoPc: returns "[sleep]" without ELF/tool and is never sent to addr2line even when configured.
+        Symbolizer sleep_unconfigured({}, {});
+        assert(sleep_unconfigured.frames(0, kSleepPseudoPc) == (std::vector<std::string>{"[sleep]"}));
+        assert(sleep_unconfigured.stack_names(std::array{kSleepPseudoPc}) == (std::vector<std::string>{"[sleep]"}));
+        sleep_unconfigured.prepare(std::array{kSleepPseudoPc});
+        assert(sleep_unconfigured.frames(0, kSleepPseudoPc) == (std::vector<std::string>{"[sleep]"}));
+
+        const fs::path a2l_log = sym_root / "a2l.log";
+        {
+            ScopedEnv save_a2l_log("FAKE_ADDR2LINE_LOG", os::to_utf8(a2l_log));
+            Symbolizer sleep_sym(main_elf, tool);
+            Frame sleep_frame;
+            sleep_frame.arch = Arch::ArmV7M;
+            sleep_frame.ncores = 1;
+            sleep_frame.core = 0;
+            sleep_frame.stacks = {{2, {kSleepPseudoPc}}, {1, {0x400d1000}}};
+            sleep_sym.prepare(sleep_frame);
+            assert(sleep_sym.frames(0, kSleepPseudoPc) == (std::vector<std::string>{"[sleep]"}));
+            assert(sleep_sym.frames(0, 0x400d1000) == (std::vector<std::string>{"app_leaf"}));
+            std::ifstream a2l_in(a2l_log);
+            const std::string a2l_calls((std::istreambuf_iterator<char>(a2l_in)), {});
+            assert(a2l_calls.find("0x400d1000") != std::string::npos);
+            assert(a2l_calls.find("fffffff0") == std::string::npos);
+        }
+
+        // Aggregator stats_json with cpu_hz == 0 emits "overhead_pct":null (valid JSON, no NaN).
+        {
+            Symbolizer probe_sym({}, {});
+            Aggregator probe_agg(probe_sym);
+            Frame pf1, pf2;
+            pf1.arch = pf2.arch = Arch::ArmV7M;
+            pf1.ncores = pf2.ncores = 1;
+            pf1.core = pf2.core = 0;
+            pf1.cpu_hz = pf2.cpu_hz = 0;
+            pf1.samples = 3;
+            pf2.samples = 4;
+            pf1.stacks = {{3, {kSleepPseudoPc}}};
+            pf2.stacks = {{4, {0x08001234}}};
+            probe_agg.add(pf1, 0ms);
+            probe_agg.add(pf2, 250ms);
+            const auto snap = nlohmann::json::parse(probe_agg.snapshot_json(std::nullopt, 0s));
+            assert(snap["stats"]["overhead_pct"].is_null());
+            assert(snap["stats"]["samples_per_s"].get<double>() > 0.0);
+        }
 
         fs::remove_all(sym_root);
     }

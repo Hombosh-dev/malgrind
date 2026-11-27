@@ -90,6 +90,8 @@ void base_family_defaults() {
     assert(stub.openocd_interface_args("303a", "1001").empty());
     assert(stub.openocd_target_cfg({}, "").empty());
     assert(stub.probe_target_options().empty());
+    assert(stub.probe_sample_mode() == ProbeSampleMode::Auto);
+    assert(!stub.probe_target_arch("target/stm32f4x.cfg").has_value());
     assert(!stub.handles_project({}, ""));
 
     auto threw = [](auto&& fn) {
@@ -143,6 +145,13 @@ void esp32_metadata_and_usb() {
                         {"target/esp32c3.cfg", "ESP32-C3"},
                         {"target/esp32c6.cfg", "ESP32-C6"},
                     }));
+    assert(esp.probe_sample_mode() == ProbeSampleMode::HaltResume);
+    assert(esp.probe_sample_mode("target/esp32s3.cfg") == ProbeSampleMode::HaltResume);
+    assert(esp.probe_target_arch("target/esp32.cfg") == Arch::Xtensa);
+    assert(esp.probe_target_arch("target/esp32s3.cfg") == Arch::Xtensa);
+    assert(esp.probe_target_arch("target/esp32c3.cfg") == Arch::RiscV32);
+    assert(esp.probe_target_arch("target/esp32c6.cfg") == Arch::RiscV32);
+    assert(!esp.probe_target_arch("target/stm32f4x.cfg").has_value());
 }
 
 void project_matching_and_problems() {

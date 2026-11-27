@@ -7,7 +7,7 @@ file(STRINGS ${CMAKE_SOURCE_DIR}/VERSION MALGRIND_VERSION LIMIT_COUNT 1)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/VERSION)
 
 add_library(malgrind_host STATIC
-    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/series.cpp src/memcheck.cpp src/diff.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/openocd.cpp src/probe_config.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
+    src/wire.cpp src/symbols.cpp src/aggregate.cpp src/series.cpp src/memcheck.cpp src/diff.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/openocd.cpp src/openocd_source.cpp src/probe_config.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
     src/families/registry.cpp src/families/esp32.cpp
     src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
@@ -142,6 +142,11 @@ malgrind_add_test(openocd tests/test_openocd.cpp)
 target_link_libraries(test_openocd PRIVATE malgrind_host)
 target_compile_definitions(test_openocd PRIVATE MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
 add_dependencies(test_openocd fake_tool)
+
+malgrind_add_test(openocd_source tests/test_openocd_source.cpp)
+target_link_libraries(test_openocd_source PRIVATE malgrind_host)
+target_compile_definitions(test_openocd_source PRIVATE MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_openocd_source fake_tool)
 
 malgrind_add_test(probe_config tests/test_probe_config.cpp)
 target_link_libraries(test_probe_config PRIVATE malgrind_host)

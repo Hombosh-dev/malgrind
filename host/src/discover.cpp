@@ -12,14 +12,20 @@ namespace malgrind::host {
 
 namespace {
 
-bool machine_matches(Arch arch, std::uint16_t machine) {
-    switch (arch) {
-        case Arch::Host: return machine == 62 || machine == 183 || machine == 3; // x86-64, aarch64, x86
-        case Arch::Xtensa: return machine == 94;
-        case Arch::ArmV7M: return machine == 40;
-        case Arch::RiscV32: return machine == 243;
+std::optional<Arch> arch_for_machine(std::uint16_t machine) noexcept {
+    switch (machine) {
+        case 62:
+        case 183:
+        case 3: return Arch::Host; // x86-64, aarch64, x86
+        case 94: return Arch::Xtensa;
+        case 40: return Arch::ArmV7M;
+        case 243: return Arch::RiscV32;
+        default: return std::nullopt;
     }
-    return false;
+}
+
+bool machine_matches(Arch arch, std::uint16_t machine) {
+    return arch_for_machine(machine) == arch;
 }
 
 // Directories that may hold a build: base and base/firmware/*.
@@ -41,6 +47,11 @@ std::optional<std::uint16_t> elf_machine(const fs::path& file) {
     if (h[0] != 0x7f || h[1] != 'E' || h[2] != 'L' || h[3] != 'F') return std::nullopt;
     const bool little = h[5] != 2; // EI_DATA: 1 = little endian, 2 = big endian
     return static_cast<std::uint16_t>(little ? h[18] | (h[19] << 8) : (h[18] << 8) | h[19]);
+}
+
+std::optional<Arch> elf_arch(const fs::path& file) {
+    const auto machine = elf_machine(file);
+    return machine ? arch_for_machine(*machine) : std::nullopt;
 }
 
 std::optional<fs::path> find_project(const fs::path& base, std::string& why) {

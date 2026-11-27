@@ -415,6 +415,19 @@ public:
             {"target/esp32c6.cfg", "ESP32-C6"},
         };
     }
+    [[nodiscard]] ProbeSampleMode probe_sample_mode(std::string_view /*target_cfg*/) const override {
+        return ProbeSampleMode::HaltResume;
+    }
+    [[nodiscard]] std::optional<Arch> probe_target_arch(std::string_view target_cfg) const override {
+        const std::string lower = lower_ascii(target_cfg);
+        if (lower.find("esp32c3") != std::string::npos || lower.find("esp32c6") != std::string::npos ||
+            lower.find("esp32c2") != std::string::npos || lower.find("esp32c5") != std::string::npos ||
+            lower.find("esp32h2") != std::string::npos || lower.find("esp32p4") != std::string::npos) {
+            return Arch::RiscV32;
+        }
+        if (lower.find("esp32") != std::string::npos) return Arch::Xtensa;
+        return std::nullopt;
+    }
 };
 
 } // namespace

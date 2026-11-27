@@ -203,6 +203,7 @@ std::string Aggregator::stats_json(Ms at) const {
 
     double hits_per_s = 0, overhead = 0;
     unsigned cores = 0;
+    unsigned overhead_cores = 0;
     for (const auto& [core, frames] : per_core) {
         const double span = std::chrono::duration<double>(frames.back()->first - frames.front()->first).count();
         if (frames.size() < 2 || span <= 0) continue;
@@ -211,18 +212,22 @@ std::string Aggregator::stats_json(Ms at) const {
         for (const auto* e : frames | std::views::drop(1)) {
             const Frame& f = e->second;
             hits += f.samples + f.dropped;
-            cost += double(f.isr_avg) * (f.samples + f.dropped) + double(f.flush_cyc) / f.ncores;
+            const unsigned ncores = std::max<unsigned>(1, f.ncores);
+            cost += double(f.isr_avg) * (f.samples + f.dropped) + double(f.flush_cyc) / ncores;
         }
         hits_per_s += hits / span;
-        overhead += cost / (frames.back()->second.cpu_hz * span);
+        if (frames.back()->second.cpu_hz > 0) {
+            ++overhead_cores;
+            overhead += cost / (frames.back()->second.cpu_hz * span);
+        }
     }
     const Frame& f = std::prev(end)->second;
     const auto dropped = dropped_prefix_[static_cast<std::size_t>(std::prev(end) - frames_.begin())];
     return std::format(
         R"({{"arch":"{}","ncores":{},"cpu_mhz":{},"rate_hz":{},"samples_per_s":{:.1f},"dropped":{},"overhead_pct":{},"isr_max_cycles":{},"duration_ms":{},"caps":{},"agent_state":{}}})",
         arch_name(f.arch), f.ncores, f.cpu_hz / 1e6, f.rate_hz, hits_per_s, dropped,
-        cores ? std::format("{:.3f}", 100 * overhead / cores) : "null", f.isr_max, duration_unlocked().count(),
-        caps_, agent_state_);
+        overhead_cores ? std::format("{:.3f}", 100 * overhead / overhead_cores) : "null", f.isr_max,
+        duration_unlocked().count(), caps_, agent_state_);
 }
 
 std::string Aggregator::folded(std::optional<unsigned> core, Ms window, std::optional<Ms> at) const {

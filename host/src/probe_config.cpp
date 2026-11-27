@@ -206,6 +206,8 @@ ProbeConfigResult resolve_probe_config(const ProbeConfigRequest& req) {
 
     cfg.openocd_args.emplace_back("-f");
     cfg.openocd_args.push_back(cfg.target_cfg);
+    cfg.sample_mode = family != nullptr ? family->probe_sample_mode(cfg.target_cfg) : ProbeSampleMode::Auto;
+    cfg.target_arch = family != nullptr ? family->probe_target_arch(cfg.target_cfg) : std::nullopt;
 
     return {std::move(cfg), {}};
 }

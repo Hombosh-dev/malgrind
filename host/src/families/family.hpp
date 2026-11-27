@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,12 @@ struct ProbeTargetOption {
     std::string cfg;                    // OpenOCD config path relative to scripts dir, e.g. "target/esp32s3.cfg"
     std::string label;                  // Human-readable target label, e.g. "ESP32-S3"
     bool operator==(const ProbeTargetOption&) const = default;
+};
+
+enum class ProbeSampleMode {
+    Auto,
+    DwtPcsr,
+    HaltResume,
 };
 
 class Family {
@@ -88,6 +95,8 @@ public:
     [[nodiscard]] virtual bool handles_project(const ProjectInfo& project, const std::string& env) const;
     [[nodiscard]] virtual std::string openocd_target_cfg(const ProjectInfo& project, const std::string& env) const;
     [[nodiscard]] virtual std::vector<ProbeTargetOption> probe_target_options() const;
+    [[nodiscard]] virtual ProbeSampleMode probe_sample_mode(std::string_view target_cfg = {}) const;
+    [[nodiscard]] virtual std::optional<Arch> probe_target_arch(std::string_view target_cfg) const;
 };
 
 [[nodiscard]] const std::vector<const Family*>& all_families();

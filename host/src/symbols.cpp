@@ -22,6 +22,7 @@ std::uint32_t lookup_addr(std::size_t index, std::uint32_t pc) { return index ==
 void append_missing(const std::unordered_map<std::uint32_t, std::vector<std::string>>& cache,
                     std::span<const std::uint32_t> pcs, std::vector<std::uint32_t>& todo) {
     for (std::size_t i = 0; i < pcs.size(); ++i) {
+        if (pcs[i] == kSleepPseudoPc) continue;
         if (const auto a = lookup_addr(i, pcs[i]); !cache.contains(a)) todo.push_back(a);
     }
 }
@@ -200,6 +201,7 @@ void Symbolizer::prepare_addrs(std::vector<std::uint32_t> todo) {
 }
 
 std::vector<std::string> Symbolizer::frames(std::size_t index, std::uint32_t pc) const {
+    if (pc == kSleepPseudoPc) return {"[sleep]"};
     std::scoped_lock lock(mutex_);
     const auto it = cache_.find(lookup_addr(index, pc));
     return it != cache_.end() ? it->second : std::vector<std::string>{std::format("0x{:x}", pc)};
@@ -209,7 +211,9 @@ std::vector<std::string> Symbolizer::stack_names(std::span<const std::uint32_t> 
     std::vector<std::string> out;
     std::scoped_lock lock(mutex_);
     for (const auto i : std::views::iota(std::size_t{0}, pcs.size()) | std::views::reverse) {
-        if (const auto it = cache_.find(lookup_addr(i, pcs[i])); it != cache_.end()) {
+        if (pcs[i] == kSleepPseudoPc) {
+            out.emplace_back("[sleep]");
+        } else if (const auto it = cache_.find(lookup_addr(i, pcs[i])); it != cache_.end()) {
             for (const auto& name : it->second | std::views::reverse) out.push_back(name);
         } else {
             out.push_back(std::format("0x{:x}", pcs[i]));
