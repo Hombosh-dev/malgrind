@@ -22,7 +22,7 @@ export function boardDetail(device: Pick<Device, 'name' | 'usb'>): string {
     device.usb?.serial && `serial ${device.usb.serial}`
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(' | ');
 }
 
 // USB location & serial for a debug probe without repeating its title when name == title.
@@ -33,7 +33,7 @@ export function probeDetail(device: Pick<Device, 'name' | 'title' | 'usb'>): str
     device.usb?.serial && `serial ${device.usb.serial}`,
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(' | ');
 }
 
 // Status text and tone for a debug probe tile after inspecting it.
@@ -42,12 +42,12 @@ export function probeTileStatus(
   error: string
 ): { text: string; tone: 'muted' | 'good' | 'bad' } {
   if (error) return { text: error, tone: 'bad' };
-  if (!probe) return { text: 'Checking OpenOCD & probe config…', tone: 'muted' };
+  if (!probe) return { text: 'Checking OpenOCD & probe config...', tone: 'muted' };
   if (probe.openocd && !probe.openocd.found) {
     return { text: probe.error || `OpenOCD (${probe.openocd.package}) was not found`, tone: 'bad' };
   }
   if (probe.probe_config) {
-    return { text: `● Ready · ${probe.probe_config.target_cfg}`, tone: 'good' };
+    return { text: `Ready | ${probe.probe_config.target_cfg}`, tone: 'good' };
   }
   if (probe.error) {
     return {

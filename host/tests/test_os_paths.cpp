@@ -37,7 +37,7 @@ void exe_name_checks() {
 }
 
 void utf8_roundtrip_checks() {
-    const std::string sample = "проєкт/ü";
+    const std::string sample = "\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82/\xc3\xbc";
     assert(os::to_utf8(os::from_utf8(sample)) == sample);
     assert(os::to_utf8(os::from_utf8("")).empty());
 }
@@ -46,8 +46,8 @@ void env_and_user_data_dir_checks() {
     constexpr const char* kTestVar = "MALGRIND_TEST_ENV_PATH";
     os::unset_env(kTestVar);
     assert(!os::get_env(kTestVar).has_value());
-    os::set_env(kTestVar, "проєкт/value");
-    assert(os::get_env(kTestVar) == std::optional<std::string>{"проєкт/value"});
+    os::set_env(kTestVar, "\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82/value");
+    assert(os::get_env(kTestVar) == std::optional<std::string>{"\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82/value"});
     os::set_env(kTestVar, "");
     assert(os::get_env(kTestVar) == std::optional<std::string>{""});
     os::unset_env(kTestVar);
@@ -80,7 +80,7 @@ void safe_projects_root_checks() {
     assert(os::safe_projects_root_for(os::Kind::Windows, win_space, {}, "D:") == os::from_utf8("D:/.malgrind/projects"));
     assert(os::safe_projects_root_for(os::Kind::Windows, win_space, {}, "") == os::from_utf8("C:/.malgrind/projects"));
 
-    const auto win_nonascii = os::from_utf8("C:\\Users\\Іван\\AppData\\Local");
+    const auto win_nonascii = os::from_utf8("C:\\Users\\\xd0\x86\xd0\xb2\xd0\xb0\xd0\xbd\\AppData\\Local");
     assert(os::safe_projects_root_for(os::Kind::Windows, win_nonascii, {}, "C:") == os::from_utf8("C:/.malgrind/projects"));
 
     assert(!os::safe_projects_root().empty());

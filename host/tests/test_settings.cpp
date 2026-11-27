@@ -28,7 +28,7 @@ bool has_env_starting(const Invocation& inv, std::string_view prefix) {
 
 void split_and_join_agree() {
     for (const Words& words : {Words{"pio", "run"}, Words{"a b", "c"}, Words{"it's"}, Words{"say \"hi\""}, Words{"", "x"}, Words{"back\\slash"},
-                               Words{"$(id)", "`x`", "a;b"}, Words{"ünï"}, Words{"line\nbreak"}, Words{"-DX=\"a b\""}}) {
+                               Words{"$(id)", "`x`", "a;b"}, Words{"\xc3\xbcn\xc3\xaf"}, Words{"line\nbreak"}, Words{"-DX=\"a b\""}}) {
         const auto text = join_command(words);
         assert(split_command(text) == words && !text.empty());
     }

@@ -22,7 +22,7 @@
   {#if focus && data.series && data.series.length > 0}
     <div class="strip">
       <Series
-        title={`Samples/s · ${focus}`}
+        title={`Samples/s | ${focus}`}
         height={110}
         series={[{ label: 'Samples/s', color: 'var(--accent)', points: data.series }]}
         formatY={formatSamples}

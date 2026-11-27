@@ -41,7 +41,7 @@
 
   function sortIndicator(key: TaskSortKey): string {
     if (sortKey !== key) return '';
-    return sortDir === 'asc' ? '↑' : '↓';
+    return sortDir === 'asc' ? '^' : 'v';
   }
 
   function ariaSort(key: TaskSortKey): 'ascending' | 'descending' | 'none' {
@@ -62,7 +62,7 @@
     <div class="summary">
       <span class="muted">{sortedTasks.length} {sortedTasks.length === 1 ? 'task' : 'tasks'}</span>
       {#if warnCount > 0}
-        <span class="warn-summary" role="status">⚠ {warnCount} low stack (&lt; 512 B)</span>
+        <span class="warn-summary" role="status">[!] {warnCount} low stack (&lt; 512 B)</span>
       {/if}
     </div>
 
@@ -99,7 +99,7 @@
               <td class="state">{taskStateLabel(row.state)}</td>
               <td class="num stack" class:warn-cell={row.warn}>
                 {#if row.warn}
-                  <span class="warn-badge" title="Stack watermark below 512 B" aria-label="Low stack warning">⚠</span>
+                  <span class="warn-badge" title="Stack watermark below 512 B" aria-label="Low stack warning">[!]</span>
                 {/if}
                 <span>{formatBytes(row.stack_hwm)}</span>
               </td>

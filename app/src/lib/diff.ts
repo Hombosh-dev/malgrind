@@ -55,13 +55,13 @@ export function diffColor(deltaPct: number): string {
   return deltaPct > 0 ? lerpHex(POS_LOW, POS_HIGH, t) : lerpHex(NEG_LOW, NEG_HIGH, t);
 }
 
-/** Format a percentage-point delta as `+12.3%`, `−4.5%`, or `0.0%`. */
+/** Format a percentage-point delta as `+12.3%`, `-4.5%`, or `0.0%`. */
 export function formatDelta(deltaPct: number): string {
   if (!Number.isFinite(deltaPct)) return '0.0%';
   const tenths = Math.round(Math.abs(deltaPct) * 10);
   if (tenths === 0) return '0.0%';
   const abs = (tenths / 10).toFixed(1);
-  return deltaPct > 0 ? `+${abs}%` : `−${abs}%`;
+  return deltaPct > 0 ? `+${abs}%` : `-${abs}%`;
 }
 
 function compareStrings(a: string, b: string): number {

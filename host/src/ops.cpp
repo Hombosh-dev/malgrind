@@ -342,10 +342,10 @@ std::string probe_rate_hint(ProbeSampleMode mode) {
         case ProbeSampleMode::DwtPcsr:
             return "DWT PCSR sampling (non-intrusive, no target halt; typically 200+ samples/s)";
         case ProbeSampleMode::HaltResume:
-            return "Halt/resume sampling (pauses core briefly per sample; typically 10–50 samples/s)";
+            return "Halt/resume sampling (pauses core briefly per sample; typically 10-50 samples/s)";
         case ProbeSampleMode::Auto:
         default:
-            return "Auto (uses non-intrusive DWT PCSR 200+ samples/s if supported, else halt/resume ~10–50 samples/s)";
+            return "Auto (uses non-intrusive DWT PCSR 200+ samples/s if supported, else halt/resume ~10-50 samples/s)";
     }
 }
 

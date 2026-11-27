@@ -316,7 +316,7 @@
 
 <div class="page">
   <header>
-    <span class="logo">🔥 malgrind</span>
+    <span class="logo">malgrind</span>
     <input class="name" bind:value={name} onblur={() => save({ name })} onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Run name" />
     {#if live}<span class="live"><span class="dot"></span>LIVE</span>{:else}<span class="muted">{formatDuration(duration)}</span>{/if}
     {#if run.port}<span class="muted stat" title="The board this run was recorded from">{run.port}</span>{/if}
@@ -338,7 +338,7 @@
         aria-expanded={showExport}
         onclick={() => (showExport = !showExport)}
       >
-        {exporting ? 'Exporting…' : 'Export ▾'}
+        {exporting ? 'Exporting...' : 'Export v'}
       </button>
       {#if showExport}
         <div class="export-menu" role="menu" aria-label="Export run">
@@ -375,13 +375,13 @@
     </div>
   {/if}
   {#if showNotes}
-    <textarea class="notes" bind:value={notes} onblur={() => save({ notes })} placeholder="Notes about this run…"></textarea>
+    <textarea class="notes" bind:value={notes} onblur={() => save({ notes })} placeholder="Notes about this run..."></textarea>
   {/if}
   {#each notices as text, i}
-    <div class="notice">{text}<button class="x" onclick={() => (notices = notices.filter((_, j) => j !== i))} aria-label="Dismiss">×</button></div>
+    <div class="notice">{text}<button class="x" onclick={() => (notices = notices.filter((_, j) => j !== i))} aria-label="Dismiss">x</button></div>
   {/each}
   {#if exportNotice}
-    <div class="notice">{exportNotice}<button class="x" onclick={() => (exportNotice = '')} aria-label="Dismiss">×</button></div>
+    <div class="notice">{exportNotice}<button class="x" onclick={() => (exportNotice = '')} aria-label="Dismiss">x</button></div>
   {/if}
   {#if !live && startsLive}<div class="notice">{isProbeRun ? 'Debug probe sampling stopped. The run is saved.' : 'The board stopped sending data (unplugged, or reset?). The run is saved.'}</div>{/if}
   {#if error}<div class="notice bad" role="alert">{error}</div>{/if}
@@ -415,7 +415,7 @@
           </select>
         </label>
       </div>
-      {#if live && !isProbeRun}<button class="remove" onclick={() => onRemoveAgent(run.device_id || run.port)}>Remove agent…</button>{/if}
+      {#if live && !isProbeRun}<button class="remove" onclick={() => onRemoveAgent(run.device_id || run.port)}>Remove agent...</button>{/if}
     </nav>
 
     <main>

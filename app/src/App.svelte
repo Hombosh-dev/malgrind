@@ -65,7 +65,7 @@
     <p class="muted">{fatal}</p>
   </main>
 {:else if !sidecar || !hello}
-  <main class="fatal"><p class="muted">Starting…</p></main>
+  <main class="fatal"><p class="muted">Starting...</p></main>
 {:else if route.name === 'start'}
   <Start
     {sidecar}

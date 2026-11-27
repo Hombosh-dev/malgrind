@@ -93,7 +93,7 @@
   {#if error}<div class="error" role="alert">{error}</div>{/if}
 
   {#if !loaded}
-    <p class="empty muted">Loading…</p>
+    <p class="empty muted">Loading...</p>
   {:else if first}
     <section class="welcome">
       <h1>Profile the firmware on your board</h1>
@@ -127,14 +127,14 @@
                 <b class="name">{project.name}</b>
                 {#if project.problem}<span class="tag warn" title={project.problem}>folder not found</span>{/if}
                 <span class="tag">{sourceLabel(project)}</span>
-                <span class="muted when">{project.run_count ? `${project.run_count} run${project.run_count === 1 ? '' : 's'} · ${formatWhen(project.last_run ?? '')}` : 'no runs yet'}</span>
+                <span class="muted when">{project.run_count ? `${project.run_count} run${project.run_count === 1 ? '' : 's'} | ${formatWhen(project.last_run ?? '')}` : 'no runs yet'}</span>
               </button>
-              <button class="icon" title="Rename" onclick={() => ((renaming = project.id), (draft = project.name))}>✎</button>
+              <button class="icon" title="Rename" onclick={() => ((renaming = project.id), (draft = project.name))}>Edit</button>
               {#if deleting === project.id}
                 <button class="link danger-link" onclick={() => remove('project', project.id)}>Delete? (its runs stay)</button>
                 <button class="link" onclick={() => (deleting = null)}>No</button>
               {:else}
-                <button class="icon" title="Delete" onclick={() => (deleting = project.id)}>🗑</button>
+                <button class="icon" title="Delete" onclick={() => (deleting = project.id)}>Del</button>
               {/if}
             {/if}
           </li>
@@ -176,20 +176,20 @@
                   <span class="name-wrap">
                     <b class="name">{run.name || run.id}</b>
                     {#if run.notes?.trim()}
-                      <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
+                      <span class="muted note-preview" title={run.notes}>Note: {run.notes.trim()}</span>
                     {/if}
                   </span>
                   <span class="muted when">{formatWhen(run.started)}</span>
-                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` | ${run.ncores} cores` : ''}</span>
                   <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
                   {#if run.bytes !== undefined}<span class="tag">{formatBytes(run.bytes)}</span>{/if}
                 </button>
-                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>✎</button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>Edit</button>
                 {#if deleting === run.id}
                   <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
                   <button class="link" onclick={() => (deleting = null)}>No</button>
                 {:else}
-                  <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>🗑</button>
+                  <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>Del</button>
                 {/if}
               {/if}
             </li>
@@ -233,7 +233,7 @@
   .when { font-size: 12px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--line); }
   .tag.warn { color: var(--danger); }
-  .icon, .link { background: none; border: 0; padding: 4px 8px; color: var(--muted); }
+  .icon, .link { background: none; border: 0; padding: 4px 8px; font-size: 12px; color: var(--muted); }
   .icon:hover, .link:hover { color: var(--fg); }
   .danger-link { color: var(--danger); }
   .rename { flex: 1; margin: 8px 18px; padding: 6px 10px; font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; }

@@ -33,8 +33,8 @@ describe('accessProblem', () => {
 
 describe('boardDetail', () => {
   it('tells identical boards apart by name, socket and serial number', () => {
-    expect(boardDetail({ name: 'usbserial-1410', usb: usb('3-3', '0001') })).toBe('usbserial-1410 · USB 3-3 · serial 0001');
-    expect(boardDetail({ name: 'usbserial-1420', usb: usb('3-4', '') })).toBe('usbserial-1420 · USB 3-4');
+    expect(boardDetail({ name: 'usbserial-1410', usb: usb('3-3', '0001') })).toBe('usbserial-1410 | USB 3-3 | serial 0001');
+    expect(boardDetail({ name: 'usbserial-1420', usb: usb('3-4', '') })).toBe('usbserial-1420 | USB 3-4');
     expect(boardDetail({ name: 'usbserial-1430', usb: usb('', '') })).toBe('usbserial-1430');
     expect(boardDetail({ name: 'usbserial-1440', usb: null })).toBe('usbserial-1440');
     expect(boardDetail({ name: '', usb: null })).toBe('');
@@ -78,12 +78,12 @@ describe('boardFamily', () => {
 
 describe('probe helpers', () => {
   it('formats probe details without repeating matching title and name', () => {
-    expect(probeDetail({ name: 'ST-Link', title: 'ST-Link', usb: usb('1-2', 'ST01') })).toBe('USB 1-2 · serial ST01');
-    expect(probeDetail({ name: 'J-Link', title: 'SEGGER J-Link', usb: usb('1-3', '') })).toBe('J-Link · USB 1-3');
+    expect(probeDetail({ name: 'ST-Link', title: 'ST-Link', usb: usb('1-2', 'ST01') })).toBe('USB 1-2 | serial ST01');
+    expect(probeDetail({ name: 'J-Link', title: 'SEGGER J-Link', usb: usb('1-3', '') })).toBe('J-Link | USB 1-3');
   });
 
   it('reports probe tile status for checking, missing OpenOCD, ready, and target-needed states', () => {
-    expect(probeTileStatus(null, '')).toEqual({ text: 'Checking OpenOCD & probe config…', tone: 'muted' });
+    expect(probeTileStatus(null, '')).toEqual({ text: 'Checking OpenOCD & probe config...', tone: 'muted' });
     expect(probeTileStatus(null, 'failed')).toEqual({ text: 'failed', tone: 'bad' });
     expect(
       probeTileStatus(
@@ -111,7 +111,7 @@ describe('probe helpers', () => {
         },
         ''
       )
-    ).toEqual({ text: '● Ready · target/stm32f4x.cfg', tone: 'good' });
+    ).toEqual({ text: 'Ready | target/stm32f4x.cfg', tone: 'good' });
   });
 
   it('focuses no_flash for probes when OpenOCD is available even if target_cfg still needs to be picked', () => {

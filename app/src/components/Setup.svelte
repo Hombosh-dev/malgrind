@@ -53,7 +53,7 @@
     <h3>Before you can build firmware</h3>
     <ul>
       <li class:bad={!info.pio}>
-        <span class="mark" aria-hidden="true">{info.pio ? '✔' : '✘'}</span>
+        <span class="mark" aria-hidden="true">{info.pio ? 'OK' : 'X'}</span>
         <div class="grow">
           <b>PlatformIO</b>
           {#if info.pio}
@@ -66,12 +66,12 @@
           {/if}
         </div>
         {#if !info.pio}
-          <button class="btn small" onclick={install} disabled={installing || !info.python}>{installing ? 'Installing…' : 'Install PlatformIO'}</button>
+          <button class="btn small" onclick={install} disabled={installing || !info.python}>{installing ? 'Installing...' : 'Install PlatformIO'}</button>
         {/if}
       </li>
       {#if !info.git}
         <li class="soft">
-          <span class="mark" aria-hidden="true">–</span>
+          <span class="mark" aria-hidden="true">-</span>
           <div class="grow"><b>git</b> <span class="muted">is only needed to open projects from GitHub. Install it with your package manager if you want that.</span></div>
         </li>
       {/if}
@@ -87,7 +87,7 @@
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
   li { display: flex; align-items: center; gap: 12px; }
   .grow { flex: 1; font-size: 13px; }
-  .mark { width: 1.2em; color: var(--live); }
+  .mark { min-width: 1.6em; font-weight: 700; font-size: 12px; color: var(--live); }
   li.bad .mark { color: var(--danger); }
   li.soft .mark { color: var(--muted); }
   .error { color: var(--danger); margin: 10px 0 0; white-space: pre-wrap; }

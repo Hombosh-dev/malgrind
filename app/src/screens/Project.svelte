@@ -85,7 +85,7 @@
               onkeydown={(e) => (e.key === 'Enter' ? commitRename() : e.key === 'Escape' ? (renaming = false) : null)}
               onblur={commitRename} />
           {:else}
-            <h1>{project.name} <button class="icon" title="Rename the project" aria-label="Rename the project" onclick={() => ((renaming = true), (draft = project!.name))}>✎</button></h1>
+            <h1>{project.name} <button class="icon" title="Rename the project" aria-label="Rename the project" onclick={() => ((renaming = true), (draft = project!.name))}>Edit</button></h1>
           {/if}
           <p class="muted">
             <span class="tag">{sourceLabel(project)}</span>
@@ -93,7 +93,7 @@
           </p>
           {#if project.problem}<p class="error">{project.problem}</p>{/if}
         </div>
-        <button class="btn big" onclick={() => onProfile(project!)} disabled={!!project.problem && project.source !== 'none'}>Profile ▸</button>
+        <button class="btn big" onclick={() => onProfile(project!)} disabled={!!project.problem && project.source !== 'none'}>Profile &gt;</button>
       </div>
 
       {#if project.source === 'git' && !project.trusted}
@@ -146,15 +146,15 @@
                   <span class="name-wrap">
                     <b class="name">{run.name || run.id}</b>
                     {#if run.notes?.trim()}
-                      <span class="muted note-preview" title={run.notes}>📝 {run.notes.trim()}</span>
+                      <span class="muted note-preview" title={run.notes}>Note: {run.notes.trim()}</span>
                     {/if}
                   </span>
                   <span class="muted when">{formatWhen(run.started)}</span>
-                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` | ${run.ncores} cores` : ''}</span>
                   <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
                   {#if run.bytes !== undefined}<span class="tag">{formatBytes(run.bytes)}</span>{/if}
                 </button>
-                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => (editingRun = run.id)}>✎</button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => (editingRun = run.id)}>Edit</button>
               {/if}
             </li>
           {/each}
@@ -170,7 +170,7 @@
   section { max-width: 820px; margin: 0 auto; padding: 24px; }
   .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
   h1 { margin: 0 0 4px; font-size: 24px; }
-  .icon { background: none; border: 0; padding: 2px 6px; font-size: 15px; color: var(--muted); vertical-align: middle; }
+  .icon { background: none; border: 0; padding: 2px 6px; font-size: 12px; color: var(--muted); vertical-align: middle; }
   .icon:hover { color: var(--fg); }
   .rename { width: 100%; margin: 0 0 6px; padding: 6px 10px; font: 600 22px var(--font); color: var(--fg); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; }
   h2 { margin: 28px 0 8px; font-size: 15px; }

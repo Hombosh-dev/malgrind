@@ -229,7 +229,7 @@ ProbePlan make_probe_plan(const ProbePlanRequest& req) {
     plan.note = "No firmware will be modified or flashed. Profiles flat PCs via debug probe.";
     const std::string ocd_where = plan.openocd ? os::to_utf8(plan.openocd->exe) : "custom probe hook";
     const std::string sym_desc = plan.elf.empty() ? "none (raw addresses)" : os::to_utf8(plan.elf);
-    plan.summary = std::format("OpenOCD: {} ({}) · Interface: {} · Target: {} · Symbols: {} · {}",
+    plan.summary = std::format("OpenOCD: {} ({}) | Interface: {} | Target: {} | Symbols: {} | {}",
                                plan.config.package,
                                ocd_where,
                                plan.config.interface_desc,

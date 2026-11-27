@@ -103,12 +103,12 @@
       bind:value={draftNotes}
       onblur={handleNotesBlur}
       aria-label="Run notes"
-      placeholder="Notes about this run…"
+      placeholder="Notes about this run..."
       rows="3"
     ></textarea>
   </label>
   <div class="actions">
-    <button type="submit" class="btn small" disabled={submitting}>{submitting ? 'Saving…' : 'Save'}</button>
+    <button type="submit" class="btn small" disabled={submitting}>{submitting ? 'Saving...' : 'Save'}</button>
     <button type="button" class="btn ghost small" onmousedown={(e) => e.preventDefault()} onclick={cancel}>Cancel</button>
   </div>
 </form>

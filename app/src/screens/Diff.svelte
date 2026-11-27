@@ -31,10 +31,10 @@
     { key: 'name', label: 'Function', align: 'left' },
     { key: 'a_self', label: 'A self %', align: 'right' },
     { key: 'b_self', label: 'B self %', align: 'right' },
-    { key: 'delta_self', label: 'Δ self', align: 'right' },
+    { key: 'delta_self', label: 'Diff self', align: 'right' },
     { key: 'a_incl', label: 'A incl %', align: 'right' },
     { key: 'b_incl', label: 'B incl %', align: 'right' },
-    { key: 'delta_incl', label: 'Δ incl', align: 'right' },
+    { key: 'delta_incl', label: 'Diff incl', align: 'right' },
   ];
 
   let swapped = $state(false);
@@ -72,7 +72,7 @@
     const aPct = nodeSharePct(node.a, totalA);
     const bPct = nodeSharePct(node.b, totalB);
     const delta = nodeDeltaPct(node, totalA, totalB);
-    return `${node.name} · A ${aPct.toFixed(1)}% (${node.a}) → B ${bPct.toFixed(1)}% (${node.b}) · Δ ${formatDelta(delta)}`;
+    return `${node.name} | A ${aPct.toFixed(1)}% (${node.a}) -> B ${bPct.toFixed(1)}% (${node.b}) | diff ${formatDelta(delta)}`;
   }
 
   function renderFlame(res: DiffResult | null) {
@@ -121,9 +121,9 @@
   }
 
   function sortIndicator(col: TableColKey): string {
-    if (col === 'delta_self' && sortKey === 'abs_self') return '|Δ| ↓';
+    if (col === 'delta_self' && sortKey === 'abs_self') return '|d| v';
     if (sortKey !== col) return '';
-    return sortDir === 'asc' ? '↑' : '↓';
+    return sortDir === 'asc' ? '^' : 'v';
   }
 
   function ariaSort(col: TableColKey): 'ascending' | 'descending' | 'none' {
@@ -190,24 +190,24 @@
         {/each}
       </select>
     </label>
-    <button class="btn ghost small" type="button" onclick={() => (swapped = !swapped)}>Swap A ↔ B</button>
+    <button class="btn ghost small" type="button" onclick={() => (swapped = !swapped)}>Swap A &lt;-&gt; B</button>
   </TopBar>
 
   <div class="summary-bar">
     <div class="run-pill">
-      <span class="badge">A · Baseline</span>
+      <span class="badge">A - Baseline</span>
       <b class="run-name" title={runA.name || runA.id}>{runA.name || runA.id}</b>
       <span class="muted meta">{formatDuration(runA.duration_ms)}</span>
       {#if diff}<span class="samples">{diff.total_a.toLocaleString()} samples</span>{/if}
     </div>
-    <span class="arrow muted" aria-hidden="true">→</span>
+    <span class="arrow muted" aria-hidden="true">-&gt;</span>
     <div class="run-pill">
-      <span class="badge target">B · Target</span>
+      <span class="badge target">B - Target</span>
       <b class="run-name" title={runB.name || runB.id}>{runB.name || runB.id}</b>
       <span class="muted meta">{formatDuration(runB.duration_ms)}</span>
       {#if diff}<span class="samples">{diff.total_b.toLocaleString()} samples</span>{/if}
     </div>
-    {#if loading}<span class="muted status">Updating…</span>{/if}
+    {#if loading}<span class="muted status">Updating...</span>{/if}
   </div>
 
   {#if error}<div class="notice bad" role="alert">{error}</div>{/if}
@@ -221,7 +221,7 @@
             <span class="swatch pos" aria-hidden="true"></span>
             <span class="swatch neutral" aria-hidden="true"></span>
             <span class="swatch neg" aria-hidden="true"></span>
-            <span class="muted">Red = grew in B · Blue = shrank in B · Width = B</span>
+            <span class="muted">Red = grew in B | Blue = shrank in B | Width = B</span>
           </div>
         </div>
         <button
@@ -235,15 +235,15 @@
       </div>
 
       <p class="hover-line" class:muted={!hoveredFrame}>
-        {hoveredFrame || 'Hover a frame for A %, B %, and Δ % · Click a frame to zoom'}
+        {hoveredFrame || 'Hover a frame for A %, B %, and diff % | Click a frame to zoom'}
       </p>
 
       <div bind:this={flameHost} class="flame" class:hidden={!diff || diff.tree.value <= 0}></div>
       {#if loading && !diff}
-        <p class="muted empty">Computing comparison…</p>
+        <p class="muted empty">Computing comparison...</p>
       {:else if diff && diff.tree.value <= 0}
         <p class="muted empty">
-          No samples in run B{core !== 'all' ? ` on core ${core}` : ''} (frame widths come from B). Try Swap A ↔ B or another core.
+          No samples in run B{core !== 'all' ? ` on core ${core}` : ''} (frame widths come from B). Try Swap A &lt;-&gt; B or another core.
         </p>
       {/if}
     </section>
@@ -256,7 +256,7 @@
             type="search"
             class="filter-input"
             bind:value={filter}
-            placeholder="Filter functions…"
+            placeholder="Filter functions..."
             aria-label="Filter functions"
           />
         </div>

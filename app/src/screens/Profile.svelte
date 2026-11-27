@@ -143,8 +143,8 @@
   const chosenLine = $derived(
     chosen
       ? chosen.kind === 'probe'
-        ? [chosen.title || chosen.name, probeDetail(chosen)].filter(Boolean).join(' · ')
-        : [chosen.title, boardDetail(chosen) || chosen.name].filter(Boolean).join(' · ')
+        ? [chosen.title || chosen.name, probeDetail(chosen)].filter(Boolean).join(' | ')
+        : [chosen.title, boardDetail(chosen) || chosen.name].filter(Boolean).join(' | ')
       : ''
   );
 
@@ -231,7 +231,7 @@
             <div class="tile" class:wait={tile.access.ok && !tile.probe && !tile.error} class:denied={!tile.access.ok}>
               <button class="pick" disabled={!tile.probe || !tile.access.ok} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} on ${tile.name}`}>
                 <span class="tile-head">
-                  <span class="chipicon" aria-hidden="true">▦</span>
+                  <span class="chipicon" aria-hidden="true">MCU</span>
                   <span class="kind-pill">Serial port</span>
                 </span>
                 <span class="t">
@@ -243,15 +243,15 @@
                 <span class="status">
                   {#if !tile.access.ok}<span class="bad">{accessProblem(tile)}</span>
                   {:else if tile.error}<span class="bad">{tile.error}</span>
-                  {:else if !tile.probe}Listening for the agent…
+                  {:else if !tile.probe}Listening for the agent...
                   {:else if tile.probe.busy}<span class="bad">Busy: another program uses this port</span>
-                  {:else if tile.probe.agent}<span class="good">● malgrind agent running · {tile.probe.arch} · {tile.probe.ncores} cores · {tile.probe.cpu_mhz} MHz</span>
+                  {:else if tile.probe.agent}<span class="good">malgrind agent running | {tile.probe.arch} | {tile.probe.ncores} cores | {tile.probe.cpu_mhz} MHz</span>
                   {:else}No malgrind agent detected{/if}
                 </span>
               </button>
               {#if !tile.access.ok && tile.access.fixable}
                 <div class="grant">
-                  <button class="btn small" onclick={() => grant(tile)} disabled={tile.granting}>{tile.granting ? 'Waiting for your password…' : 'Grant access…'}</button>
+                  <button class="btn small" onclick={() => grant(tile)} disabled={tile.granting}>{tile.granting ? 'Waiting for your password...' : 'Grant access...'}</button>
                   <span class="muted small">asks for your password once, in the system's own window</span>
                   {#if tile.grantError}<pre class="bad">{tile.grantError}</pre>{/if}
                 </div>
@@ -259,7 +259,7 @@
                 <div class="foot">
                   {#if tile.chip}<span class="muted chip">{tile.chip}</span>{/if}
                   <button class="link" onclick={() => identify(tile)} disabled={tile.identifying || !tile.probe || tile.probe.busy} title="Asks the chip for its name. This resets the board.">
-                    {tile.identifying ? 'Asking the chip…' : 'Identify chip (resets the board)'}
+                    {tile.identifying ? 'Asking the chip...' : 'Identify chip (resets the board)'}
                   </button>
                 </div>
               {/if}
@@ -269,7 +269,7 @@
             <div class="tile" class:wait={!tile.probe && !tile.error}>
               <button class="pick" disabled={!tile.probe && !tile.error} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} debug probe`}>
                 <span class="tile-head">
-                  <span class="chipicon" aria-hidden="true">⌁</span>
+                  <span class="chipicon" aria-hidden="true">DBG</span>
                   <span class="kind-pill probe">Debug probe</span>
                 </span>
                 <span class="t">
@@ -282,7 +282,7 @@
                 </span>
               </button>
               <div class="foot">
-                <span class="muted chip">No flashing · OpenOCD</span>
+                <span class="muted chip">No flashing | OpenOCD</span>
               </div>
             </div>
           {/if}
@@ -322,7 +322,7 @@
     </section>
   {:else}
     <section>
-      <h1>{building ? 'Backing up the board, building with the agent, flashing…' : 'It did not finish'}</h1>
+      <h1>{building ? 'Backing up the board, building with the agent, flashing...' : 'It did not finish'}</h1>
       <p class="muted">The board's flash is saved first (about a minute the first time), so "Remove agent" can put your firmware back exactly.</p>
       <BuildLog {lines} busy={building} />
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -349,7 +349,7 @@
   .tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
   .kind-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
   .kind-pill.probe { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
-  .chipicon { font-size: 34px; color: var(--accent); line-height: 1; }
+  .chipicon { font-size: 12px; font-weight: 700; font-family: var(--mono); color: var(--accent); line-height: 1; letter-spacing: 0.5px; }
   .t { display: flex; flex-direction: column; }
   .t b { font-size: 16px; }
   .family { font-size: 12.5px; margin-top: 2px; }

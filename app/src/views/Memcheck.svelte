@@ -76,7 +76,7 @@
 
   function sortIndicator(key: LeakSortKey): string {
     if (sortKey !== key) return '';
-    return sortDir === 'asc' ? '↑' : '↓';
+    return sortDir === 'asc' ? '^' : 'v';
   }
 
   function ariaSort(key: LeakSortKey): 'ascending' | 'descending' | 'none' {
@@ -137,7 +137,7 @@
         <div class="metric">
           <span class="metric-label">Live heap</span>
           <strong class="metric-val">
-            {data.live_allocs} {data.live_allocs === 1 ? 'alloc' : 'allocs'} · {formatBytes(data.live_bytes)}
+            {data.live_allocs} {data.live_allocs === 1 ? 'alloc' : 'allocs'} | {formatBytes(data.live_bytes)}
           </strong>
         </div>
       </div>
@@ -159,7 +159,7 @@
 
     {#if data.dropped > 0}
       <div class="dropped-banner" role="status">
-        ⚠ {data.dropped} {data.dropped === 1 ? 'memory event was' : 'memory events were'} dropped on the target; leak and error counts may be incomplete.
+        [!] {data.dropped} {data.dropped === 1 ? 'memory event was' : 'memory events were'} dropped on the target; leak and error counts may be incomplete.
       </div>
     {/if}
 
@@ -264,7 +264,7 @@
                         toggleExpand(rowKey);
                       }}
                     >
-                      <span class="chev" aria-hidden="true">{isExpanded ? '▾' : '▸'}</span>
+                      <span class="chev" aria-hidden="true">{isExpanded ? 'v' : '>'}</span>
                       <span class="frame-name" class:muted={!frame}>{frame || '(unknown stack)'}</span>
                       {#if leak.stack.length > 1}
                         <span class="depth-badge">{leak.stack.length} frames</span>

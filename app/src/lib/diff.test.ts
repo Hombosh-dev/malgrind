@@ -82,32 +82,32 @@ describe('diffColor', () => {
 });
 
 describe('formatDelta', () => {
-  it('formats positive, negative (unicode minus), and zero deltas cleanly', () => {
+  it('formats positive, negative, and zero deltas cleanly', () => {
     expect(formatDelta(12.34)).toBe('+12.3%');
-    expect(formatDelta(-4.5)).toBe('−4.5%');
+    expect(formatDelta(-4.5)).toBe('-4.5%');
     expect(formatDelta(0)).toBe('0.0%');
     expect(formatDelta(-0)).toBe('0.0%');
     expect(formatDelta(0.04)).toBe('0.0%');
     expect(formatDelta(-0.04)).toBe('0.0%');
     expect(formatDelta(0.05)).toBe('+0.1%');
-    expect(formatDelta(-0.05)).toBe('−0.1%');
+    expect(formatDelta(-0.05)).toBe('-0.1%');
     expect(formatDelta(Number.NaN)).toBe('0.0%');
   });
 });
 
 describe('sortDiffFunctions', () => {
   const rows: DiffFunction[] = [
-    { name: 'zeta', a_self_pct: 10, b_self_pct: 15, a_incl_pct: 20, b_incl_pct: 30 }, // Δself +5, Δincl +10
-    { name: 'alpha', a_self_pct: 20, b_self_pct: 10, a_incl_pct: 50, b_incl_pct: 25 }, // Δself -10, Δincl -25
-    { name: 'beta', a_self_pct: 5, b_self_pct: 15, a_incl_pct: 15, b_incl_pct: 20 }, // Δself +10, Δincl +5
-    { name: 'gamma', a_self_pct: 30, b_self_pct: 30, a_incl_pct: 40, b_incl_pct: 40 }, // Δself 0, Δincl 0
+    { name: 'zeta', a_self_pct: 10, b_self_pct: 15, a_incl_pct: 20, b_incl_pct: 30 }, // d_self +5, d_incl +10
+    { name: 'alpha', a_self_pct: 20, b_self_pct: 10, a_incl_pct: 50, b_incl_pct: 25 }, // d_self -10, d_incl -25
+    { name: 'beta', a_self_pct: 5, b_self_pct: 15, a_incl_pct: 15, b_incl_pct: 20 }, // d_self +10, d_incl +5
+    { name: 'gamma', a_self_pct: 30, b_self_pct: 30, a_incl_pct: 40, b_incl_pct: 40 }, // d_self 0, d_incl 0
   ];
 
   it('defaults to abs_self descending with deterministic name tie-breaking and does not mutate input', () => {
     const snapshot = rows.map((r) => r.name);
     const sorted = sortDiffFunctions(rows);
     expect(rows.map((r) => r.name)).toEqual(snapshot);
-    // alpha and beta both have |Δself| = 10 -> alpha before beta alphabetically
+    // alpha and beta both have |d_self| = 10 -> alpha before beta alphabetically
     expect(sorted.map((r) => r.name)).toEqual(['alpha', 'beta', 'zeta', 'gamma']);
   });
 

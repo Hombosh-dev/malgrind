@@ -92,7 +92,7 @@
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <div class="actions">
       <button class="btn danger" disabled={(rebuild && !project) || !device || working} onclick={remove}>
-        {working ? 'Flashing…' : rebuild ? 'Rebuild & flash' : 'Restore & flash'}
+        {working ? 'Flashing...' : rebuild ? 'Rebuild & flash' : 'Restore & flash'}
       </button>
       <button class="btn ghost" disabled={working} onclick={onCancel}>Cancel</button>
     </div>

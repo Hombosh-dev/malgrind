@@ -9,16 +9,16 @@ export function formatDuration(ms: number): string {
   return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`;
 }
 
-// "125.3 samples/s · 0 dropped · — overhead" (handles null/missing overhead cleanly without "null%" or "NaN%")
+// "125.3 samples/s | 0 dropped | - overhead" (handles null/missing overhead cleanly without "null%" or "NaN%")
 export function formatRunStats(stats: Pick<RunStats, 'samples_per_s' | 'dropped' | 'overhead_pct'>): string {
   const rate =
-    stats.samples_per_s !== undefined && Number.isFinite(stats.samples_per_s) ? String(stats.samples_per_s) : '–';
+    stats.samples_per_s !== undefined && Number.isFinite(stats.samples_per_s) ? String(stats.samples_per_s) : '-';
   const dropped = stats.dropped !== undefined && Number.isFinite(stats.dropped) ? stats.dropped : 0;
   const overhead =
     stats.overhead_pct !== undefined && stats.overhead_pct !== null && Number.isFinite(stats.overhead_pct)
       ? `${stats.overhead_pct} %`
-      : '—';
-  return `${rate} samples/s · ${dropped} dropped · ${overhead} overhead`;
+      : '-';
+  return `${rate} samples/s | ${dropped} dropped | ${overhead} overhead`;
 }
 
 export function isProbeDeviceId(deviceId?: string | null): boolean {

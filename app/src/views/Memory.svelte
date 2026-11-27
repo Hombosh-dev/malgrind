@@ -36,10 +36,10 @@
         <div class="card-head">
           <h3>{regionTitle(region.name, region.region)}</h3>
           <div class="stats">
-            <span><span class="muted">Free</span> <b>{latest ? formatBytes(latest[1]) : '–'}</b></span>
-            <span><span class="muted">Min free</span> <b>{latest ? formatBytes(latest[2]) : '–'}</b></span>
-            <span><span class="muted">Largest block</span> <b>{latest ? formatBytes(latest[3]) : '–'}</b></span>
-            <span><span class="muted">Total</span> <b>{latest ? formatBytes(latest[4]) : '–'}</b></span>
+            <span><span class="muted">Free</span> <b>{latest ? formatBytes(latest[1]) : '-'}</b></span>
+            <span><span class="muted">Min free</span> <b>{latest ? formatBytes(latest[2]) : '-'}</b></span>
+            <span><span class="muted">Largest block</span> <b>{latest ? formatBytes(latest[3]) : '-'}</b></span>
+            <span><span class="muted">Total</span> <b>{latest ? formatBytes(latest[4]) : '-'}</b></span>
           </div>
         </div>
         <Series

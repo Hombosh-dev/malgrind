@@ -49,17 +49,17 @@ void windows_command_line_checks() {
     assert(os::windows_command_line({"plain", "abc/def"}) == L"plain abc/def");
     assert(os::windows_command_line({"a b", "c\"d", "e\\\\"}) == L"\"a b\" \"c\\\"d\" e\\\\");
     assert(os::windows_command_line({"a b\\", "x\\\"y", "tab\there"}) == L"\"a b\\\\\" \"x\\\\\\\"y\" \"tab\there\"");
-    assert(os::windows_command_line({"проєкт ü"}) == L"\"проєкт ü\"");
+    assert(os::windows_command_line({"\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82 \xc3\xbc"}) == L"\"\u043f\u0440\u043e\u0454\u043a\u0442 \u00fc\"");
 }
 
 void run_lines_checks() {
     std::vector<std::string> lines;
     const int code = os::run_lines(
-        {MALGRIND_HELPER_ECHO, "a b", "c\"d", "e\\\\", "проєкт ü"},
+        {MALGRIND_HELPER_ECHO, "a b", "c\"d", "e\\\\", "\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82 \xc3\xbc"},
         {"HELPER_VAR=hello world"},
         [&](std::string_view line) { lines.emplace_back(line); });
     assert(code == 0);
-    assert((lines == std::vector<std::string>{"a b", "c\"d", "e\\\\", "проєкт ü", "HELPER_VAR=hello world"}));
+    assert((lines == std::vector<std::string>{"a b", "c\"d", "e\\\\", "\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82 \xc3\xbc", "HELPER_VAR=hello world"}));
 
     // Also verify stderr merging, \r line splitting, and non-zero exit code without a shell.
     std::vector<std::string> streamed;
@@ -82,8 +82,8 @@ void capture_and_run_checks() {
     os::unset_env("HELPER_EXIT");
     os::set_env("HELPER_ERR", "discarded stderr");
 
-    const std::string out = os::capture({MALGRIND_HELPER_ECHO, "", "a b", "c\"d", "e\\\\", "проєкт ü"});
-    assert(out == "\na b\nc\"d\ne\\\\\nпроєкт ü\nHELPER_VAR=\n");
+    const std::string out = os::capture({MALGRIND_HELPER_ECHO, "", "a b", "c\"d", "e\\\\", "\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82 \xc3\xbc"});
+    assert(out == "\na b\nc\"d\ne\\\\\n\xd0\xbf\xd1\x80\xd0\xbe\xd1\x94\xd0\xba\xd1\x82 \xc3\xbc\nHELPER_VAR=\n");
 
     os::unset_env("HELPER_ERR");
     assert(os::capture({}).empty());

@@ -16,7 +16,7 @@
     <span class="summary">
       <span class="slot">A</span>
       <b class="label">{selected[0].name || selected[0].id}</b>
-      <span class="muted">· select 1 more run as B</span>
+      <span class="muted">- select 1 more run as B</span>
     </span>
     <button class="btn ghost small" type="button" onclick={onClear}>Clear</button>
   {:else}

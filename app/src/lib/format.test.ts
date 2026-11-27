@@ -30,13 +30,13 @@ describe('format', () => {
   });
   it('formats run stats with null or missing overhead without null% or NaN%', () => {
     expect(formatRunStats({ samples_per_s: 120.5, dropped: 0, overhead_pct: null })).toBe(
-      '120.5 samples/s · 0 dropped · — overhead',
+      '120.5 samples/s | 0 dropped | - overhead',
     );
     expect(formatRunStats({ samples_per_s: 2000, dropped: 2, overhead_pct: 1.5 })).toBe(
-      '2000 samples/s · 2 dropped · 1.5 % overhead',
+      '2000 samples/s | 2 dropped | 1.5 % overhead',
     );
     expect(formatRunStats({ samples_per_s: Number.NaN, dropped: undefined, overhead_pct: undefined })).toBe(
-      '– samples/s · 0 dropped · — overhead',
+      '- samples/s | 0 dropped | - overhead',
     );
   });
   it('detects probe device ids', () => {

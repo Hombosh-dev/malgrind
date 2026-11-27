@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Portability guardrails: flags OS-specific code outside `host/src/os/**` and
+// Portability check: flags OS-specific code outside `host/src/os/**` and
 // chip/target-specific code outside `host/src/families/**`.
 //
 //   node scripts/check-portability.mjs

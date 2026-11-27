@@ -19,7 +19,7 @@
     project: ProjectMeta;
     device: string;
     mode: 'attach' | 'new_run' | 'no_flash';
-    boardLine: string; // "Silicon Labs CP210x · USB 3-3", for the sentence that names the board
+    boardLine: string; // "Silicon Labs CP210x | USB 3-3", for the sentence that names the board
     busy?: boolean;
     onStart(args: { projectName: string; runName: string; settings: RunSettings }): void;
     onCancel(): void;
@@ -174,7 +174,7 @@
         : `Build & flash on ${boardLine}`
   );
   const startLabel = $derived(
-    busy ? 'Starting…' : mode === 'attach' ? 'Attach' : mode === 'no_flash' ? 'Start probe' : 'Flash this board'
+    busy ? 'Starting...' : mode === 'attach' ? 'Attach' : mode === 'no_flash' ? 'Start probe' : 'Flash this board'
   );
 </script>
 
@@ -185,7 +185,7 @@
     <p class="error" role="alert">{loadError}</p>
     <div class="actions"><button class="btn ghost" onclick={onCancel}>Back</button></div>
   {:else if !plan}
-    <p class="muted">Looking at the project…</p>
+    <p class="muted">Looking at the project...</p>
   {:else}
     <div class="grid">
       <label>Project name <input bind:value={projectName} aria-label="Project name" /></label>
@@ -237,7 +237,7 @@
                 : `found after the build: ${plan.elf_hint ?? ''}`}
             aria-label="Firmware ELF"
           />
-          <button class="btn ghost small" onclick={chooseElf}>Choose…</button>
+          <button class="btn ghost small" onclick={chooseElf}>Choose...</button>
         </span>
       </label>
 
@@ -265,7 +265,7 @@
         <details class="advanced">
           <summary>Advanced: OpenOCD configuration</summary>
           {#if openocdPkg || openocdIface}
-            <p class="hint">{[openocdPkg && `Package: ${openocdPkg}`, openocdIface && `Interface: ${openocdIface}`].filter(Boolean).join(' · ')}</p>
+            <p class="hint">{[openocdPkg && `Package: ${openocdPkg}`, openocdIface && `Interface: ${openocdIface}`].filter(Boolean).join(' | ')}</p>
           {/if}
           {#if autoOpenOcd}
             <pre class="env">{autoOpenOcd}</pre>
