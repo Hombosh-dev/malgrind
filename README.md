@@ -3,9 +3,7 @@
 *valgrind for microcontrollers.* A desktop app that profiles the firmware running on your board **live**: a flamegraph,
 a function table with per-function time series, heap memory and FreeRTOS task views, opt-in memory-error & leak checks,
 run comparison, export, and a history of runs you can reopen, rewind, annotate, and rename. Today it supports the
-**ESP32** (ESP-IDF) on **Linux** (`.deb`), with **macOS** (`.dmg`) and **Windows** (`.exe` NSIS) support written and
-configured in CI (`ci.yml` builds and tests all three; macOS and Windows packaging and hardware verification await runs
-on those machines per `docs/verification.md`).
+**ESP32** (ESP-IDF), with host/agent support implemented for **STM32**, **RP2040**, and **OpenOCD debug probes (no flashing)**, on **Linux** (`.deb`), with **macOS** (`.dmg`) and **Windows** (`.exe` NSIS) support written and configured in CI (`ci.yml` builds and tests all three; macOS, Windows, STM32/RP2040, and OpenOCD hardware verification await runs on those machines per `docs/verification.md`).
 
 ![live flamegraph of the ESP32 demo](docs/app-flamegraph.png)
 
@@ -80,18 +78,19 @@ A **project** is what you profile. Its source code is optional, so a board whose
   USB ports—get distinct `device_id`s, and the settings panel names the exact chosen board (`Build & flash on <adapter> · <port/location>`)
   before flashing.
 - **Debug probes:** discovered USB probes (ST-Link, SEGGER J-Link, CMSIS-DAP / DAPLink, Raspberry Pi Debug Probe, Olimex,
-  FTDI FT2232/FT232H) are also listed as disabled tiles (*"Found. Profiling through a probe is in development."*).
+  FTDI FT2232/FT232H, and built-in USB-JTAG bridges) appear as selectable device tiles for **Debug probe** runs.
 
 ### Profiling, settings, notes, and export
 
-- **Profile** (on the project page): pick the **board**, then **how**:
+- **Profile** (on the project page): pick the **board** or **debug probe**, then **how**:
   - **Attach**: watch firmware that already runs the agent, without flashing or resetting it.
   - **Build & flash**: builds your project with the agent and flashes it, then shows the live profile.
-  - **Debug probe**: profile without touching the firmware; disabled, *in development* (planned for P9).
-  A card that is not possible says what is missing (for example `"this project has no source code"`).
-- **Run settings, before every run:** choosing Attach or Build & flash opens a panel with what malgrind detected, all editable:
+  - **Debug probe**: profile flat PCs over OpenOCD (DWT PCSR on Cortex-M3+ or halt/`reg pc`/resume) without modifying firmware (`probe_run`).
+  A card that is not possible says what is missing (for example `"this project has no source code"` or `"choose the chip target config for OpenOCD"`).
+- **Run settings, before every run:** choosing Attach, Build & flash, or Debug probe opens a panel with what malgrind detected, all editable:
   the **Project name**, **Run name**, PlatformIO **Environment**, **Sampling rate** (default 997 Hz per core), **Firmware ELF**
-  (function names), **Extra pio arguments**, and **Extra build flags** (`-D…`). When the target family supports it
+  (function names), **OpenOCD target config** (in Debug probe mode, with dynamic suggestions from the active family plus custom `target/*.cfg`),
+  **Extra pio arguments**, and **Extra build flags** (`-D…`). When the target family supports it
   (`caps.memcheck`, such as ESP32), *Build & flash* also offers **`Check memory errors (slower, more RAM)`** (`RunSettings.check_memory`,
   which builds with `CONFIG_MALGRIND_MEMCHECK=y` and `agent/esp32/sdkconfig.memcheck`). Under *Advanced* are the two exact
   commands (build, then upload after backup); typing in one replaces the detected line (no shell is used: the line is split into
@@ -188,7 +187,7 @@ Synced with [`docs/verification.md`](docs/verification.md) (the source of truth 
 
 | Platform | Automated Build & Tests | Packaging & Smoke Test | Manual App + Hardware Verification | Notes |
 |---|---|---|---|---|
-| **Linux** (`x86_64`, Ubuntu 24.04+) | **Verified locally** (`25/25` CTest suites, `73/73` UI Vitest tests + `svelte-check`, `tsc`, portability / C++-share / sidecar script tests pass) | **Configured** (`.deb` in `release.yml`, `targets: "all"` in `tauri.conf.json`) | **Partial** (pre-Stage-2 baseline verified on ESP32-D0WD-V3; Stage 2 `devices`/`families` refactor, drag-and-drop, real `pkexec`, and "Flash this board" click remain open) | See `docs/verification.md` Linux checklist. |
+| **Linux** (`x86_64`, Ubuntu 24.04+) | **Verified locally** (`29/29` CTest suites, `80/80` UI Vitest tests + `svelte-check`, `tsc`, portability / C++-share / sidecar script tests pass) | **Configured** (`.deb` in `release.yml`, `targets: "all"` in `tauri.conf.json`) | **Partial** (pre-Stage-2 baseline verified on ESP32-D0WD-V3; Stage 2 `devices`/`families` refactor, drag-and-drop, real `pkexec`, "Flash this board" click, Agent v2/Memcheck, P9 OpenOCD hardware rate gate, and P10 STM32/RP2040 board tests remain open) | See `docs/verification.md` Linux checklist. |
 | **macOS** (`aarch64`, macOS 13.3+) | **Configured in CI** (`macos-latest` in `.github/workflows/ci.yml`; not yet run on Mac hardware) | **Configured in CI** (`.dmg` in `release.yml`, ad-hoc signed) | **Not yet run** | IOKit port/USB enumeration (`ports_macos.cpp`, `usb_macos.cpp`) and `IOSSIOSPEED` await Mac hardware testing. |
 | **Windows** (`x86_64`, Windows 10 1809+ / 11) | **Configured in CI** (`windows-latest` in `.github/workflows/ci.yml`; awaiting remote MSVC CI run) | **Configured in CI** (`.exe` NSIS + WebView2 `downloadBootstrapper` in `release.yml`) | **Not yet run** | `COM10+`, non-ASCII/space profile fallback (`C:\.malgrind\projects`), handle isolation (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), and ESP32 flow await Windows runs. |
 
@@ -196,9 +195,10 @@ Synced with [`docs/verification.md`](docs/verification.md) (the source of truth 
 
 | Family / Mode | Engine & Build Support | Automated Tests | Hardware Verification | Notes |
 |---|---|---|---|---|
-| **ESP32 (ESP-IDF)** (`esp32`, Xtensa / RISC-V) | Implemented (`host/src/families/esp32.cpp`, `agent/esp32/`, `platforms/esp32/`) | **Verified** (`families`, `pio`, `flash`, `devices`, `serve`, `session`, `cli`, `series`, `memcheck` pass on Linux; `esp32.cpp` compiled against stub IDF headers with ASan/UBSan for `CONFIG_MALGRIND_MEMCHECK=0/1`) | **Partial** (0.4.0 baseline run/attach/backup/`verify_flash` verified on ESP32-D0WD-V3; Stage 2 Agent v2 and opt-in memcheck ESP-IDF build & hardware tests still open) | Native USB (`VID 303a`) hints `esp32` tentatively; generic bridges stay neutral until probed. |
-| **Debug probe (OpenOCD / SWD / JTAG)** | USB probe discovery only (`find_probes()`); tiles disabled (*in development*) | **Verified** (probe ID & USB enumeration unit tests on fake sysfs) | **Not yet implemented** | **P9** awaits the `T9.0` physical probe/target hardware benchmark gate (ST-Link/CMSIS-DAP + Nucleo/Pico). |
-| **STM32 / RP2040** | Not started (`platforms/stm32/README.md` notes only) | — | — | **P10** awaits **P9 / `T9.0`** and **P6**. |
+| **ESP32 (ESP-IDF)** (`esp32`, Xtensa / RISC-V) | Implemented (`host/src/families/esp32.cpp`, `agent/esp32/`, `platforms/esp32/`) | **Verified** (`families`, `pio`, `flash`, `devices`, `serve`, `session`, `cli`, `series`, `memcheck` pass on Linux; `esp32.cpp` compiled against stub IDF headers with ASan/UBSan for `CONFIG_MALGRIND_MEMCHECK=0/1`) | **Partial** (0.4.0 baseline run/attach/backup/`verify_flash` verified on ESP32-D0WD-V3; Stage 2 Agent v2, opt-in memcheck, and JTAG board tests still open) | Native USB (`VID 303a`) hints `esp32` tentatively; generic bridges stay neutral until probed. |
+| **STM32 (Cortex-M)** (`stm32`, `ArmV7M`) | Implemented (`platforms/cortexm/`, `agent/stm32/`, `host/src/families/stm32.*`) | **Verified (host & mocked)** (`cortexm`, `families`, `pio`, `probe_config`, `serve`, `setup` pass on Linux; `autostart.cpp` syntax-checked on host; `arm-none-eabi-g++` cross-compile pending) | **Pending hardware** | `--wrap=SysTick_Handler` (leaf + LR depth-2) and OpenOCD SWD (`0x08000000`) zero-reset ID/backup/restore. |
+| **RP2040 (Raspberry Pi Pico)** (`rp2040`, `ArmV7M` M0+) | Implemented (`platforms/cortexm/`, `agent/rp2040/`, `host/src/families/rp2040.*`) | **Verified (host & mocked)** (`cortexm`, `families`, `pio`, `boards`, `devices`, `probe_config`, `serve` pass on Linux; `autostart.cpp` syntax-checked on host; `arm-none-eabi-g++` cross-compile pending) | **Pending hardware** | `--wrap=isr_systick` + 1 us `TIMERAWL` scaling, `HaltResume` probe sampling, and OpenOCD (`0x10000000`) or `picotool` BOOTSEL backup (`2e8a:000c` stays generic). |
+| **Debug probe (OpenOCD / SWD / JTAG)** | Implemented for flat sampling (`openocd`, `openocd_source`, `probe_config`, `ops`/`plan`/`serve` RPCs, selectable UI probe tiles & target `<datalist>`) | **Verified (scripted/mocked)** (`openocd`, `openocd_source`, `probe_config`, `settings`, `serve`, plus UI tests) | **Pending hardware (`T9.0` gate)** | P9 (`T9.1`–`T9.5`) host/RPC/UI verified via `fake_tool` & mocked TCL servers; physical ST-Link/Pico/ESP32 rate checks open in `docs/verification.md`. |
 
 Baseline 0.4.0 measurement on the ESP32 (160 MHz, 2 cores, demo firmware): 997 Hz per core = 2000 samples/s, 0 dropped,
 about 1.5 % overhead. Stage 2 Agent v2 sleep overhead and opt-in Memcheck overhead await real hardware measurement in
@@ -218,7 +218,7 @@ git tag v0.2.0 && git push --follow-tags
 
 Pushing the tag starts `.github/workflows/release.yml`: it verifies that the tag matches `v` + `VERSION`, builds the Linux
 `.deb` (Ubuntu 24.04), macOS `.dmg` (Apple silicon), and Windows NSIS `.exe` (`windows-latest`) in parallel, smoke-tests
-each package (version, `malgrind-cli` starts, `agent/esp32/family.json` and `inject.py` present), and publishes all three
+each package (version, `malgrind-cli` starts, and `agent/{esp32,stm32,rp2040}/{family.json,inject.py}` are present), and publishes all three
 with `SHA256SUMS` as a GitHub Release. A tag with a dash is marked a pre-release; re-running the workflow replaces the files.
 
 ## Build from source
@@ -328,19 +328,19 @@ stays `{"os": [], "chip": []}`).
 ```
 core/                         freestanding C++20 agent core: stack table, double buffer, v1/v2 wire encoders,
                               command parser, fixed-capacity event queues (+ tests/)
-platforms/                    target ports: host (Linux SIGALRM), esp32 (ESP-IDF), stm32 (notes only)
-agent/esp32/                  ESP32 agent IDF component + family.json + PlatformIO inject.py + sdkconfig.{agent,memcheck}
+platforms/                    target ports: host (Linux SIGALRM), esp32 (ESP-IDF), cortexm (ARMv6-M/v7-M/v8-M)
+agent/                        per-family build injection + family.json: esp32, stm32, rp2040
 apps/host_runner/             demo Linux workload that profiles itself
 firmware/esp32/               PlatformIO + ESP-IDF demo project (knows nothing about malgrind)
 host/                         malgrind-cli engine (+ tests/):
   src/os/                       OS backends for Linux, macOS, and Windows (paths, process, serial, ports, usb, access, console, socket, tools)
-  src/families/                 chip-family abstraction, registry, and Esp32Family adapter
-  src/                          wire decoder, ByteSource, symbolizer, aggregator, series, memcheck, diff, store, sessions, PlatformIO, serve, CLI
+  src/families/                 chip-family abstraction, registry, Esp32Family, Stm32Family, Rp2040Family
+  src/                          wire decoder, ByteSource, OpenOCD runner & source, probe_config, symbolizer, analyzers, diff/export, store, sessions, PlatformIO, serve, CLI
 app/                          desktop app: Tauri shell (src-tauri/), sidecar build script (scripts/), and Svelte/TypeScript UI (src/)
 scripts/                      check-portability.mjs, cpp-share.mjs, version.mjs (+ node:test suites)
 ```
 
-Measured C++ share: **`64.2% (9345 / 14553 lines)`** (from `node scripts/cpp-share.mjs` across `core`, `host`, `platforms`,
+Measured C++ share: **`71.4% (14017 / 19628 lines)`** (from `node scripts/cpp-share.mjs` across `core`, `host`, `platforms`,
 `agent`, `apps`, `app/src`, and `app/src-tauri/src`, excluding generated, vendored, and test files); the TypeScript UI only draws.
 
 Prior art studied: [esp32-semihosting-profiler](https://github.com/open-pe/esp32-semihosting-profiler),

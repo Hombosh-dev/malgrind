@@ -1075,16 +1075,19 @@ stacked PC from the exception frame (exact leaf) plus frame-pointer walk (`-fno-
 Thumb is unreliable: start with leaf + LR only, depth 2, and document it); `DWT->CYCCNT` for cycles where present
 (M3+); UART or USB-CDC `write`. Command RX for agent v2. Host test: compile `platforms/cortexm` with
 `arm-none-eabi-g++ -fsyntax-only` in CI if the toolchain is cheap to install, else a local check. Commit `feat(platforms): Cortex-M port`.
+- [x] Implemented freestanding `platforms/cortexm/` (`malgrind_cortexm_init`, `malgrind_cortexm_sample_isr` leaf+LR depth-2 with `EXC_RETURN` filtering, DWT `CYCCNT` + M0+ 1 us cycle scaling, `malgrind_cortexm_poll` v2 `HELLO`/`START`/`STOP`) and verified on host (`ctest` `cortexm` + strict `-fno-exceptions -fno-rtti` host build; ARM target cross-compilation & hardware test open in `docs/verification.md`).
 
 ### T10.2 STM32 family 🔌🔴
 `agent/stm32/` (pre-script that adds the port's sources to the build via `env.BuildSources` and a constructor-free start:
 hook `SysTick_Handler` chaining or a weak `HAL_IncTick` override is fragile — **spike first**, report options);
 `families/stm32.cpp`: platform `ststm32`, frameworks `stm32cube` and `arduino`; backup/restore through OpenOCD
 (`dump_image` / `program ... verify`); `identify` via OpenOCD IDCODE (no reset). Commit `feat: STM32 family`.
+- [x] Implemented `agent/stm32/` (`inject.py` `BuildSources` + `--wrap=SysTick_Handler` chaining, documented in `agent/stm32/README.md`) and `Stm32Family` (`host/src/families/stm32.*`: `ststm32` + `stm32cube`/`arduino`, board manifest & MCU target lookup, `DwtPcsr`/`HaltResume`, OpenOCD `identify`/`read_flash`/`write_flash`, verified via `families`/`pio`/`probe_config`/`serve` tests and host `-fsyntax-only`; hardware test open in `docs/verification.md`).
 
 ### T10.3 RP2040 family 🔌🔴
 Like T10.2 with platform `raspberrypi` (Arduino or Pico SDK); M0+ has no DWT: cycles from the 1 µs timer; backup via
 OpenOCD or `picotool save` (needs BOOTSEL; say so). Commit `feat: RP2040 family`.
+- [x] Implemented `agent/rp2040/` (`inject.py` + `--wrap=isr_systick` + 1 us `TIMERAWL` timing) and `Rp2040Family` (`host/src/families/rp2040.*`: `raspberrypi` + `arduino`/`picosdk`, `2e8a:000c` kept generic, OpenOCD SWD `0x10000000` + `picotool` BOOTSEL fallback, verified via `families`/`boards`/`devices`/`probe_config`/`serve` tests and host `-fsyntax-only`; hardware test open in `docs/verification.md`).
 
 ---
 
@@ -1120,11 +1123,11 @@ apps app/src app/src-tauri/src`, excluding generated, vendored and test fixtures
 
 ---
 
-## Execution notes (P0–P9 host, P11)
+## Execution notes (P0–P11)
 
-Phases **P0–P8**, **P11**, and the scripted/host implementation of **P9** (`T9.1`–`T9.5`) are implemented and verified locally on Linux (`x86_64`), while physical **`T9.0` / `T9.5` OpenOCD hardware rate measurements** and **P10** remain open. Remote macOS/Windows CI runs and physical target verification remain open per `docs/verification.md`.
+All Stage 2 software phases (**P0–P11**: guard rails, cross-platform OS layer, device IDs, family registry, `ByteSource`, Windows/macOS packaging/CI, Agent v2 telemetry, opt-in memcheck, notes/diff/export/ROM symbols, OpenOCD debug probe host/RPC/UI, Cortex-M/STM32/RP2040 ports & families, C++ share & docs) are implemented and verified locally on Linux (`x86_64`), while physical **`T9.0` / `T9.5` OpenOCD hardware rate measurements**, ARM target cross-compilation/board runs, and remote macOS/Windows CI runs remain open in `docs/verification.md`.
 
-### Implemented & verified scope (`P0`–`P9` host, `P11`)
+### Implemented & verified scope (`P0`–`P11`)
 
 - **P0 — Guard rails (`T0.1`–`T0.3`):** Added `scripts/check-portability.mjs` (`scripts/check-portability.test.mjs`, `scripts/portability-allow.json`), portable compiler flags + `malgrind_add_test` in `CMakeLists.txt` / `core/CMakeLists.txt` / `host/CMakeLists.txt`, and updated `docs/superpowers/specs/2026-11-15-malgrind-app-design.md` (Windows goal + section 5b).
 - **P1 — OS layer (`host/src/os/`, `T1.1`–`T1.10`):** Isolated all platform code behind `malgrind::host::os` (`paths`, `process`, `serial`, `ports`, `usb`, `access`, `console`, `socket`, `tools`) with Linux, macOS, and Windows backends (`paths_win.cpp`, `process_win.cpp` using `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` and rejecting `.bat`/`.cmd`, `serial_win.cpp` handling `\\.\COM10+`, `ports_macos.cpp` IOKit enumeration + `IOSSIOSPEED`, `tools.cpp` ignoring the Microsoft Store `WindowsApps` Python stub, and `safe_projects_root()` falling back to `<SystemDrive>\.malgrind\projects`). Replaced shell test scripts with `host/tests/fake_tool.cpp` and `ScopedEnv`.
@@ -1136,7 +1139,8 @@ Phases **P0–P8**, **P11**, and the scripted/host implementation of **P9** (`T9
 - **P7 — Memcheck (`T7.1`–`T7.4`):** Added freestanding `EventQueue` (`core/include/malgrind/events.*`), opt-in ESP32 `esp_heap_trace_alloc_hook` / `esp_heap_trace_free_hook`, `heap_caps_register_failed_alloc_callback`, and periodic `heap_caps_check_integrity_all(false)` (`CONFIG_MALGRIND_MEMCHECK`, `agent/esp32/sdkconfig.memcheck`), host `LeakTracker` (`host/src/memcheck.*`), and `Memcheck.svelte` + `"Check memory errors (slower, more RAM)"` toggle in `RunSettings.svelte`. On Linux, `platforms/esp32/src/esp32.cpp` was compile- and ASan/UBSan-checked against stub IDF headers for both `CONFIG_MALGRIND_MEMCHECK=0` and `1`; real ESP-IDF builds and board runs remain pending in `docs/verification.md`.
 - **P8 — History & symbols (`T8.1`–`T8.6`):** Added run notes editing (`RunEditor.svelte`, `Run.svelte`), export (`folded`, `speedscope`, SVG, PNG via `lib/export.ts` + `serve.cpp` `export`/`write_file`), function-name run diff (`host/src/diff.*`, `Diff.svelte`, `CompareBar.svelte`), per-run disk size display + 200 MB `kLargeRunBytes` notice (`store.hpp`, `session.cpp`), and `tool-esp-rom-elfs` ROM symbolization via `Family::extra_symbol_files` + `Symbolizer` range lookup (`esp32.cpp`, `symbols.cpp`).
 - **P9 — Debug probe host, RPC & UI (`T9.1`–`T9.5`, scripted/mocked):** Added `os::Child` process control, `OpenOcd` runner + `TclRpcCodec` (`host/src/openocd.*`), `resolve_probe_config` (`host/src/probe_config.*`), `OpenOcdSource` (`host/src/openocd_source.*`), `RunSettings::target_cfg`, `ops::methods`/`probe_targets`/`probe_rate_hint`/`make_probe_plan`, sidecar `probe`/`methods`/`run_plan(no_flash)`/`probe_run` RPCs (`host/src/serve.*`, `session.*`), selectable UI probe tiles (`Profile.svelte`), dynamic OpenOCD `<datalist>` target selector + rate hint (`RunSettings.svelte`), and `overhead_pct: null` flat-run support (`Run.svelte`, `App.svelte`), verified against `fake_tool` and mocked TCL servers (`T9.0` physical hardware rate gate remains `[ ]`).
-- **P11 — Docs & C++ share (`T11.1`–`T11.2`):** Updated `README.md`, added these execution notes, and added `scripts/cpp-share.mjs` (`scripts/cpp-share.test.mjs`) wired into `.github/workflows/ci.yml`.
+- **P10 — Cortex-M, STM32 & RP2040 (`T10.1`–`T10.3`, host & mocked verified):** Implemented freestanding `platforms/cortexm/` (leaf + LR depth-2 capture, `EXC_RETURN` filtering, DWT `CYCCNT` + M0+ 1 us scaling, wire v2 `HELLO`/`START`/`STOP`, `test_cortexm`), `agent/stm32/` + `Stm32Family` (`inject.py` `BuildSources`, `--wrap=SysTick_Handler` chaining, OpenOCD SWD IDCODE/backup/restore, board manifest + MCU target inference), and `agent/rp2040/` + `Rp2040Family` (`--wrap=isr_systick`, 1 us `TIMERAWL` scaling, `HaltResume` probe sampling, OpenOCD `0x10000000` + `picotool` BOOTSEL fallback, keeping `2e8a:000c` family-neutral). Host CTest & `-fsyntax-only` agent checks pass; ARM cross-compilation & on-board verification remain open in `docs/verification.md`.
+- **P11 — Docs & C++ share (`T11.1`–`T11.2`):** Updated `README.md`, `.github/workflows/release.yml`, and these execution notes, and added `scripts/cpp-share.mjs` (`scripts/cpp-share.test.mjs`) wired into `.github/workflows/ci.yml`.
 
 ### Notable design adjustments
 
@@ -1144,9 +1148,9 @@ Phases **P0–P8**, **P11**, and the scripted/host implementation of **P9** (`T9
 - **Added `kErrEventsDropped = 4` and non-destructive `EventQueue::drain_*`:** Added error code `4` (`kErrEventsDropped`) so ring overflows in `EventQueue<256, 16>` surface explicitly in the UI (`dropped` banner) rather than failing silently, and added `drain_allocs` / `drain_error` in `core/src/events.cpp` so frames encode directly from the ring without heap allocation and advance cursors only when encoding succeeds.
 - **ESP-IDF 5.3 strong `vApplicationStackOverflowHook` symbol constraint:** ESP-IDF 5.3 defines `vApplicationStackOverflowHook` strongly and aborts on overflow; overriding it in an injected component risks a multiple-definition link failure. `agent/esp32/sdkconfig.memcheck` enables `CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y` cleanly without overriding `vApplicationStackOverflowHook`, while wire `kErrStackOverflow` (`code = 2`) remains supported on the host/UI side.
 - **`scripts/check-portability.mjs` boundary refinement:** `host/src/os/**` is excluded from the `os` rule set and allowed to contain OS port/privilege terms (`CHIP_OS_PORT_PATTERNS`: `/dev/`, `COM\d`, `pkexec`, `sudo`, `apt install`) while still forbidding MCU chip terms (`CHIP_ONLY_PATTERNS`). Both allowlists in `scripts/portability-allow.json` reached and remain `{"os": [], "chip": []}`.
-- **Measured C++ share:** `node scripts/cpp-share.mjs` measures **`67.8%` (`11583 / 17091` lines)** across `core`, `host`, `platforms`, `agent`, `apps`, `app/src`, and `app/src-tauri/src` (above the 60.0% target).
+- **Measured C++ share:** `node scripts/cpp-share.mjs` measures **`71.4%` (`14017 / 19628` lines)** across `core`, `host`, `platforms`, `agent`, `apps`, `app/src`, and `app/src-tauri/src` (above the 60.0% target).
 
-### Why `T9.0` (hardware gate) and `P10` remain open
+### Why hardware verification remains open
 
-- **`T9.0` hardware gate:** `T9.0` / `T9.5` board verification requires physical hardware (ST-Link/Nucleo, Pico Debug Probe / CMSIS-DAP, and ESP32 USB-JTAG / FTDI ESP-Prog) to measure real OpenOCD TCL `mrw DWT_PCSR` vs. halt/`reg pc`/resume sample rates (gate: ≥ 200 samples/s for PCSR) and verify on-target behavior.
-- **`P10` dependency:** `platforms/cortexm/`, `STM32`, and `RP2040` (`T10.1`–`T10.3`) depend on `P9` `T9.0` hardware characterization and Cortex-M firmware/agent implementation.
+- **`T9.0` & `T9.5` OpenOCD rate gate:** Requires physical hardware (ST-Link/Nucleo, Pico Debug Probe / CMSIS-DAP, and ESP32 USB-JTAG / FTDI ESP-Prog) to measure real OpenOCD TCL `mrw DWT_PCSR` vs. halt/`reg pc`/resume sample rates (gate: ≥ 200 samples/s for PCSR) and verify on-target behavior.
+- **ARM cross-compilation & board tests (`P10`):** `arm-none-eabi-g++` is not installed in the local Linux workspace, so `platforms/cortexm/`, `agent/stm32/`, and `agent/rp2040/` were compiled/verified on host (`test_cortexm`, `test_families`, `-fsyntax-only`); real Nucleo/STM32 and Pico/RP2040 builds and flashing await hardware runs per `docs/verification.md`.

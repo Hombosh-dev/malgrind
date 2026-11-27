@@ -71,6 +71,10 @@ jobs:
             /tmp/pkg/usr/bin/malgrind-cli --version | grep -q "$version"
             test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/esp32/family.json
             test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/esp32/inject.py
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/stm32/family.json
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/stm32/inject.py
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/rp2040/family.json
+            test -f /tmp/pkg/usr/lib/malgrind/agent-src/agent/rp2040/inject.py
           elif [ "${{ matrix.bundle }}" = dmg ]; then
             dmg=$(ls "$bundle_dir"/*.dmg)
             hdiutil attach -nobrowse -readonly -mountpoint /tmp/dmg "$dmg"
@@ -78,6 +82,10 @@ jobs:
             "$app/Contents/MacOS/malgrind-cli" --version | grep -q "$version"
             test -f "$app/Contents/Resources/agent-src/agent/esp32/family.json"
             test -f "$app/Contents/Resources/agent-src/agent/esp32/inject.py"
+            test -f "$app/Contents/Resources/agent-src/agent/stm32/family.json"
+            test -f "$app/Contents/Resources/agent-src/agent/stm32/inject.py"
+            test -f "$app/Contents/Resources/agent-src/agent/rp2040/family.json"
+            test -f "$app/Contents/Resources/agent-src/agent/rp2040/inject.py"
             hdiutil detach /tmp/dmg
           else
             setup=$(ls "$bundle_dir"/*.exe)
@@ -87,6 +95,10 @@ jobs:
             "$pkg_dir/malgrind-cli.exe" --version | grep -q "$version"
             test -f "$pkg_dir/agent-src/agent/esp32/family.json"
             test -f "$pkg_dir/agent-src/agent/esp32/inject.py"
+            test -f "$pkg_dir/agent-src/agent/stm32/family.json"
+            test -f "$pkg_dir/agent-src/agent/stm32/inject.py"
+            test -f "$pkg_dir/agent-src/agent/rp2040/family.json"
+            test -f "$pkg_dir/agent-src/agent/rp2040/inject.py"
           fi
 
       - uses: actions/upload-artifact@v4
