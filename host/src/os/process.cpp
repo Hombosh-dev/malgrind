@@ -112,11 +112,11 @@ namespace detail {
 
 void flush_lines(std::string& pending, const std::function<void(std::string_view)>& on_line, bool all) {
     for (std::size_t at; (at = pending.find_first_of("\r\n")) != std::string::npos;) {
-        if (at > 0) on_line(std::string_view(pending).substr(0, at));
+        if (at > 0 && on_line) on_line(std::string_view(pending).substr(0, at));
         pending.erase(0, at + 1);
     }
     if (all && !pending.empty()) {
-        on_line(pending);
+        if (on_line) on_line(pending);
         pending.clear();
     }
 }

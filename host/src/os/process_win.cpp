@@ -10,6 +10,8 @@
 #include <cctype>
 #include <cstddef>
 #include <cwchar>
+#include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -203,8 +205,14 @@ UniqueHandle open_nul(DWORD access) {
     return UniqueHandle(CreateFileW(L"NUL", access, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
 }
 
-std::optional<int> spawn_captured(const std::vector<std::string>& argv, const std::vector<std::string>& env_add, bool merge_stderr,
-                                  const std::function<void(std::string_view)>& on_chunk) {
+struct SpawnedHandles {
+    UniqueHandle process;
+    UniqueHandle pipe_read;
+};
+
+std::optional<SpawnedHandles> start_captured_process(const std::vector<std::string>& argv,
+                                                     const std::vector<std::string>& env_add,
+                                                     bool merge_stderr) {
     if (argv.empty()) return std::nullopt;
     const auto exe = resolve_program(argv[0]);
     if (!exe) return std::nullopt;
@@ -259,9 +267,12 @@ std::optional<int> spawn_captured(const std::vector<std::string>& argv, const st
 
     if (!ok) return std::nullopt;
 
-    UniqueHandle process(pi.hProcess);
     CloseHandle(pi.hThread);
+    return SpawnedHandles{UniqueHandle(pi.hProcess), std::move(pipe_read)};
+}
 
+template <typename Fn>
+void read_pipe_chunks(UniqueHandle& pipe_read, Fn&& on_chunk) {
     std::array<char, 4096> buf;
     for (;;) {
         DWORD bytes_read = 0;
@@ -273,14 +284,123 @@ std::optional<int> spawn_captured(const std::vector<std::string>& argv, const st
         }
     }
     pipe_read.reset();
+}
 
-    WaitForSingleObject(process.get(), INFINITE);
+void read_pipe_lines(UniqueHandle pipe_read, const std::function<void(std::string_view)>& on_line) {
+    std::string pending;
+    read_pipe_chunks(pipe_read, [&](std::string_view chunk) {
+        pending.append(chunk);
+        detail::flush_lines(pending, on_line, false);
+    });
+    detail::flush_lines(pending, on_line, true);
+}
+
+int wait_process_exit(HANDLE process) {
+    WaitForSingleObject(process, INFINITE);
     DWORD exit_code = 0;
-    if (!GetExitCodeProcess(process.get(), &exit_code)) return -1;
+    if (!GetExitCodeProcess(process, &exit_code)) return -1;
     return static_cast<int>(exit_code);
 }
 
 } // namespace
+
+struct Child::Impl {
+    mutable std::mutex mu;
+    UniqueHandle process;
+    mutable bool exited = false;
+    std::mutex join_mu;
+    std::thread reader;
+
+    ~Impl() {
+        kill();
+        join_reader();
+    }
+
+    void join_reader() {
+        std::scoped_lock lock(join_mu);
+        if (reader.joinable()) reader.join();
+    }
+
+    bool running() const {
+        std::scoped_lock lock(mu);
+        if (exited || !process.valid()) return false;
+        if (WaitForSingleObject(process.get(), 0) == WAIT_OBJECT_0) {
+            exited = true;
+            return false;
+        }
+        return true;
+    }
+
+    std::optional<int> wait_for(int timeout_ms) {
+        if (!process.valid()) return std::nullopt;
+        const DWORD ms = timeout_ms > 0 ? static_cast<DWORD>(timeout_ms) : DWORD{0};
+        if (WaitForSingleObject(process.get(), ms) != WAIT_OBJECT_0) return std::nullopt;
+        {
+            std::scoped_lock lock(mu);
+            exited = true;
+        }
+        join_reader();
+        DWORD exit_code = 0;
+        if (!GetExitCodeProcess(process.get(), &exit_code)) return -1;
+        return static_cast<int>(exit_code);
+    }
+
+    int wait() {
+        if (!process.valid()) return -1;
+        const int code = wait_process_exit(process.get());
+        {
+            std::scoped_lock lock(mu);
+            exited = true;
+        }
+        join_reader();
+        return code;
+    }
+
+    void kill() {
+        bool terminated = false;
+        {
+            std::scoped_lock lock(mu);
+            if (process.valid() && !exited) {
+                if (WaitForSingleObject(process.get(), 0) == WAIT_OBJECT_0) {
+                    exited = true;
+                } else {
+                    TerminateProcess(process.get(), 1);
+                    terminated = true;
+                }
+            }
+        }
+        if (terminated) {
+            WaitForSingleObject(process.get(), INFINITE);
+            std::scoped_lock lock(mu);
+            exited = true;
+        }
+        join_reader();
+    }
+};
+
+Child::Child() noexcept = default;
+Child::Child(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
+Child::Child(Child&&) noexcept = default;
+Child& Child::operator=(Child&&) noexcept = default;
+Child::~Child() = default;
+
+std::optional<Child> Child::spawn(const std::vector<std::string>& argv, const std::vector<std::string>& env_add,
+                                  std::function<void(std::string_view line)> on_line) {
+    auto spawned = start_captured_process(argv, env_add, true);
+    if (!spawned) return std::nullopt;
+    auto impl = std::make_unique<Impl>();
+    impl->process = std::move(spawned->process);
+    impl->reader = std::thread(read_pipe_lines, std::move(spawned->pipe_read), std::move(on_line));
+    return Child(std::move(impl));
+}
+
+bool Child::valid() const noexcept { return impl_ != nullptr; }
+bool Child::running() const { return impl_ ? impl_->running() : false; }
+void Child::kill() {
+    if (impl_) impl_->kill();
+}
+std::optional<int> Child::wait_for(int timeout_ms) { return impl_ ? impl_->wait_for(timeout_ms) : std::nullopt; }
+int Child::wait() { return impl_ ? impl_->wait() : -1; }
 
 std::optional<fs::path> find_in_path(const std::string& name) {
     if (name.empty()) return std::nullopt;
@@ -299,8 +419,11 @@ std::optional<fs::path> find_in_path(const std::string& name) {
 }
 
 std::string capture(const std::vector<std::string>& argv) {
+    auto spawned = start_captured_process(argv, {}, false);
+    if (!spawned) return {};
     std::string out;
-    if (!spawn_captured(argv, {}, false, [&](std::string_view chunk) { out.append(chunk); })) return {};
+    read_pipe_chunks(spawned->pipe_read, [&](std::string_view chunk) { out.append(chunk); });
+    (void)wait_process_exit(spawned->process.get());
     return out;
 }
 
@@ -315,22 +438,15 @@ int run(const std::vector<std::string>& argv) {
     if (!CreateProcessW(exe->native().c_str(), cmd.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) return -1;
     UniqueHandle process(pi.hProcess);
     CloseHandle(pi.hThread);
-    WaitForSingleObject(process.get(), INFINITE);
-    DWORD exit_code = 0;
-    if (!GetExitCodeProcess(process.get(), &exit_code)) return -1;
-    return static_cast<int>(exit_code);
+    return wait_process_exit(process.get());
 }
 
 int run_lines(const std::vector<std::string>& argv, const std::vector<std::string>& env_add,
               const std::function<void(std::string_view line)>& on_line) {
-    std::string pending;
-    const auto code = spawn_captured(argv, env_add, true, [&](std::string_view chunk) {
-        pending.append(chunk);
-        detail::flush_lines(pending, on_line, false);
-    });
-    if (!code) return -1;
-    detail::flush_lines(pending, on_line, true);
-    return *code;
+    auto spawned = start_captured_process(argv, env_add, true);
+    if (!spawned) return -1;
+    read_pipe_lines(std::move(spawned->pipe_read), on_line);
+    return wait_process_exit(spawned->process.get());
 }
 
 } // namespace malgrind::host::os

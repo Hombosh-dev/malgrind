@@ -1,8 +1,11 @@
 #include "os/paths.hpp"
 
+#include <chrono>
+#include <csignal>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -38,7 +41,22 @@ int main(int argc, char** argv) {
     _setmode(_fileno(stderr), _O_BINARY);
 #endif
     const auto args = utf8_args(argc, argv);
-    for (std::size_t i = 1; i < args.size(); ++i) std::printf("%s\n", args[i].c_str());
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if (args[i] == "--sleep-ms" && i + 1 < args.size()) {
+            std::fflush(nullptr);
+            const int ms = std::stoi(args[++i]);
+            if (ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+            continue;
+        }
+        if (args[i] == "--ignore-term") {
+#ifndef _WIN32
+            std::signal(SIGTERM, SIG_IGN);
+#endif
+            continue;
+        }
+        std::printf("%s\n", args[i].c_str());
+        std::fflush(stdout);
+    }
 
     const auto var = malgrind::host::os::get_env("HELPER_VAR").value_or("");
     std::printf("HELPER_VAR=%s\n", var.c_str());

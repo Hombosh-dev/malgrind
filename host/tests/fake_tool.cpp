@@ -1,10 +1,14 @@
 // Portable C++ fake for external tools (git, pio, python/python3/py, esptool, echo) used in host tests.
+#include "openocd.hpp"
 #include "os/paths.hpp"
+#include "os/socket.hpp"
 #include "os/tools.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <cstdint>
 #include <filesystem>
@@ -13,6 +17,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -259,6 +264,111 @@ int run_addr2line(const std::vector<std::string>& args) {
     return 0;
 }
 
+int run_openocd(const std::vector<std::string>& args) {
+    using namespace std::chrono_literals;
+    append_log("openocd " + join_args(args, 1) + "\n");
+
+    if (os::get_env("FAKE_FAIL") == "openocd" || os::get_env("FAKE_OPENOCD_FAIL") == "startup") {
+        std::fprintf(stderr, "Open On-Chip Debugger 0.12.0\n");
+        std::fprintf(stderr, "Error: unable to open debug probe\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    if (const auto delay = os::get_env("FAKE_OPENOCD_STARTUP_SLEEP_MS"); delay && !delay->empty()) {
+        int ms = 0;
+        const auto [ptr, ec] = std::from_chars(delay->data(), delay->data() + delay->size(), ms);
+        if (ec == std::errc{} && ptr == delay->data() + delay->size() && ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        }
+    }
+
+    std::uint16_t tcl_port = 0;
+    for (std::size_t i = 1; i < args.size(); ++i) {
+        if ((args[i] == "-s" || args[i] == "-f") && i + 1 < args.size()) {
+            ++i;
+            continue;
+        }
+        if (args[i] == "-c" && i + 1 < args.size()) {
+            const std::string_view cmd = args[++i];
+            constexpr std::string_view kPrefix = "tcl_port ";
+            if (cmd.starts_with(kPrefix)) {
+                const auto val = cmd.substr(kPrefix.size());
+                unsigned port = 0;
+                const auto [ptr, ec] = std::from_chars(val.data(), val.data() + val.size(), port);
+                if (ec == std::errc{} && ptr == val.data() + val.size() && port <= 65535) {
+                    tcl_port = static_cast<std::uint16_t>(port);
+                }
+            }
+        }
+    }
+
+    if (tcl_port == 0) {
+        std::fprintf(stderr, "Error: tcl_port not specified\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    auto listener = os::TcpListener::bind_loopback(tcl_port);
+    if (!listener) {
+        std::fprintf(stderr, "Error: couldn't bind tcl to socket\n");
+        std::fflush(stderr);
+        return 1;
+    }
+
+    std::fprintf(stderr, "Open On-Chip Debugger 0.12.0\n");
+    std::fprintf(stderr, "Info : Listening on port %u for tcl connections\n", static_cast<unsigned>(tcl_port));
+    std::fflush(stderr);
+
+    const auto deadline = std::chrono::steady_clock::now() + 60s;
+    const bool ignore_shutdown = os::get_env("FAKE_OPENOCD_IGNORE_SHUTDOWN") == "1";
+
+    while (std::chrono::steady_clock::now() < deadline) {
+        auto client = listener->accept(200);
+        if (!client) continue;
+
+        malgrind::host::TclRpcCodec codec;
+        std::array<char, 4096> buf{};
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto n = client->read(buf, 200);
+            if (!n) break;
+            if (*n == 0) continue;
+            for (auto cmd = codec.feed(std::string_view(buf.data(), *n)); cmd; cmd = codec.feed({})) {
+                if (*cmd == "shutdown") {
+                    if (ignore_shutdown) {
+                        while (std::chrono::steady_clock::now() < deadline) {
+                            std::this_thread::sleep_for(50ms);
+                        }
+                        return 0;
+                    }
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request(""));
+                    return 0;
+                }
+                if (*cmd == "version") {
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request("Open On-Chip Debugger 0.12.0"));
+                } else if (cmd->starts_with("echo ")) {
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request(cmd->substr(5)));
+                } else if (*cmd == "mrw" || cmd->starts_with("mrw ")) {
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request("0x08001234"));
+                } else if (cmd->starts_with("sleep_ms ")) {
+                    const std::string_view arg = std::string_view(*cmd).substr(9);
+                    int ms = 0;
+                    const auto [ptr, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), ms);
+                    if (ec == std::errc{} && ptr == arg.data() + arg.size() && ms > 0) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+                    }
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request("slept"));
+                } else if (*cmd == "drop") {
+                    return 2;
+                } else {
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request("ok:" + *cmd));
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -282,6 +392,7 @@ int main(int argc, char** argv) {
     if (role == "esptool") return run_esptool(args, 1);
     if (role == "echo") return run_echo(args);
     if (role == "addr2line" || role.ends_with("-addr2line")) return run_addr2line(args);
+    if (role == "openocd") return run_openocd(args);
 
     std::fprintf(stderr, "fake_tool: unknown role '%s'\n", role.c_str());
     return 1;
