@@ -155,10 +155,12 @@ target_link_libraries(test_probe_config PRIVATE malgrind_host)
 malgrind_add_test(cortexm tests/test_cortexm.cpp)
 target_link_libraries(test_cortexm PRIVATE malgrind_platform_cortexm malgrind_host)
 
-if(NOT WIN32)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     malgrind_add_test(access tests/test_access.cpp)
     target_link_libraries(test_access PRIVATE malgrind_host)
+endif()
 
+if(NOT WIN32)
     malgrind_add_test(flash tests/test_flash.cpp)
     target_link_libraries(test_flash PRIVATE malgrind_host)
     target_compile_definitions(test_flash PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")

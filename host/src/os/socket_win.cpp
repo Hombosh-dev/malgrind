@@ -125,7 +125,7 @@ std::optional<std::size_t> TcpStream::read(std::span<char> out, int timeout_ms) 
     if (!(pfd.revents & POLLRDNORM)) return std::nullopt;
 
     const int to_read = static_cast<int>(
-        (std::min)<std::size_t>(out.size(), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+        (std::min)(out.size(), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
     const int n = ::recv(to_socket(handle_), out.data(), to_read, 0);
     if (n <= 0) return std::nullopt;
     return static_cast<std::size_t>(n);
@@ -136,7 +136,7 @@ bool TcpStream::write_all(std::string_view data) {
     const SOCKET s = to_socket(handle_);
     while (!data.empty()) {
         const int chunk = static_cast<int>(
-            (std::min)<std::size_t>(data.size(), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+            (std::min)(data.size(), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
         const int n = ::send(s, data.data(), chunk, 0);
         if (n <= 0) return false;
         data.remove_prefix(static_cast<std::size_t>(n));

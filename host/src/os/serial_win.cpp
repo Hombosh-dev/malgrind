@@ -188,7 +188,7 @@ std::optional<std::size_t> SerialPort::read(std::span<std::uint8_t> out, int tim
     }
 
     const DWORD to_read = static_cast<DWORD>(
-        (std::min)<std::size_t>(out.size(), static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
+        (std::min)(out.size(), static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
     DWORD got = 0;
     if (!::ReadFile(h, out.data(), to_read, &got, nullptr)) {
         return std::nullopt;
@@ -203,7 +203,7 @@ bool SerialPort::write(std::span<const std::uint8_t> data) {
     const HANDLE h = to_handle(handle_);
     while (!data.empty()) {
         const DWORD chunk = static_cast<DWORD>(
-            (std::min)<std::size_t>(data.size(), static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
+            (std::min)(data.size(), static_cast<std::size_t>((std::numeric_limits<DWORD>::max)())));
         DWORD written = 0;
         if (!::WriteFile(h, data.data(), chunk, &written, nullptr) || written == 0) {
             return false;
