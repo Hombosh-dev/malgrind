@@ -3,7 +3,7 @@
 *valgrind for microcontrollers.* A desktop app that profiles the firmware running on your board **live**: a flamegraph,
 a function table with per-function time series, heap memory and FreeRTOS task views, opt-in memory-error & leak checks,
 run comparison, export, and a history of runs you can reopen, rewind, annotate, and rename. Today it supports the
-**ESP32** (ESP-IDF), with host/agent support implemented for **STM32**, **RP2040**, and **OpenOCD debug probes (no flashing)**, on **Linux** (`.deb`), with **macOS** (`.dmg`) and **Windows** (`.exe` NSIS) support written and configured in CI (`ci.yml` builds and tests all three; macOS, Windows, STM32/RP2040, and OpenOCD hardware verification await runs on those machines per `docs/verification.md`).
+**ESP32** (ESP-IDF), with host/agent support implemented for **STM32**, **RP2040**, and **OpenOCD debug probes (no flashing)**, on **Linux** (`.deb`), with **macOS** (`.dmg`) and **Windows** (`.exe` NSIS) support written and configured in CI (`ci.yml` builds and tests all three; macOS, Windows, STM32/RP2040, and OpenOCD hardware testing still await physical machines).
 
 ![live flamegraph of the ESP32 demo](docs/app-flamegraph.png)
 
@@ -35,10 +35,10 @@ Download from the repository's **Releases** page:
   while `.github/workflows/release.yml` packages `.deb`.)
 - **macOS:** `malgrind_<version>_aarch64.dmg` (Apple silicon, macOS 13.3 or newer). It is only ad-hoc signed, not notarized, so
   macOS will warn on the first start: allow it in System Settings, Privacy & Security ("Open Anyway"), or run
-  `xattr -dr com.apple.quarantine /Applications/malgrind.app`. **Configured in CI; packaging and hardware verification on a Mac are pending (`docs/verification.md`).**
+  `xattr -dr com.apple.quarantine /Applications/malgrind.app`. **Built and tested in CI; packaging and hardware testing on a Mac are pending.**
 - **Windows:** `malgrind_<version>_x64-setup.exe` (Windows 10 1809+ or Windows 11, x86-64 NSIS installer). Configured with
   Tauri's WebView2 `downloadBootstrapper` (downloads the WebView2 Runtime if missing) and installs both `malgrind` and
-  `malgrind-cli.exe` (silent install supported with `/S /D=<dir>`). **Configured in CI; packaging and hardware verification on Windows are pending (`docs/verification.md`).**
+  `malgrind-cli.exe` (silent install supported with `/S /D=<dir>`). **Built and tested in CI; packaging and hardware testing on Windows are pending.**
 
 `SHA256SUMS` lists the SHA-256 checksums of the release files.
 
@@ -49,16 +49,16 @@ Download from the repository's **Releases** page:
 A **project** is what you profile. Its source code is optional, so a board whose firmware nobody has can still be attached to.
 
 - **First start:** a big **+ New project**. Later it sits on top of the start screen, and under it two tabs list your
-  **Projects** (each with its runs) and all **Runs**. Click a project to open it, a run to replay it; `✎` renames a project
-  or opens a run's inline **Name** and **Notes** editor (runs with notes show a `📝` preview); `🗑` deletes.
+  **Projects** (each with its runs) and all **Runs**. Click a project to open it, a run to replay it; `Edit` renames a project
+  or opens a run's inline **Name** and **Notes** editor (runs with notes show a `Note:` preview); `Del` deletes.
 - **Run sizes:** each run row displays its on-disk size (`frames.mlg`, `meta.json`, and optional `firmware.elf`). If a live
   run reaches **200 MB** on disk, malgrind shows a dismissible notice (`"this run has reached ... MB on disk"`).
 - **Compare / Diff:** in the **Projects** or **Runs** list, select any two runs (`A` baseline and `B` target) and click
   **Compare**. The **Compare runs** screen shows a **Differential flamegraph** (frame widths from `B`; **Red** = grew in `B`,
-  **Blue** = shrank in `B`, neutral within ±0.05%) and a normalized **Functions** table (`A self %`, `B self %`, `Δ self`,
-  `A incl %`, `B incl %`, `Δ incl`, sorted by `|Δ self|` by default) aggregated by function name across each run's own ELF,
-  with a core filter and **Swap A ↔ B**. Compare works even while another run is live.
-- **New project:** drop a project folder or `.elf` onto the window (or click *Choose folder…*), paste a **GitHub link**
+  **Blue** = shrank in `B`, neutral within +/-0.05%) and a normalized **Functions** table (`A self %`, `B self %`, `Diff self`,
+  `A incl %`, `B incl %`, `Diff incl`, sorted by `|Diff self|` by default) aggregated by function name across each run's own ELF,
+  with a core filter and **Swap A <-> B**. Compare works even while another run is live.
+- **New project:** drop a project folder or `.elf` onto the window (or click *Choose folder...*), paste a **GitHub link**
   (public repositories; shallow-cloned once into malgrind's own folder), or pick **No code, just a board** (optionally with
   its `.elf` for function names). Your own folder is used in place and never changed. A project cloned from GitHub must be
   **trusted** by you before it is built, because building runs the repository's PlatformIO scripts.
@@ -74,8 +74,8 @@ A **project** is what you profile. Its source code is optional, so a board whose
   (WCH CH340/CH343, Silicon Labs CP210x, FTDI, Prolific PL2303) can sit in front of any MCU, so malgrind **never guesses**
   their chip until probed (either passively listening for a running agent frame, or when you click *Identify chip (resets the board)*).
 - **Differentiating identical boards:** each tile shows the USB adapter title, short port name, physical USB location
-  (`USB ...`), and adapter serial number (if present). Two identical boards—even serial-less adapters plugged into different
-  USB ports—get distinct `device_id`s, and the settings panel names the exact chosen board (`Build & flash on <adapter> · <port/location>`)
+  (`USB ...`), and adapter serial number (if present). Two identical boards - even serial-less adapters plugged into different
+  USB ports - get distinct `device_id`s, and the settings panel names the exact chosen board (`Build & flash on <adapter> | <port/location>`)
   before flashing.
 - **Debug probes:** discovered USB probes (ST-Link, SEGGER J-Link, CMSIS-DAP / DAPLink, Raspberry Pi Debug Probe, Olimex,
   FTDI FT2232/FT232H, and built-in USB-JTAG bridges) appear as selectable device tiles for **Debug probe** runs.
@@ -90,7 +90,7 @@ A **project** is what you profile. Its source code is optional, so a board whose
 - **Run settings, before every run:** choosing Attach, Build & flash, or Debug probe opens a panel with what malgrind detected, all editable:
   the **Project name**, **Run name**, PlatformIO **Environment**, **Sampling rate** (default 997 Hz per core), **Firmware ELF**
   (function names), **OpenOCD target config** (in Debug probe mode, with dynamic suggestions from the active family plus custom `target/*.cfg`),
-  **Extra pio arguments**, and **Extra build flags** (`-D…`). When the target family supports it
+  **Extra pio arguments**, and **Extra build flags** (`-D...`). When the target family supports it
   (`caps.memcheck`, such as ESP32), *Build & flash* also offers **`Check memory errors (slower, more RAM)`** (`RunSettings.check_memory`,
   which builds with `CONFIG_MALGRIND_MEMCHECK=y` and `agent/esp32/sdkconfig.memcheck`). Under *Advanced* are the two exact
   commands (build, then upload after backup); typing in one replaces the detected line (no shell is used: the line is split into
@@ -98,13 +98,13 @@ A **project** is what you profile. Its source code is optional, so a board whose
   detected* brings the detected values back, and each run keeps the settings it was made with (**Settings** button in the run header).
 
   ![board tile and method cards](docs/app-profile.png)
-- **Safe flash & Remove agent…:** the first time the agent goes onto a board, malgrind reads the board's whole flash into
+- **Safe flash & Remove agent...:** the first time the agent goes onto a board, malgrind reads the board's whole flash into
   `<data_dir>/backups/<board-key>/<time>.bin` (`~/.local/share/malgrind/` on Linux, `~/Library/Application Support/malgrind/`
-  on macOS, `%LOCALAPPDATA%\malgrind\` on Windows); if that fails, nothing is flashed. **Remove agent…** (bottom left of a
-  live run) writes that backup back byte for byte—even if nobody has the source—or rebuilds your project without the agent.
+  on macOS, `%LOCALAPPDATA%\malgrind\` on Windows); if that fails, nothing is flashed. **Remove agent...** (bottom left of a
+  live run) writes that backup back byte for byte - even if nobody has the source - or rebuilds your project without the agent.
 - **Notes & Export** (in the run header):
   - **Notes** toggles a per-run notes field saved automatically on blur (an accent dot indicates saved notes).
-  - **Export ▾** saves **Folded stacks** (`.folded`, for `flamegraph.pl` / Speedscope), **Speedscope** (`.speedscope.json`,
+  - **Export v** saves **Folded stacks** (`.folded`, for `flamegraph.pl` / Speedscope), **Speedscope** (`.speedscope.json`,
     one sampled profile per core), **Flamegraph SVG** (`.svg`), or **Flamegraph PNG** (`.png`) (image export is enabled on the
     Flamegraph view when samples are present).
 
@@ -119,7 +119,7 @@ The sidebar switches between views (depending on agent capabilities) alongside *
 - **Memory** *(when the agent reports `kCapHeap`)*: one time-series chart per heap region (**Internal RAM**, **External PSRAM**,
   **IRAM (exec)**) plotting **Free**, **Min free**, and **Largest block** alongside **Total**.
 - **Tasks** *(when the agent reports `kCapTasks`)*: sortable FreeRTOS task table showing **CPU %**, **Priority**, **Core**,
-  **State**, and **Min stack free**, highlighting rows with `< 512 B` remaining stack watermark (`⚠`).
+  **State**, and **Min stack free**, highlighting rows with `< 512 B` remaining stack watermark (`[!]`).
 - **Memcheck** *(when built with `Check memory errors` / `kCapAllocs | kCapErrors`)*:
   - **Leaks** grouped by symbolized allocation stack and classified as **`Definitely`** (older than the configurable
     `Leak age (s)` threshold, default 30 s, and outside the top-N steady-state alloc/free churn sites) or **`Possibly`**,
@@ -136,7 +136,7 @@ The sidebar switches between views (depending on agent capabilities) alongside *
   overhead until `START`) and defaults `CONFIG_MALGRIND_START_SAMPLING=y` so newly built boards also stream immediately to
   `0.4.0` hosts.
 - **ESP32 ROM function names:** when PlatformIO has the `tool-esp-rom-elfs` package installed, `Esp32Family` automatically
-  supplies the matching ROM ELF (`0x40000000–0x4006ffff`) to `Symbolizer` so ROM functions resolve to names instead of raw
+  supplies the matching ROM ELF (`0x40000000-0x4006ffff`) to `Symbolizer` so ROM functions resolve to names instead of raw
   `0x4000xxxx` addresses.
 - **Project constraints:** ESP32 projects must use the ESP-IDF framework (`framework = espidf`) and a path without spaces
   (PlatformIO's own limit). On Windows, if `%LOCALAPPDATA%` contains spaces or non-ASCII characters, malgrind stores managed
@@ -150,7 +150,7 @@ The sidebar switches between views (depending on agent capabilities) alongside *
   `WindowsApps\python.exe` stub. The first build downloads your board's toolchain (about 1 GB). Attaching to a board that
   already runs the agent needs no PlatformIO.
 - **Permission denied on the USB port** (Linux: you are not in the port's group, `dialout` on Ubuntu): the board's tile
-  says so and offers **Grant access…**. One system password prompt (`pkexec`) sets an ACL on the port (working immediately
+  says so and offers **Grant access...**. One system password prompt (`pkexec`) sets an ACL on the port (working immediately
   until replug) and adds you to the group (holding across replugs after your next login). Without `pkexec`, the tile shows
   the two `sudo` lines.
 - **git** is only needed for GitHub links. malgrind tells you if it is missing but does not install it.
@@ -181,29 +181,25 @@ Also `--name`, `--no-open`, `--folded FILE` (folded stacks for `flamegraph.pl` /
 
 ## Status
 
-Synced with [`docs/verification.md`](docs/verification.md) (the source of truth for per-OS and per-hardware checklists):
-
 ### Platforms
 
 | Platform | Automated Build & Tests | Packaging & Smoke Test | Manual App + Hardware Verification | Notes |
 |---|---|---|---|---|
-| **Linux** (`x86_64`, Ubuntu 24.04+) | **Verified locally** (`29/29` CTest suites, `80/80` UI Vitest tests + `svelte-check`, `tsc`, portability / C++-share / sidecar script tests pass) | **Configured** (`.deb` in `release.yml`, `targets: "all"` in `tauri.conf.json`) | **Partial** (pre-Stage-2 baseline verified on ESP32-D0WD-V3; Stage 2 `devices`/`families` refactor, drag-and-drop, real `pkexec`, "Flash this board" click, Agent v2/Memcheck, P9 OpenOCD hardware rate gate, and P10 STM32/RP2040 board tests remain open) | See `docs/verification.md` Linux checklist. |
-| **macOS** (`aarch64`, macOS 13.3+) | **Configured in CI** (`macos-latest` in `.github/workflows/ci.yml`; not yet run on Mac hardware) | **Configured in CI** (`.dmg` in `release.yml`, ad-hoc signed) | **Not yet run** | IOKit port/USB enumeration (`ports_macos.cpp`, `usb_macos.cpp`) and `IOSSIOSPEED` await Mac hardware testing. |
-| **Windows** (`x86_64`, Windows 10 1809+ / 11) | **Configured in CI** (`windows-latest` in `.github/workflows/ci.yml`; awaiting remote MSVC CI run) | **Configured in CI** (`.exe` NSIS + WebView2 `downloadBootstrapper` in `release.yml`) | **Not yet run** | `COM10+`, non-ASCII/space profile fallback (`C:\.malgrind\projects`), handle isolation (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), and ESP32 flow await Windows runs. |
+| **Linux** (`x86_64`, Ubuntu 24.04+) | **Verified locally** (`29/29` CTest suites, `80/80` UI Vitest tests + `svelte-check`, `tsc`, portability / C++-share / sidecar script tests pass) | **Configured** (`.deb` in `release.yml`, `targets: "all"` in `tauri.conf.json`) | **Partial** (0.4.0 baseline verified on ESP32-D0WD-V3; `devices`/`families` refactor, drag-and-drop, real `pkexec`, "Flash this board" click, Agent v2/Memcheck, OpenOCD hardware rate check, and STM32/RP2040 board tests remain open) | Tested locally and in CI (`ubuntu-latest`). |
+| **macOS** (`aarch64`, macOS 13.3+) | **Verified in CI** (`macos-latest` in `.github/workflows/ci.yml`) | **Configured in CI** (`.dmg` in `release.yml`, ad-hoc signed) | **Not yet run** | IOKit port/USB enumeration (`ports_macos.cpp`, `usb_macos.cpp`) and `IOSSIOSPEED` await Mac hardware testing. |
+| **Windows** (`x86_64`, Windows 10 1809+ / 11) | **Verified in CI** (`windows-latest` in `.github/workflows/ci.yml`) | **Configured in CI** (`.exe` NSIS + WebView2 `downloadBootstrapper` in `release.yml`) | **Not yet run** | `COM10+`, non-ASCII/space profile fallback (`C:\.malgrind\projects`), handle isolation (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), and ESP32 flow await Windows runs. |
 
 ### MCU Families & Modes
 
 | Family / Mode | Engine & Build Support | Automated Tests | Hardware Verification | Notes |
 |---|---|---|---|---|
-| **ESP32 (ESP-IDF)** (`esp32`, Xtensa / RISC-V) | Implemented (`host/src/families/esp32.cpp`, `agent/esp32/`, `platforms/esp32/`) | **Verified** (`families`, `pio`, `flash`, `devices`, `serve`, `session`, `cli`, `series`, `memcheck` pass on Linux; `esp32.cpp` compiled against stub IDF headers with ASan/UBSan for `CONFIG_MALGRIND_MEMCHECK=0/1`) | **Partial** (0.4.0 baseline run/attach/backup/`verify_flash` verified on ESP32-D0WD-V3; Stage 2 Agent v2, opt-in memcheck, and JTAG board tests still open) | Native USB (`VID 303a`) hints `esp32` tentatively; generic bridges stay neutral until probed. |
+| **ESP32 (ESP-IDF)** (`esp32`, Xtensa / RISC-V) | Implemented (`host/src/families/esp32.cpp`, `agent/esp32/`, `platforms/esp32/`) | **Verified** (`families`, `pio`, `flash`, `devices`, `serve`, `session`, `cli`, `series`, `memcheck` pass on Linux; `esp32.cpp` compiled against stub IDF headers with ASan/UBSan for `CONFIG_MALGRIND_MEMCHECK=0/1`) | **Partial** (0.4.0 baseline run/attach/backup/`verify_flash` verified on ESP32-D0WD-V3; Agent v2, opt-in memcheck, and JTAG board tests still open) | Native USB (`VID 303a`) hints `esp32` tentatively; generic bridges stay neutral until probed. |
 | **STM32 (Cortex-M)** (`stm32`, `ArmV7M`) | Implemented (`platforms/cortexm/`, `agent/stm32/`, `host/src/families/stm32.*`) | **Verified (host & mocked)** (`cortexm`, `families`, `pio`, `probe_config`, `serve`, `setup` pass on Linux; `autostart.cpp` syntax-checked on host; `arm-none-eabi-g++` cross-compile pending) | **Pending hardware** | `--wrap=SysTick_Handler` (leaf + LR depth-2) and OpenOCD SWD (`0x08000000`) zero-reset ID/backup/restore. |
 | **RP2040 (Raspberry Pi Pico)** (`rp2040`, `ArmV7M` M0+) | Implemented (`platforms/cortexm/`, `agent/rp2040/`, `host/src/families/rp2040.*`) | **Verified (host & mocked)** (`cortexm`, `families`, `pio`, `boards`, `devices`, `probe_config`, `serve` pass on Linux; `autostart.cpp` syntax-checked on host; `arm-none-eabi-g++` cross-compile pending) | **Pending hardware** | `--wrap=isr_systick` + 1 us `TIMERAWL` scaling, `HaltResume` probe sampling, and OpenOCD (`0x10000000`) or `picotool` BOOTSEL backup (`2e8a:000c` stays generic). |
-| **Debug probe (OpenOCD / SWD / JTAG)** | Implemented for flat sampling (`openocd`, `openocd_source`, `probe_config`, `ops`/`plan`/`serve` RPCs, selectable UI probe tiles & target `<datalist>`) | **Verified (scripted/mocked)** (`openocd`, `openocd_source`, `probe_config`, `settings`, `serve`, plus UI tests) | **Pending hardware (`T9.0` gate)** | P9 (`T9.1`–`T9.5`) host/RPC/UI verified via `fake_tool` & mocked TCL servers; physical ST-Link/Pico/ESP32 rate checks open in `docs/verification.md`. |
+| **Debug probe (OpenOCD / SWD / JTAG)** | Implemented for flat sampling (`openocd`, `openocd_source`, `probe_config`, `ops`/`plan`/`serve` RPCs, selectable UI probe tiles & target `<datalist>`) | **Verified (scripted/mocked)** (`openocd`, `openocd_source`, `probe_config`, `settings`, `serve`, plus UI tests) | **Pending hardware** | Host/RPC/UI verified via `fake_tool` & mocked TCL servers; physical ST-Link/Pico/ESP32 rate checks remain open. |
 
 Baseline 0.4.0 measurement on the ESP32 (160 MHz, 2 cores, demo firmware): 997 Hz per core = 2000 samples/s, 0 dropped,
-about 1.5 % overhead. Stage 2 Agent v2 sleep overhead and opt-in Memcheck overhead await real hardware measurement in
-`docs/verification.md`. The design is in `docs/superpowers/specs/`, and the implementation plans are in
-`docs/superpowers/plans/`.
+about 1.5 % overhead. Agent v2 sleep overhead and opt-in Memcheck overhead await real hardware measurement.
 
 ## Releasing
 
@@ -340,7 +336,7 @@ app/                          desktop app: Tauri shell (src-tauri/), sidecar bui
 scripts/                      check-portability.mjs, cpp-share.mjs, version.mjs (+ node:test suites)
 ```
 
-Measured C++ share: **`71.4% (14017 / 19628 lines)`** (from `node scripts/cpp-share.mjs` across `core`, `host`, `platforms`,
+Measured C++ share: **`71.4% (14028 / 19644 lines)`** (from `node scripts/cpp-share.mjs` across `core`, `host`, `platforms`,
 `agent`, `apps`, `app/src`, and `app/src-tauri/src`, excluding generated, vendored, and test files); the TypeScript UI only draws.
 
 Prior art studied: [esp32-semihosting-profiler](https://github.com/open-pe/esp32-semihosting-profiler),
