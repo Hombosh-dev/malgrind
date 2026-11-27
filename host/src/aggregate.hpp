@@ -1,9 +1,11 @@
 #pragma once
 
+#include "malgrind/profiler.hpp"
 #include "symbols.hpp"
 #include "wire.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -14,6 +16,11 @@
 
 namespace malgrind::host {
 
+struct NamedStack {
+    std::vector<std::string> frames; // outermost first, inlined frames expanded
+    std::uint64_t count = 0;
+};
+
 // All frames of one run, indexed by time since the run started. The same object serves a live run (frames keep
 // arriving) and a replayed one (all frames added up front); every query can look at any moment `at`.
 class Aggregator {
@@ -23,19 +30,34 @@ public:
     explicit Aggregator(Symbolizer& symbols) : symbols_(symbols) {}
 
     void add(Frame frame, Ms t); // t = time since the run started, non-decreasing
+    void set_target(Arch arch, unsigned ncores, std::uint32_t cpu_hz, std::uint16_t rate_hz);
+    void set_agent_status(std::uint32_t caps, std::uint8_t agent_state);
     [[nodiscard]] Ms duration() const; // time of the last frame, 0 if none
 
     // JSON {tree, stats} for the viewer. Looks at frames in [at - window, at]; window 0 = from the start of the run;
     // `at` defaults to duration().
     [[nodiscard]] std::string snapshot_json(std::optional<unsigned> core, Ms window, std::optional<Ms> at = {}) const;
 
-    // JSON {total, functions[{name,self,total}], callers[{name,count}], callees[{name,count}]} for the same range.
+    // JSON {total, functions[{name,self,total}], callers[{name,count}], callees[{name,count}], series[[t_ms,samples]]} for the same range.
     // callers/callees are the frames right outside/inside every occurrence of `focus` (empty focus: none).
     [[nodiscard]] std::string functions_json(std::optional<unsigned> core, Ms window, std::optional<Ms> at,
                                              std::string_view focus) const;
 
     // Folded stacks ("core0;main;f;g 12"), the input of flamegraph.pl and speedscope.
-    [[nodiscard]] std::string folded() const;
+    [[nodiscard]] std::string folded(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                     std::optional<Ms> at = std::nullopt) const;
+
+    // Speedscope JSON profile (https://www.speedscope.app/file-format-schema.json), one sampled profile per core.
+    [[nodiscard]] std::string speedscope_json(std::string_view name, std::optional<unsigned> core = std::nullopt,
+                                              Ms window = Ms{0}, std::optional<Ms> at = std::nullopt) const;
+
+    // True when at least one non-empty stack with positive count falls inside [at - window, at] for `core`.
+    [[nodiscard]] bool has_samples(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                   std::optional<Ms> at = std::nullopt) const;
+
+    // Non-empty symbolized stacks in [at - window, at], outermost frame first.
+    [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt, Ms window = Ms{0},
+                                                       std::optional<Ms> at = std::nullopt) const;
 
 private:
     struct Node {
@@ -44,9 +66,17 @@ private:
         std::vector<Node> children;
     };
     using Entry = std::pair<Ms, Frame>;
+    struct TargetSummary {
+        Arch arch{};
+        unsigned ncores = 0;
+        std::uint32_t cpu_hz = 0;
+        std::uint16_t rate_hz = 0;
+    };
 
     // Function names of one stack, outermost first, inlined frames expanded.
     [[nodiscard]] std::vector<std::string> names(const std::vector<std::uint32_t>& pcs) const;
+    // Calls f(t, frame) for every frame in range. Caller holds mutex_.
+    template <class F> void for_each_frame(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const;
     // Calls f(stack, core) for every stack of the frames in range. Caller holds mutex_.
     template <class F> void for_each_stack(std::optional<unsigned> core, Ms window, std::optional<Ms> at, F&& f) const;
     // Samples per distinct stack in range, so each stack is symbolized once however often it was sampled. Caller holds mutex_.
@@ -60,6 +90,10 @@ private:
     // ponytail: every frame stays in RAM and each query walks its range; add per-second prefix sums if long runs get slow
     std::vector<Entry> frames_;
     std::vector<std::uint64_t> dropped_prefix_; // dropped_prefix_[i] = dropped samples in frames_[0..i]
+    std::optional<TargetSummary> target_;
+    std::uint32_t caps_ = kCapSamples;
+    std::uint8_t agent_state_ = 0;
+    bool has_agent_status_ = false;
 };
 
 } // namespace malgrind::host

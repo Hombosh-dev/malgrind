@@ -25,4 +25,7 @@ namespace malgrind::host {
 // e_machine of an ELF file, nullopt if it is not an ELF.
 [[nodiscard]] std::optional<std::uint16_t> elf_machine(const std::filesystem::path& file);
 
+// Target architecture from an ELF file's e_machine, nullopt if unknown or not an ELF.
+[[nodiscard]] std::optional<Arch> elf_arch(const std::filesystem::path& file);
+
 } // namespace malgrind::host

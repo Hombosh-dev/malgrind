@@ -88,8 +88,8 @@
 
     <div class="drop" class:hover={hovering} role="group" aria-label="Open a project">
       <div class="big">Drop a project folder here</div>
-      <p class="muted">a PlatformIO project (ESP-IDF), or a firmware <code>.elf</code> for a board without code</p>
-      <button class="btn" onclick={chooseFolder} disabled={working}>Choose folder…</button>
+      <p class="muted">a PlatformIO project, or a firmware <code>.elf</code> for a board without code</p>
+      <button class="btn" onclick={chooseFolder} disabled={working}>Choose folder...</button>
     </div>
 
     <div class="card">
@@ -107,7 +107,7 @@
       <p class="muted small">The firmware on the board stays as it is. You can attach to it if it runs the malgrind agent.</p>
       <div class="line">
         <button class="btn ghost" disabled={working} onclick={() => add({ source: 'none' })}>Continue without code</button>
-        <button class="btn ghost" disabled={working} onclick={chooseElf}>I have its .elf…</button>
+        <button class="btn ghost" disabled={working} onclick={chooseElf}>I have its .elf...</button>
       </div>
     </div>
 

@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { isProbeDeviceId } from './lib/format';
   import { startSidecar, type Sidecar } from './lib/sidecar';
   import { installMenu } from './lib/menu';
   import type { Hello, ProjectMeta, RunMeta } from './lib/types';
   import RemoveAgent from './components/RemoveAgent.svelte';
+  import Diff from './screens/Diff.svelte';
   import NewProject from './screens/NewProject.svelte';
   import Profile from './screens/Profile.svelte';
   import Project from './screens/Project.svelte';
@@ -16,13 +18,14 @@
     | { name: 'newproject' }
     | { name: 'project'; id: string }
     | { name: 'profile'; project: ProjectMeta }
-    | { name: 'run'; run: RunMeta; live: boolean };
+    | { name: 'run'; run: RunMeta; live: boolean }
+    | { name: 'diff'; a: RunMeta; b: RunMeta; back: Route };
 
   let sidecar = $state<Sidecar | null>(null);
   let hello = $state<Hello | null>(null);
   let fatal = $state('');
   let route = $state<Route>({ name: 'start' });
-  let removingPort = $state<string | null>(null);
+  let removingDevice = $state<string | null>(null);
 
   // `recording`: attached or built just now; otherwise opened from the history
   const show = (run: RunMeta, recording: boolean) => (route = { name: 'run', run, live: recording });
@@ -44,7 +47,11 @@
           const back = home(route.run);
           sidecar?.call('stop').finally(() => (route = back));
         },
-        removeAgent: () => (removingPort = route.name === 'run' && route.live ? (route.run.port ?? '') : ''), // '' = the dialog picks the port
+        removeAgent: () =>
+          (removingDevice =
+            route.name === 'run' && route.live && !isProbeDeviceId(route.run.device_id)
+              ? (route.run.device_id || route.run.port || '')
+              : ''), // '' = the dialog picks the device
       });
     } catch (e) {
       fatal = String(e instanceof Error ? e.message : e);
@@ -58,18 +65,37 @@
     <p class="muted">{fatal}</p>
   </main>
 {:else if !sidecar || !hello}
-  <main class="fatal"><p class="muted">Starting…</p></main>
+  <main class="fatal"><p class="muted">Starting...</p></main>
 {:else if route.name === 'start'}
-  <Start {sidecar} onNewProject={() => (route = { name: 'newproject' })} onProject={(id) => (route = { name: 'project', id })} onRun={(run) => show(run, false)} />
+  <Start
+    {sidecar}
+    onNewProject={() => (route = { name: 'newproject' })}
+    onProject={(id) => (route = { name: 'project', id })}
+    onRun={(run) => show(run, false)}
+    onCompare={(a, b) => (route = { name: 'diff', a, b, back: { name: 'start' } })}
+  />
 {:else if route.name === 'newproject'}
   <NewProject {sidecar} onCancel={() => (route = { name: 'start' })} onCreated={(project) => (route = { name: 'project', id: project.id })} />
 {:else if route.name === 'project'}
-  {#key route.id}
-    <Project {sidecar} id={route.id} onBack={() => (route = { name: 'start' })} onProfile={(project) => (route = { name: 'profile', project })} onRun={(run) => show(run, false)} />
+  {@const projectId = route.id}
+  {#key projectId}
+    <Project
+      {sidecar}
+      id={projectId}
+      onBack={() => (route = { name: 'start' })}
+      onProfile={(project) => (route = { name: 'profile', project })}
+      onRun={(run) => show(run, false)}
+      onCompare={(a, b) => (route = { name: 'diff', a, b, back: { name: 'project', id: projectId } })}
+    />
   {/key}
 {:else if route.name === 'profile'}
   {@const project = route.project}
   <Profile {sidecar} {project} onBack={() => (route = { name: 'project', id: project.id })} onRun={show} />
+{:else if route.name === 'diff'}
+  {@const back = route.back}
+  {#key `${route.a.id}|${route.b.id}`}
+    <Diff {sidecar} a={route.a} b={route.b} onBack={() => (route = back)} />
+  {/key}
 {:else}
   {#key route.run.id}
     <Run
@@ -77,17 +103,17 @@
       run={route.run}
       live={route.live}
       onClose={() => (route = home(route.name === 'run' ? route.run : undefined))}
-      onRemoveAgent={(port) => (removingPort = port)}
+      onRemoveAgent={(device) => (removingDevice = device)}
     />
   {/key}
 {/if}
 
-{#if sidecar && removingPort !== null}
+{#if sidecar && removingDevice !== null}
   <RemoveAgent
     {sidecar}
-    port={removingPort}
-    onCancel={() => (removingPort = null)}
-    onDone={() => ((removingPort = null), (route = { name: 'start' }))}
+    device={removingDevice}
+    onCancel={() => (removingDevice = null)}
+    onDone={() => ((removingDevice = null), (route = { name: 'start' }))}
   />
 {/if}
 

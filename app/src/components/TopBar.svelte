@@ -11,7 +11,7 @@
 </script>
 
 <header>
-  <span class="logo">🔥 malgrind</span>
+  <span class="logo">malgrind</span>
   {#if title}<span class="title">{title}</span>{/if}
   <span class="spacer"></span>
   {@render children?.()}

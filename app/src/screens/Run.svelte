@@ -1,56 +1,78 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
-  import { formatDuration } from '../lib/format';
-  import type { Node } from '../lib/blend';
+  import { onMount, untrack } from 'svelte';
+  import { save as saveDialog } from '@tauri-apps/plugin-dialog';
+  import { bytesToBase64, defaultExportFilename, serializeFlameSvg, svgToPngBase64 } from '../lib/export';
+  import { formatDuration, formatRunStats, isProbeDeviceId } from '../lib/format';
+  import { clampLeakAgeS, memcheckProblemCount } from '../lib/memcheck';
+  import { formatClockMs, hasCap } from '../lib/series';
+  import type { Node as FlameNode } from '../lib/blend';
   import type { Sidecar } from '../lib/sidecar';
-  import type { RunMeta } from '../lib/types';
+  import {
+    CAP_ALLOCS,
+    CAP_ERRORS,
+    CAP_HEAP,
+    CAP_SAMPLES,
+    CAP_TASKS,
+    type FunctionsData,
+    type MemcheckData,
+    type MemoryData,
+    type RunMeta,
+    type RunStats,
+    type TasksData,
+  } from '../lib/types';
   import Flame from '../views/Flame.svelte';
-  import Functions, { type FunctionsData } from '../views/Functions.svelte';
+  import Functions from '../views/Functions.svelte';
+  import Memcheck from '../views/Memcheck.svelte';
+  import Memory from '../views/Memory.svelte';
+  import Tasks from '../views/Tasks.svelte';
 
   interface Props {
     sidecar: Sidecar;
     run: RunMeta;
     live: boolean; // recording right now (false: a stored run)
     onClose(): void;
-    onRemoveAgent(port: string): void;
+    onRemoveAgent(device: string): void;
   }
   let { sidecar, run, live: startsLive, onClose, onRemoveAgent }: Props = $props();
 
-  interface Stats {
-    arch?: string;
-    ncores?: number;
-    cpu_mhz?: number;
-    rate_hz?: number;
-    samples_per_s?: number;
-    dropped?: number;
-    overhead_pct?: number | null;
-    duration_ms?: number;
-  }
-
   // The parent remounts this screen for every run ({#key}), so the props are read once on purpose.
   let live = $state(untrack(() => startsLive));
-  let view = $state<'flame' | 'functions'>('flame');
+  let view = $state<'flame' | 'functions' | 'memory' | 'tasks' | 'memcheck'>('flame');
   let core = $state<'all' | number>('all');
   let windowS = $state(untrack(() => startsLive) ? 10 : 0); // a stored run opens as the whole run
   let at = $state<number | null>(null); // null: the end of the run (following it, while live)
   let focus = $state('');
-  let tree = $state<Node | null>(null);
+  let leakAgeS = $state(30);
+  let tree = $state<FlameNode | null>(null);
   let functions = $state<FunctionsData | null>(null);
-  let stats = $state<Stats>({});
+  let memory = $state<MemoryData | null>(null);
+  let tasks = $state<TasksData | null>(null);
+  let memcheck = $state<MemcheckData | null>(null);
+  let stats = $state<RunStats>({});
+  let targetCaps = $state<number | null>(null);
   let notices = $state<string[]>([]);
   let name = $state(untrack(() => run.name));
   let notes = $state(untrack(() => run.notes));
   let showNotes = $state(false);
   let showSettings = $state(false); // what the run was made with (only runs made with the settings panel have it)
+  let showExport = $state(false);
+  let exporting = $state(false);
+  let exportNotice = $state('');
+  let flame = $state<ReturnType<typeof Flame> | null | undefined>(null);
+  let exportWrap = $state<HTMLDivElement | null>(null);
+  let exportBtn = $state<HTMLButtonElement | null>(null);
+  const isProbeRun = $derived(isProbeDeviceId(run.device_id));
   // the fields the user set; an empty one was the detected value
   const used = $derived(
     run.settings
       ? ([
           ['Environment', run.settings.env],
+          ['Target config', run.settings.target_cfg ?? ''],
           ['Sampling rate', run.settings.rate_hz ? `${run.settings.rate_hz} Hz` : ''],
           ['Firmware ELF', run.settings.elf],
           ['Extra arguments', run.settings.extra_args],
           ['Build flags', run.settings.build_flags],
+          ['Memory checks', run.settings.check_memory ? 'enabled' : ''],
           ['Build command', run.settings.build_command],
           ['Upload command', run.settings.upload_command]
         ].filter(([, value]) => value) as [string, string][])
@@ -58,43 +80,211 @@
   );
   let error = $state('');
   let busy = false;
+  let dirty = false;
+  let destroyed = false;
+
+  onMount(() => () => {
+    destroyed = true;
+  });
+
+  const caps = $derived(
+    stats.caps !== undefined || targetCaps !== null
+      ? (stats.caps ?? 0) | (targetCaps ?? 0)
+      : CAP_SAMPLES,
+  );
+  const showMemory = $derived(hasCap(caps, CAP_HEAP));
+  const showTasks = $derived(hasCap(caps, CAP_TASKS));
+  const showMemcheck = $derived(hasCap(caps, CAP_ALLOCS) || hasCap(caps, CAP_ERRORS));
+  const memcheckProblems = $derived(showMemcheck ? memcheckProblemCount(memcheck) : 0);
+
+  $effect(() => {
+    if (
+      (view === 'memory' && !showMemory) ||
+      (view === 'tasks' && !showTasks) ||
+      (view === 'memcheck' && !showMemcheck)
+    ) {
+      view = 'flame';
+    }
+  });
 
   const duration = $derived(stats.duration_ms ?? run.duration_ms);
   const position = $derived(at ?? duration);
   const resetKey = $derived(`${core}|${windowS}|${at ?? 'end'}`);
+  const imageExportDisabled = $derived(view !== 'flame' || !tree || tree.value <= 0);
+  const imageExportTip = $derived(
+    view !== 'flame'
+      ? 'Switch to Flamegraph view to export SVG or PNG'
+      : !tree || tree.value <= 0
+        ? 'No samples in this window'
+        : ''
+  );
 
-  async function poll() {
-    if (busy) return;
-    busy = true;
+  type ExportFormat = 'folded' | 'speedscope' | 'svg' | 'png';
+  const EXPORT_SPECS: Record<ExportFormat, { title: string; ext: string; filterName: string; extensions: string[] }> = {
+    folded: { title: 'Export folded stacks', ext: 'folded', filterName: 'Folded stacks', extensions: ['folded', 'txt'] },
+    speedscope: { title: 'Export Speedscope profile', ext: 'speedscope.json', filterName: 'Speedscope profile', extensions: ['json'] },
+    svg: { title: 'Export flamegraph SVG', ext: 'svg', filterName: 'SVG image', extensions: ['svg'] },
+    png: { title: 'Export flamegraph PNG', ext: 'png', filterName: 'PNG image', extensions: ['png'] },
+  };
+
+  $effect(() => {
+    if (!showExport) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (exportWrap && e.target instanceof Node && !exportWrap.contains(e.target)) {
+        showExport = false;
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        showExport = false;
+        exportBtn?.focus();
+      }
+    };
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  });
+
+  async function exportAs(format: ExportFormat) {
+    showExport = false;
+    if (exporting) return;
+    error = '';
+    exportNotice = '';
+
+    const isImage = format === 'svg' || format === 'png';
+    const svg = isImage ? (flame?.getSvg() ?? null) : null;
+    if (isImage && (!svg || imageExportDisabled)) {
+      error = imageExportTip || 'No flamegraph is available to export.';
+      return;
+    }
+
+    const spec = EXPORT_SPECS[format];
+    const baseLabel = name.trim() || run.name || run.id;
+    exporting = true;
     try {
-      const args: Record<string, unknown> = { window_s: windowS };
-      if (core !== 'all') args.core = core;
-      if (at !== null) args.at_ms = at;
-      const snapshot = await sidecar.call<{ tree: Node | null; stats: Stats }>('snapshot', args);
-      tree = snapshot.tree;
-      stats = snapshot.stats ?? {};
-      if (view === 'functions') functions = await sidecar.call<FunctionsData>('functions', { ...args, focus });
-      error = '';
+      const path = await saveDialog({
+        title: spec.title,
+        defaultPath: defaultExportFilename(baseLabel, spec.ext),
+        filters: [{ name: spec.filterName, extensions: spec.extensions }],
+      });
+      if (!path) return;
+
+      if (isImage && svg) {
+        const base64 =
+          format === 'svg'
+            ? bytesToBase64(new TextEncoder().encode(serializeFlameSvg(svg)))
+            : await svgToPngBase64(svg);
+        await sidecar.call<{ bytes: number }>('write_file', { path, base64 });
+      } else {
+        const args: Record<string, unknown> = { run: run.id, format, path, window_s: windowS };
+        if (core !== 'all') args.core = core;
+        if (at !== null) args.at_ms = at;
+        await sidecar.call<{ bytes: number }>('export', args);
+      }
+      const fileLabel = path.split(/[\\/]/).pop() || path;
+      exportNotice = `Exported ${fileLabel}`;
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
+    } finally {
+      exporting = false;
     }
-    busy = false;
+  }
+
+  async function poll(force = false) {
+    if (destroyed) return;
+    if (busy) {
+      if (force) dirty = true;
+      return;
+    }
+    busy = true;
+    try {
+      const timeArgs: Record<string, unknown> = { window_s: windowS };
+      if (at !== null) timeArgs.at_ms = at;
+      const args: Record<string, unknown> = { ...timeArgs };
+      if (core !== 'all') args.core = core;
+      const snapshot = await sidecar.call<{ tree: FlameNode | null; stats: RunStats }>('snapshot', args);
+      if (destroyed) return;
+      tree = snapshot.tree;
+      stats = snapshot.stats ?? {};
+      const currentCaps =
+        snapshot.stats?.caps !== undefined || targetCaps !== null
+          ? (snapshot.stats?.caps ?? 0) | (targetCaps ?? 0)
+          : CAP_SAMPLES;
+      const memcheckAvailable = hasCap(currentCaps, CAP_ALLOCS) || hasCap(currentCaps, CAP_ERRORS);
+
+      const pending: Promise<void>[] = [];
+      if (view === 'functions') {
+        pending.push(
+          sidecar.call<FunctionsData>('functions', { ...args, focus }).then((data) => {
+            if (!destroyed) functions = data;
+          }),
+        );
+      } else if (view === 'memory') {
+        pending.push(
+          sidecar.call<MemoryData>('memory', timeArgs).then((data) => {
+            if (!destroyed) memory = data;
+          }),
+        );
+      } else if (view === 'tasks') {
+        pending.push(
+          sidecar.call<TasksData>('tasks', timeArgs).then((data) => {
+            if (!destroyed) tasks = data;
+          }),
+        );
+      }
+      if (memcheckAvailable) {
+        const mcArgs: Record<string, unknown> = {
+          ...(at !== null ? { at_ms: at } : {}),
+          leak_age_s: clampLeakAgeS(leakAgeS),
+        };
+        pending.push(
+          sidecar.call<MemcheckData>('memcheck', mcArgs).then((data) => {
+            if (!destroyed) memcheck = data;
+          }),
+        );
+      } else {
+        memcheck = null;
+      }
+      await Promise.all(pending);
+      if (destroyed) return;
+      error = '';
+    } catch (e) {
+      if (!destroyed) error = String(e instanceof Error ? e.message : e);
+    } finally {
+      busy = false;
+      if (dirty && !destroyed) {
+        dirty = false;
+        void poll(false);
+      }
+    }
   }
 
   // refresh at once when anything the picture depends on changes ...
   $effect(() => {
-    void [view, core, windowS, at, focus];
-    poll();
+    void [view, core, windowS, at, focus, leakAgeS];
+    poll(true);
   });
   // ... and twice a second while recording
   $effect(() => {
     if (!live) return;
-    const timer = setInterval(poll, 500);
+    const timer = setInterval(() => poll(false), 500);
     return () => clearInterval(timer);
   });
 
   $effect(() => {
     const offs = [
+      sidecar.on('target', (e) => {
+        if (typeof e?.caps === 'number') {
+          const hadMemcheck = hasCap(targetCaps ?? undefined, CAP_ALLOCS) || hasCap(targetCaps ?? undefined, CAP_ERRORS);
+          targetCaps = e.caps;
+          if (!hadMemcheck && (hasCap(e.caps, CAP_ALLOCS) || hasCap(e.caps, CAP_ERRORS))) {
+            void poll(true);
+          }
+        }
+      }),
       sidecar.on('notice', (e) => (notices = [...notices, e.text])),
       sidecar.on('ended', () => (live = false)),
     ];
@@ -112,28 +302,69 @@
 
   async function save(fields: { name?: string; notes?: string }) {
     try {
-      await sidecar.call('update', { run: run.id, ...fields });
+      const updated = await sidecar.call<RunMeta>('update', { run: run.id, ...fields });
+      Object.assign(run, updated);
+      if (fields.name !== undefined && name === fields.name) name = updated.name;
+      if (fields.notes !== undefined && notes === fields.notes) notes = updated.notes;
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
     }
   }
 
-  const clock = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
   const cores = $derived(Array.from({ length: stats.ncores ?? run.ncores }, (_, i) => i));
 </script>
 
 <div class="page">
   <header>
-    <span class="logo">🔥 malgrind</span>
+    <span class="logo">malgrind</span>
     <input class="name" bind:value={name} onblur={() => save({ name })} onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()} aria-label="Run name" />
     {#if live}<span class="live"><span class="dot"></span>LIVE</span>{:else}<span class="muted">{formatDuration(duration)}</span>{/if}
     {#if run.port}<span class="muted stat" title="The board this run was recorded from">{run.port}</span>{/if}
     <span class="spacer"></span>
     {#if stats.arch}
-      <span class="stat muted">{stats.samples_per_s ?? '–'} samples/s · {stats.dropped ?? 0} dropped · {stats.overhead_pct == null ? '–' : stats.overhead_pct + ' %'} overhead</span>
+      <span class="stat muted">{formatRunStats(stats)}</span>
     {/if}
     {#if run.settings}<button class="btn ghost small" onclick={() => (showSettings = !showSettings)}>Settings</button>{/if}
-    <button class="btn ghost small" onclick={() => (showNotes = !showNotes)}>Notes</button>
+    <button class="btn ghost small notes-btn" class:active={showNotes} onclick={() => (showNotes = !showNotes)} aria-pressed={showNotes}>
+      Notes{#if notes.trim().length > 0}<span class="notes-dot" title="This run has notes" aria-hidden="true"></span>{/if}
+    </button>
+    <div class="export-wrap" bind:this={exportWrap}>
+      <button
+        bind:this={exportBtn}
+        class="btn ghost small"
+        type="button"
+        disabled={exporting}
+        aria-haspopup="menu"
+        aria-expanded={showExport}
+        onclick={() => (showExport = !showExport)}
+      >
+        {exporting ? 'Exporting...' : 'Export v'}
+      </button>
+      {#if showExport}
+        <div class="export-menu" role="menu" aria-label="Export run">
+          <button type="button" role="menuitem" onclick={() => exportAs('folded')}>Folded stacks (.folded)</button>
+          <button type="button" role="menuitem" onclick={() => exportAs('speedscope')}>Speedscope (.speedscope.json)</button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={imageExportDisabled}
+            title={imageExportTip}
+            onclick={() => exportAs('svg')}
+          >
+            Flamegraph SVG (.svg)
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={imageExportDisabled}
+            title={imageExportTip}
+            onclick={() => exportAs('png')}
+          >
+            Flamegraph PNG (.png)
+          </button>
+        </div>
+      {/if}
+    </div>
     <button class="btn small" onclick={close}>{live ? 'Stop' : 'Close'}</button>
   </header>
 
@@ -144,18 +375,35 @@
     </div>
   {/if}
   {#if showNotes}
-    <textarea class="notes" bind:value={notes} onblur={() => save({ notes })} placeholder="Notes about this run…"></textarea>
+    <textarea class="notes" bind:value={notes} onblur={() => save({ notes })} placeholder="Notes about this run..."></textarea>
   {/if}
   {#each notices as text, i}
-    <div class="notice">{text}<button class="x" onclick={() => (notices = notices.filter((_, j) => j !== i))} aria-label="Dismiss">×</button></div>
+    <div class="notice">{text}<button class="x" onclick={() => (notices = notices.filter((_, j) => j !== i))} aria-label="Dismiss">x</button></div>
   {/each}
-  {#if !live && startsLive}<div class="notice">The board stopped sending data (unplugged, or reset?). The run is saved.</div>{/if}
+  {#if exportNotice}
+    <div class="notice">{exportNotice}<button class="x" onclick={() => (exportNotice = '')} aria-label="Dismiss">x</button></div>
+  {/if}
+  {#if !live && startsLive}<div class="notice">{isProbeRun ? 'Debug probe sampling stopped. The run is saved.' : 'The board stopped sending data (unplugged, or reset?). The run is saved.'}</div>{/if}
   {#if error}<div class="notice bad" role="alert">{error}</div>{/if}
 
   <div class="body">
     <nav>
       <button class:on={view === 'flame'} onclick={() => (view = 'flame')}>Flamegraph</button>
       <button class:on={view === 'functions'} onclick={() => (view = 'functions')}>Functions</button>
+      {#if showMemory}
+        <button class:on={view === 'memory'} onclick={() => (view = 'memory')}>Memory</button>
+      {/if}
+      {#if showTasks}
+        <button class:on={view === 'tasks'} onclick={() => (view = 'tasks')}>Tasks</button>
+      {/if}
+      {#if showMemcheck}
+        <button class="nav-memcheck" class:on={view === 'memcheck'} onclick={() => (view = 'memcheck')}>
+          <span>Memcheck</span>
+          {#if memcheckProblems > 0}
+            <span class="nav-badge" aria-label="{memcheckProblems} memory {memcheckProblems === 1 ? 'problem' : 'problems'}">{memcheckProblems}</span>
+          {/if}
+        </button>
+      {/if}
       <div class="filters">
         <label>Core
           <select bind:value={core}><option value="all">all</option>{#each cores as c}<option value={c}>{c}</option>{/each}</select>
@@ -167,22 +415,28 @@
           </select>
         </label>
       </div>
-      {#if live}<button class="remove" onclick={() => onRemoveAgent(run.port)}>Remove agent…</button>{/if}
+      {#if live && !isProbeRun}<button class="remove" onclick={() => onRemoveAgent(run.device_id || run.port)}>Remove agent...</button>{/if}
     </nav>
 
     <main>
       {#if view === 'flame'}
-        <Flame {tree} {resetKey} />
-      {:else}
+        <Flame bind:this={flame} {tree} {resetKey} />
+      {:else if view === 'functions'}
         <Functions data={functions} {focus} onFocus={(f) => (focus = f)} />
+      {:else if view === 'memory'}
+        <Memory data={memory} />
+      {:else if view === 'tasks'}
+        <Tasks data={tasks} />
+      {:else}
+        <Memcheck data={memcheck} {leakAgeS} onLeakAgeChange={(age) => (leakAgeS = clampLeakAgeS(age))} />
       {/if}
     </main>
   </div>
 
   <footer>
-    <span class="clock">{clock(position)}</span>
+    <span class="clock">{formatClockMs(position)}</span>
     <input type="range" min="0" max={Math.max(duration, 1)} value={position} oninput={(e) => (at = Number(e.currentTarget.value))} aria-label="Time in the run" />
-    <span class="clock">{clock(duration)}</span>
+    <span class="clock">{formatClockMs(duration)}</span>
     {#if at !== null}<button class="btn ghost small" onclick={() => (at = null)}>{live ? 'Back to live' : 'To the end'}</button>{/if}
   </footer>
 </div>
@@ -199,6 +453,20 @@
   .stat { font-size: 12px; font-variant-numeric: tabular-nums; }
   .used { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 8px 16px; font-size: 12.5px; background: var(--panel); border-bottom: 1px solid var(--line); }
   .used code { font-family: var(--mono); font-size: 12px; }
+  .notes-btn { display: inline-flex; align-items: center; gap: 6px; }
+  .notes-btn.active { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .notes-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .export-wrap { position: relative; }
+  .export-menu {
+    position: absolute; right: 0; top: calc(100% + 6px); min-width: 220px; padding: 4px;
+    display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 8px; box-shadow: 0 8px 24px #00000026; z-index: 20;
+  }
+  .export-menu button {
+    text-align: left; padding: 7px 10px; font-size: 12.5px; background: none; border: 0; border-radius: 6px; color: var(--fg);
+  }
+  .export-menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .export-menu button:disabled { opacity: 0.45; cursor: not-allowed; }
   .notes { margin: 0; width: 100%; min-height: 70px; padding: 10px 16px; font: inherit; color: var(--fg); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); resize: vertical; }
   .notice { display: flex; justify-content: space-between; padding: 8px 16px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-bottom: 1px solid var(--line); font-size: 13px; }
   .notice.bad { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); }
@@ -207,6 +475,13 @@
   nav { width: 168px; display: flex; flex-direction: column; border-right: 1px solid var(--line); padding: 8px 0; }
   nav > button { text-align: left; padding: 9px 16px; background: none; border: 0; border-left: 3px solid transparent; color: var(--muted); }
   nav > button.on { color: var(--fg); background: var(--panel); border-left-color: var(--accent); }
+  .nav-memcheck { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+  .nav-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+    background: var(--danger); color: #fff; font-size: 11px; font-weight: 700;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
   .filters { margin-top: 18px; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: var(--muted); }
   .filters select { width: 100%; margin-top: 3px; }
   .remove { margin-top: auto; padding: 10px 16px; text-align: left; background: none; border: 0; border-top: 1px solid var(--line); color: var(--danger); }

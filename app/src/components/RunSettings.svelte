@@ -2,20 +2,29 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { onMount, untrack } from 'svelte';
   import { defaultRunName } from '../lib/format';
-  import { changes, defaultRate, hasOverrides, parseRate, rateProblem } from '../lib/settings';
+  import {
+    changes,
+    defaultRate,
+    emptySettings,
+    hasOverrides,
+    parseRate,
+    rateProblem,
+    targetCfgProblem,
+  } from '../lib/settings';
   import type { Sidecar } from '../lib/sidecar';
-  import type { ProjectMeta, RunPlan, RunSettings } from '../lib/types';
+  import type { ProbeTargetOption, ProjectMeta, RunPlan, RunSettings } from '../lib/types';
 
   interface Props {
     sidecar: Sidecar;
     project: ProjectMeta;
-    port: string;
-    mode: 'attach' | 'new_run';
-    boardLine: string; // "Silicon Labs CP210x · /dev/ttyUSB0 · USB 3-3", for the sentence that names the board
+    device: string;
+    mode: 'attach' | 'new_run' | 'no_flash';
+    boardLine: string; // "Silicon Labs CP210x | USB 3-3", for the sentence that names the board
+    busy?: boolean;
     onStart(args: { projectName: string; runName: string; settings: RunSettings }): void;
     onCancel(): void;
   }
-  let { sidecar, project, port, mode, boardLine, onStart, onCancel }: Props = $props();
+  let { sidecar, project, device, mode, boardLine, busy = false, onStart, onCancel }: Props = $props();
 
   // The panel is shown before every run: it starts from what the project used last time (else what was detected) and every
   // field can be changed. What it sends is stored with the run.
@@ -25,47 +34,83 @@
   let runName = $state(untrack(() => defaultRunName(project.name)));
   let env = $state('');
   let rateText = $state('');
+  let checkMemory = $state(false);
   let elf = $state('');
+  let elfHint = $state('');
+  let targetCfg = $state('');
+  let probeTargets = $state<ProbeTargetOption[]>([]);
+  let probeRateHint = $state('');
+  let probeNote = $state('');
   let extraArgs = $state('');
   let buildFlags = $state('');
   let buildCommand = $state(''); // empty: the detected command (typing one makes it an override)
   let uploadCommand = $state('');
   let autoBuild = $state(''); // the commands for the fields as they are now, when no override replaces them
   let autoUpload = $state('');
+  let autoOpenOcd = $state('');
+  let openocdPkg = $state('');
+  let openocdIface = $state('');
   let envVars = $state<string[]>([]);
   let engineError = $state('');
   let warning = $state('');
   let asked = 0;
 
+  const targetListId = 'probe-target-options';
   const detectedRate = $derived(plan?.detected.rate_hz || defaultRate);
   const rate = $derived(parseRate(rateText));
-  const rateError = $derived(rateProblem(rate));
+  const rateError = $derived(mode === 'new_run' ? rateProblem(rate) : null);
+  const targetCfgError = $derived(mode === 'no_flash' ? targetCfgProblem(targetCfg) : null);
+
+  const targetCfgSetting = $derived.by(() => {
+    if (mode !== 'no_flash') return '';
+    if (targetCfgError) return targetCfg;
+    const trimmed = targetCfg.trim();
+    return trimmed === (plan?.detected.target_cfg ?? '') ? '' : trimmed;
+  });
 
   const settings = $derived<RunSettings>({
     env: env === (plan?.detected.env ?? '') ? '' : env,
     extra_args: extraArgs,
     build_flags: buildFlags,
-    rate_hz: Number.isNaN(rate) || rate === detectedRate ? 0 : rate, // the default is sent as "not set"
+    rate_hz: mode === 'new_run' ? (Number.isNaN(rate) || rate === detectedRate ? 0 : rate) : 0, // the default is sent as "not set"
+    check_memory: mode === 'new_run' && !!plan?.caps?.memcheck ? checkMemory : false,
     elf,
     build_command: buildCommand,
-    upload_command: uploadCommand
+    upload_command: uploadCommand,
+    target_cfg: targetCfgSetting,
   });
 
   function fill(s: RunSettings, detected: RunSettings) {
     env = s.env || detected.env;
     rateText = String(s.rate_hz || detected.rate_hz || defaultRate);
+    checkMemory = Boolean(s.check_memory ?? detected.check_memory);
     elf = s.elf;
+    targetCfg = s.target_cfg || detected.target_cfg || '';
     extraArgs = s.extra_args;
     buildFlags = s.build_flags;
     buildCommand = s.build_command;
     uploadCommand = s.upload_command;
   }
 
+  function applyProbePlan(answer: RunPlan) {
+    probeTargets = answer.probe_targets ?? [];
+    probeRateHint = answer.probe_rate_hint ?? '';
+    probeNote = answer.note ?? '';
+    elfHint = answer.elf_hint ?? '';
+    autoOpenOcd = answer.commands?.openocd ?? '';
+    openocdPkg = answer.commands?.package ?? answer.openocd?.package ?? '';
+    openocdIface = answer.commands?.interface ?? answer.probe_config?.interface_desc ?? '';
+  }
+
   onMount(async () => {
     try {
-      plan = await sidecar.call<RunPlan>('run_plan', { project: project.id, port, mode });
+      plan = await sidecar.call<RunPlan>('run_plan', { project: project.id, device, mode });
       fill(plan.last ?? plan.detected, plan.detected);
       if (mode === 'attach' && !elf) elf = plan.detected.elf;
+      if (mode === 'no_flash' && !elf && plan.detected.elf) elf = plan.detected.elf;
+      elfHint = plan.elf_hint ?? '';
+      if (mode === 'no_flash') applyProbePlan(plan);
+      engineError = plan.error;
     } catch (e) {
       loadError = String(e instanceof Error ? e.message : e);
     }
@@ -78,14 +123,16 @@
     const timer = setTimeout(async () => {
       const mine = ++asked;
       try {
-        const answer = await sidecar.call<RunPlan>('run_plan', { project: project.id, port, mode, settings: sent });
+        const answer = await sidecar.call<RunPlan>('run_plan', { project: project.id, device, mode, settings: sent });
         if (mine !== asked) return; // an older answer
         engineError = answer.error;
         warning = answer.warning ?? '';
         envVars = answer.commands?.env ?? [];
-        if (answer.commands) {
-          if (!sent.build_command) autoBuild = answer.commands.build;
-          if (!sent.upload_command) autoUpload = answer.commands.upload;
+        if (mode === 'no_flash') {
+          applyProbePlan(answer);
+        } else if (answer.commands) {
+          if (!sent.build_command && answer.commands.build) autoBuild = answer.commands.build;
+          if (!sent.upload_command && answer.commands.upload) autoUpload = answer.commands.upload;
         }
       } catch (e) {
         engineError = String(e instanceof Error ? e.message : e);
@@ -101,42 +148,96 @@
 
   function reset() {
     if (!plan) return;
-    fill({ env: '', extra_args: '', build_flags: '', rate_hz: 0, elf: '', build_command: '', upload_command: '' }, plan.detected);
-    if (mode === 'attach') elf = plan.detected.elf;
+    fill(emptySettings(), plan.detected);
+    if ((mode === 'attach' || mode === 'no_flash') && plan.detected.elf) elf = plan.detected.elf;
   }
 
   const changed = $derived(plan ? changes(settings, plan.detected) : []);
-  const canStart = $derived(!!plan && !rateError && !engineError && runName.trim() !== '' && projectName.trim() !== '');
+  const canStart = $derived(
+    !!plan &&
+      !busy &&
+      !rateError &&
+      !targetCfgError &&
+      !engineError &&
+      runName.trim() !== '' &&
+      projectName.trim() !== ''
+  );
+
+  const panelLabel = $derived(
+    mode === 'attach' ? 'Attach settings' : mode === 'no_flash' ? 'Debug probe settings' : 'Run settings'
+  );
+  const heading = $derived(
+    mode === 'attach'
+      ? `Attach to ${boardLine}`
+      : mode === 'no_flash'
+        ? `Debug probe on ${boardLine}`
+        : `Build & flash on ${boardLine}`
+  );
+  const startLabel = $derived(
+    busy ? 'Starting...' : mode === 'attach' ? 'Attach' : mode === 'no_flash' ? 'Start probe' : 'Flash this board'
+  );
 </script>
 
-<div class="panel" role="group" aria-label={mode === 'attach' ? 'Attach settings' : 'Run settings'}>
-  <h2>{mode === 'attach' ? 'Attach to' : 'Build & flash on'} {boardLine}</h2>
+<div class="panel" role="group" aria-label={panelLabel}>
+  <h2>{heading}</h2>
 
   {#if loadError}
     <p class="error" role="alert">{loadError}</p>
     <div class="actions"><button class="btn ghost" onclick={onCancel}>Back</button></div>
   {:else if !plan}
-    <p class="muted">Looking at the project…</p>
+    <p class="muted">Looking at the project...</p>
   {:else}
     <div class="grid">
       <label>Project name <input bind:value={projectName} aria-label="Project name" /></label>
       <label>Run name <input bind:value={runName} aria-label="Run name" /></label>
 
-      {#if mode === 'new_run'}
+      {#if (mode === 'new_run' || (mode === 'no_flash' && (plan.envs?.length ?? 0) > 0))}
         <label>Environment
           <select bind:value={env}>{#each plan.envs ?? [] as e}<option>{e}</option>{/each}</select>
           <span class="hint">detected: {plan.detected.env}</span>
         </label>
+      {/if}
+
+      {#if mode === 'new_run'}
         <label>Sampling rate (Hz per core)
           <input bind:value={rateText} inputmode="numeric" aria-label="Sampling rate" aria-invalid={!!rateError} />
           <span class="hint" class:bad={!!rateError}>{rateError ?? `detected: ${detectedRate}. About 1.5 % of a core per 1000 Hz.`}</span>
         </label>
       {/if}
 
+      {#if mode === 'no_flash'}
+        <label class="wide">OpenOCD target config
+          <input
+            bind:value={targetCfg}
+            list={targetListId}
+            placeholder={plan.detected.target_cfg || 'target/<chip>.cfg or board/<board>.cfg'}
+            aria-label="OpenOCD target config"
+            aria-invalid={!!targetCfgError}
+          />
+          <datalist id={targetListId}>
+            {#each probeTargets as opt (opt.cfg)}
+              <option value={opt.cfg}>{opt.label}</option>
+            {/each}
+          </datalist>
+          <span class="hint" class:bad={!!targetCfgError}>
+            {targetCfgError ??
+              `${plan.detected.target_cfg ? `detected: ${plan.detected.target_cfg}. ` : ''}Choose from suggestions or type any OpenOCD target/*.cfg or board/*.cfg.`}
+          </span>
+        </label>
+      {/if}
+
       <label class="wide">Firmware ELF (for function names)
         <span class="row">
-          <input bind:value={elf} placeholder={mode === 'attach' ? 'found automatically' : `found after the build: ${plan.elf_hint ?? ''}`} aria-label="Firmware ELF" />
-          <button class="btn ghost small" onclick={chooseElf}>Choose…</button>
+          <input
+            bind:value={elf}
+            placeholder={mode === 'attach'
+              ? 'found automatically'
+              : mode === 'no_flash'
+                ? (elfHint ? `found automatically: ${elfHint}` : 'optional: choose .elf for function names')
+                : `found after the build: ${plan.elf_hint ?? ''}`}
+            aria-label="Firmware ELF"
+          />
+          <button class="btn ghost small" onclick={chooseElf}>Choose...</button>
         </span>
       </label>
 
@@ -144,7 +245,34 @@
         <label>Extra pio arguments <input bind:value={extraArgs} placeholder="--disable-auto-clean" aria-label="Extra pio arguments" /></label>
         <label>Extra build flags <input bind:value={buildFlags} placeholder="-DMY_FLAG=1" aria-label="Extra build flags" /></label>
       {/if}
+      {#if mode === 'new_run' && !!plan?.caps?.memcheck}
+        <div class="wide check-field">
+          <label class="check-row">
+            <input type="checkbox" bind:checked={checkMemory} />
+            <span>Check memory errors (slower, more RAM)</span>
+          </label>
+          <span class="hint">Traces heap allocations and frees, and checks for heap corruption and stack overflows. Adds per-allocation overhead and extra target RAM.</span>
+        </div>
+      {/if}
     </div>
+
+    {#if mode === 'no_flash'}
+      {#if probeRateHint}
+        <p class="hint probe-note"><b>Sampling:</b> {probeRateHint}</p>
+      {/if}
+      <p class="hint probe-note">{probeNote || 'No firmware will be modified or flashed. Profiles flat (depth-1) PCs via debug probe.'}</p>
+      {#if autoOpenOcd || openocdPkg}
+        <details class="advanced">
+          <summary>Advanced: OpenOCD configuration</summary>
+          {#if openocdPkg || openocdIface}
+            <p class="hint">{[openocdPkg && `Package: ${openocdPkg}`, openocdIface && `Interface: ${openocdIface}`].filter(Boolean).join(' | ')}</p>
+          {/if}
+          {#if autoOpenOcd}
+            <pre class="env">{autoOpenOcd}</pre>
+          {/if}
+        </details>
+      {/if}
+    {/if}
 
     {#if mode === 'new_run'}
       <details class="advanced">
@@ -173,10 +301,10 @@
 
     <div class="actions">
       <button class="btn" disabled={!canStart} onclick={() => onStart({ projectName: projectName.trim(), runName: runName.trim(), settings })}>
-        {mode === 'attach' ? 'Attach' : 'Flash this board'}
+        {startLabel}
       </button>
-      <button class="btn ghost" onclick={reset}>Reset to detected</button>
-      <button class="btn ghost" onclick={onCancel}>Cancel</button>
+      <button class="btn ghost" disabled={busy} onclick={reset}>Reset to detected</button>
+      <button class="btn ghost" disabled={busy} onclick={onCancel}>Cancel</button>
     </div>
   {/if}
 </div>
@@ -195,7 +323,11 @@
   textarea { resize: vertical; width: 100%; }
   textarea.custom { border-color: var(--accent); }
   .hint { font: 12px var(--font); color: var(--muted); }
+  .probe-note { margin: 10px 0 0; }
   .hint.bad, .error { color: var(--danger); }
+  .check-field { display: flex; flex-direction: column; gap: 4px; }
+  .check-row { flex-direction: row; align-items: center; gap: 8px; color: var(--fg); font-size: 13px; cursor: pointer; }
+  .check-row input[type='checkbox'] { width: auto; margin: 0; padding: 0; accent-color: var(--accent); cursor: pointer; }
   .warning { margin: 10px 0 0; color: var(--accent); font-size: 13px; }
   .advanced { margin-top: 14px; }
   .advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }

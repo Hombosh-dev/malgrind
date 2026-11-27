@@ -1,0 +1,582 @@
+#include "families/esp32.hpp"
+
+#include "os/paths.hpp"
+#include "os/process.hpp"
+#include "os/tools.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <charconv>
+#include <format>
+#include <fstream>
+#include <iterator>
+#include <set>
+#include <sstream>
+#include <stdexcept>
+
+namespace fs = std::filesystem;
+
+namespace malgrind::host {
+
+namespace {
+
+// pio runs with `-d <project>`, which changes its directory: every path handed to it must be absolute.
+fs::path absolute_path(const fs::path& path) {
+    auto abs = fs::absolute(path).lexically_normal();
+    if (abs.filename().empty() && abs != abs.root_path()) abs = abs.parent_path(); // "/a/b/" -> "/a/b"
+    return abs;
+}
+
+std::string slurp(const fs::path& file) {
+    std::ifstream in(file);
+    return {std::istreambuf_iterator<char>(in), {}};
+}
+
+std::vector<std::string> lines_of(std::string_view text) {
+    std::vector<std::string> lines;
+    std::istringstream in{std::string(text)};
+    for (std::string line; std::getline(in, line);) lines.push_back(line);
+    return lines;
+}
+
+// "CONFIG_X=1" and "# CONFIG_X is not set" both set CONFIG_X; anything else is no setting.
+std::optional<std::string> sdkconfig_key(const std::string& line) {
+    constexpr std::string_view kNotSet = " is not set";
+    if (line.starts_with("CONFIG_")) return line.substr(0, line.find('='));
+    if (line.starts_with("# CONFIG_") && line.ends_with(kNotSet)) return line.substr(2, line.size() - 2 - kNotSet.size());
+    return std::nullopt;
+}
+
+struct AgentPaths {
+    fs::path files, out, sdkconfig;
+};
+
+AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir) {
+    AgentPaths p;
+    p.files = absolute_path(agent_dir) / "agent" / esp32_family().id();
+    if (!fs::exists(p.files / "sdkconfig.agent") || !fs::exists(p.files / "inject.py"))
+        throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
+    p.out = absolute_path(project.dir) / ".pio" / "malgrind";
+    p.sdkconfig = p.out / ("sdkconfig." + env);
+    return p;
+}
+
+// The part of the agent that CMake reads once, when it configures. PlatformIO does not configure again when a component's
+// CMakeLists or Kconfig changes, so a build directory made with other files would keep the old configuration (a Kconfig option
+// that a newer malgrind added would simply not exist). The stamp says which files the directory was made with.
+std::string agent_stamp(const fs::path& files) {
+    std::uint64_t hash = 1469598103934665603ull; // FNV-1a
+    for (const char* name :
+         {"malgrind/CMakeLists.txt", "malgrind/Kconfig.projbuild", "inject.py", "sdkconfig.agent", "sdkconfig.memcheck"})
+        for (const unsigned char c : slurp(files / name)) hash = (hash ^ c) * 1099511628211ull;
+    return std::format("{:016x}", hash);
+}
+
+bool is_hex(char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; }
+
+std::string lower_ascii(std::string_view s) {
+    std::string out(s);
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
+}
+
+std::vector<std::string_view> split_alnum_tokens(std::string_view s) {
+    std::vector<std::string_view> tokens;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        while (i < s.size() && !std::isalnum(static_cast<unsigned char>(s[i]))) ++i;
+        const std::size_t start = i;
+        while (i < s.size() && std::isalnum(static_cast<unsigned char>(s[i]))) ++i;
+        if (i > start) tokens.push_back(s.substr(start, i - start));
+    }
+    return tokens;
+}
+
+std::string infer_esp32_target_from_text(std::string_view raw, bool& recognized_other_variant) {
+    const std::string lower = lower_ascii(raw);
+    if (lower.empty()) return {};
+
+    if (lower == "arduino_nano_esp32") return "target/esp32s3.cfg";
+
+    for (const std::string_view pat : {"esp32s3", "esp32-s3", "esp32_s3"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32s3.cfg";
+    }
+    for (const std::string_view pat : {"esp32s2", "esp32-s2", "esp32_s2"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32s2.cfg";
+    }
+    for (const std::string_view pat : {"esp32c3", "esp32-c3", "esp32_c3"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32c3.cfg";
+    }
+    for (const std::string_view pat : {"esp32c6", "esp32-c6", "esp32_c6"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32c6.cfg";
+    }
+    for (const std::string_view pat : {"esp32c2", "esp32-c2", "esp32_c2", "esp32c5", "esp32-c5", "esp32_c5",
+                                       "esp32h2", "esp32-h2", "esp32_h2", "esp32p4", "esp32-p4", "esp32_p4"}) {
+        if (lower.find(pat) != std::string::npos) {
+            recognized_other_variant = true;
+            return {};
+        }
+    }
+
+    for (const std::string_view tok : split_alnum_tokens(lower)) {
+        if (tok == "s3") return "target/esp32s3.cfg";
+        if (tok == "s2") return "target/esp32s2.cfg";
+        if (tok == "c3") return "target/esp32c3.cfg";
+        if (tok == "c6") return "target/esp32c6.cfg";
+        if (tok == "c2" || tok == "c5" || tok == "h2" || tok == "p4") {
+            recognized_other_variant = true;
+            return {};
+        }
+    }
+
+    for (const std::string_view pat : {"esp32", "esp-wroom", "esp-wrover", "lolin32", "lolin_d32", "nodemcu-32s", "d1_mini32", "pico32"}) {
+        if (lower.find(pat) != std::string::npos) return "target/esp32.cfg";
+    }
+    return {};
+}
+
+std::string sdkconfig_idf_target(const fs::path& project_dir, std::string_view env) {
+    if (project_dir.empty()) return {};
+    std::vector<fs::path> candidates;
+    if (!env.empty()) candidates.push_back(project_dir / ("sdkconfig." + std::string(env)));
+    candidates.push_back(project_dir / "sdkconfig");
+    for (const auto& file : candidates) {
+        std::ifstream in(file);
+        if (!in) continue;
+        for (std::string line; std::getline(in, line);) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.starts_with("CONFIG_IDF_TARGET=\"")) {
+                const auto start = std::string_view("CONFIG_IDF_TARGET=\"").size();
+                const auto end = line.find('"', start);
+                if (end != std::string::npos && end > start) return line.substr(start, end - start);
+            }
+            if (line.starts_with("CONFIG_IDF_TARGET_") && line.ends_with("=y")) {
+                const auto start = std::string_view("CONFIG_IDF_TARGET_").size();
+                const std::string_view key = std::string_view(line).substr(start, line.size() - start - 2);
+                if (!key.empty() && key.find('_') == std::string_view::npos) return std::string(key);
+            }
+        }
+    }
+    return {};
+}
+
+std::string_view esp32_rom_chip(Arch arch, const fs::path& firmware_elf) {
+    const std::string lower = lower_ascii(os::to_utf8(firmware_elf));
+    if (arch == Arch::Xtensa) {
+        for (const std::string_view chip : {"esp32s3", "esp32s2"}) {
+            if (lower.find(chip) != std::string::npos) return chip;
+        }
+        return "esp32";
+    }
+    if (arch == Arch::RiscV32) {
+        for (const std::string_view chip : {"esp32c6", "esp32c5", "esp32c3", "esp32c2", "esp32h2", "esp32p4"}) {
+            if (lower.find(chip) != std::string::npos) return chip;
+        }
+        return "esp32c3";
+    }
+    return {};
+}
+
+// Matches "<chip>_rev<digits>_rom" (returning digits) or "<chip>_rom" (returning 0).
+std::optional<unsigned> parse_rom_revision(std::string_view stem, std::string_view chip) {
+    if (stem.size() == chip.size() + 4 && stem.starts_with(chip) && stem.ends_with("_rom")) return 0u;
+    constexpr std::string_view kRev = "_rev";
+    constexpr std::string_view kRom = "_rom";
+    if (!stem.starts_with(chip) || !stem.ends_with(kRom)) return std::nullopt;
+    auto rest = stem.substr(chip.size());
+    if (!rest.starts_with(kRev)) return std::nullopt;
+    rest.remove_prefix(kRev.size());
+    rest.remove_suffix(kRom.size());
+    if (rest.empty()) return std::nullopt;
+    for (const char c : rest) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) return std::nullopt;
+    }
+    unsigned rev = 0;
+    const auto [ptr, ec] = std::from_chars(rest.data(), rest.data() + rest.size(), rev);
+    if (ec != std::errc{} || ptr != rest.data() + rest.size()) return std::nullopt;
+    return rev;
+}
+
+void scan_rom_dir(const fs::path& dir, int depth, std::string_view chip, std::optional<unsigned>& best_rev,
+                  fs::path& best_path) {
+    std::error_code ec;
+    std::vector<fs::directory_entry> entries;
+    for (const auto& entry : fs::directory_iterator(dir, ec)) entries.push_back(entry);
+    std::ranges::sort(entries, [](const fs::directory_entry& a, const fs::directory_entry& b) {
+        return a.path() < b.path();
+    });
+    for (const auto& entry : entries) {
+        std::error_code entry_ec;
+        if (entry.is_directory(entry_ec)) {
+            if (depth < 2) scan_rom_dir(entry.path(), depth + 1, chip, best_rev, best_path);
+        } else if (entry.is_regular_file(entry_ec)) {
+            if (lower_ascii(os::to_utf8(entry.path().extension())) != ".elf") continue;
+            const std::string stem = lower_ascii(os::to_utf8(entry.path().stem()));
+            if (const auto rev = parse_rom_revision(stem, chip)) {
+                if (!best_rev || *rev > *best_rev) {
+                    best_rev = *rev;
+                    best_path = entry.path();
+                }
+            }
+        }
+    }
+}
+
+// An esptool command, its output forwarded line by line and also returned as one text. Throws if it fails.
+std::string run_esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args,
+                        const LineFn& on_line) {
+    const auto inv = esptool(pio, home, port, std::move(args));
+    if (!inv) throw std::runtime_error("esptool was not found: PlatformIO has not downloaded it yet (build any ESP32 project once)");
+    std::string all;
+    const int code = os::run_lines(inv->argv, inv->env, [&](std::string_view line) {
+        all.append(line).append("\n");
+        if (on_line) on_line(line);
+    });
+    if (code != 0) throw std::runtime_error(std::format("esptool failed (exit code {}): is the board connected and not in use?\n{}", code, all));
+    return all;
+}
+
+class Esp32Family final : public Family {
+public:
+    [[nodiscard]] std::string_view id() const override { return "esp32"; }
+    [[nodiscard]] std::string_view name() const override { return "ESP32 (ESP-IDF)"; }
+    [[nodiscard]] FamilyCaps caps() const override {
+        return {.agent = true, .backup = true, .identify = true, .identify_resets_board = true, .memcheck = true};
+    }
+    [[nodiscard]] bool handles_arch(Arch arch) const override {
+        return arch == Arch::Xtensa || arch == Arch::RiscV32;
+    }
+    [[nodiscard]] std::string project_problem(const ProjectInfo& project, const std::string& env) const override {
+        // espidf.py of PlatformIO: "Detected a whitespace character in project paths" -> stop early with a clear reason
+        if (os::to_utf8(project.dir).find(' ') != std::string::npos) {
+            return "PlatformIO cannot build an ESP-IDF project in a folder whose path contains a space: " + os::to_utf8(project.dir);
+        }
+        // The agent is an ESP-IDF component for ESP32. Anything else would build and flash, and then simply show nothing.
+        if (const auto platform = project.platforms.find(env);
+            platform != project.platforms.end() && !platform->second.starts_with("espressif32")) {
+            return std::format("environment '{}' uses platform '{}': malgrind supports ESP32 (platform espressif32) only",
+                               env, platform->second);
+        }
+        if (const auto framework = project.frameworks.find(env);
+            framework != project.frameworks.end() && framework->second.find("espidf") == std::string::npos) {
+            return std::format("environment '{}' uses framework '{}': the malgrind agent needs the ESP-IDF framework (framework = espidf)",
+                               env, framework->second);
+        }
+        return {};
+    }
+    [[nodiscard]] unsigned agent_baud() const override { return kEsp32AgentBaud; }
+    [[nodiscard]] AgentCommands agent_commands(const ToolContext& tools, const ProjectInfo& project,
+                                               const std::string& env, const std::string& port,
+                                               const RunSettings& settings, bool write_files) const override {
+        if (write_files) write_agent_sdkconfig(project, env, tools.agent_root, settings.rate_hz, settings.check_memory);
+        return {agent_command(tools.pio, project, env, port, tools.agent_root, false),
+                agent_command(tools.pio, project, env, port, tools.agent_root, true),
+                agent_elf(project, env)};
+    }
+    BoardIdentity identify(const ToolContext& tools, const std::string& port, const LineFn& on_line) const override {
+        const auto out = run_esptool(tools.pio, tools.home, port, {"flash_id"}, on_line);
+        const auto mac = parse_mac(out);
+        const auto size = parse_flash_size(out);
+        if (!mac || !size) {
+            throw std::runtime_error("cannot tell which board this is (esptool did not report its MAC address and flash size)");
+        }
+        return {*mac, *size, parse_chip(out).value_or("")};
+    }
+    void read_flash(const ToolContext& tools, const std::string& port, const BoardIdentity& board,
+                    const fs::path& out, const LineFn& on_line) const override {
+        run_esptool(tools.pio, tools.home, port,
+                    {"read_flash", "0", std::to_string(board.flash_bytes), os::to_utf8(out), "--no-progress"}, on_line);
+    }
+    void write_flash(const ToolContext& tools, const std::string& port, const fs::path& image,
+                     const LineFn& on_line) const override {
+        run_esptool(tools.pio, tools.home, port,
+                    {"write_flash", "--flash_mode", "keep", "--flash_freq", "keep", "--flash_size", "keep", "0",
+                     os::to_utf8(image)},
+                    on_line);
+    }
+    [[nodiscard]] bool is_agent_image(const fs::path& file) const override {
+        std::ifstream in(file, std::ios::binary);
+        if (!in) return false;
+        // search in blocks; the last bytes of a block are kept so a marker split between two blocks is still found
+        constexpr std::array markers{kEsp32AgentMarker, kEsp32AgentMarkerV2};
+        constexpr std::size_t kKeep = std::max(kEsp32AgentMarker.size(), kEsp32AgentMarkerV2.size()) - 1;
+        std::vector<char> buf(1 << 16);
+        std::string window;
+        while (in.read(buf.data(), static_cast<std::streamsize>(buf.size())) || in.gcount() > 0) {
+            window.append(buf.data(), static_cast<std::size_t>(in.gcount()));
+            for (const std::string_view marker : markers) {
+                if (window.find(marker) != std::string::npos) return true;
+            }
+            if (window.size() > kKeep) window.erase(0, window.size() - kKeep);
+        }
+        return false;
+    }
+    [[nodiscard]] std::vector<std::string> addr2line_names(Arch arch) const override {
+        switch (arch) {
+            case Arch::Xtensa: return {"xtensa-esp32-elf-addr2line", "xtensa-esp32s3-elf-addr2line"};
+            case Arch::RiscV32: return {"riscv32-esp-elf-addr2line"};
+            default: return {};
+        }
+    }
+    [[nodiscard]] std::vector<ExtraElf> extra_symbol_files(const fs::path& home, Arch arch,
+                                                           const fs::path& firmware_elf) const override {
+        const std::string_view chip = esp32_rom_chip(arch, firmware_elf);
+        if (chip.empty()) return {};
+
+        std::optional<unsigned> best_rev;
+        fs::path best_path;
+        for (const auto& core : os::platformio_core_dirs(home)) {
+            std::error_code ec;
+            std::vector<fs::path> packages;
+            for (const auto& pkg : fs::directory_iterator(core / "packages", ec)) {
+                std::error_code pkg_ec;
+                if (!pkg.is_directory(pkg_ec)) continue;
+                if (os::to_utf8(pkg.path().filename()).starts_with("tool-esp-rom-elfs")) {
+                    packages.push_back(pkg.path());
+                }
+            }
+            std::ranges::sort(packages);
+            for (const auto& pkg : packages) scan_rom_dir(pkg, 1, chip, best_rev, best_path);
+        }
+        if (best_path.empty()) return {};
+        return {{0x40000000u, 0x4006ffffu, std::move(best_path)}};
+    }
+    [[nodiscard]] std::string family_hint_for_usb(std::string_view vid, std::string_view /*pid*/) const override {
+        if (vid == "303a") return "esp32";
+        return {};
+    }
+    [[nodiscard]] std::string usb_adapter_name(std::string_view vid, std::string_view /*pid*/) const override {
+        if (lower_ascii(vid) == "303a") return "Espressif USB-Serial/JTAG (built-in debug port)";
+        return {};
+    }
+    [[nodiscard]] std::string usb_probe_name(std::string_view vid, std::string_view pid) const override {
+        if (lower_ascii(vid) == "303a" && lower_ascii(pid) == "1001") return "ESP USB JTAG (built-in)";
+        return {};
+    }
+    [[nodiscard]] std::string openocd_package() const override { return "tool-openocd-esp32"; }
+    [[nodiscard]] std::vector<std::string> openocd_interface_args(std::string_view vid, std::string_view pid,
+                                                                  std::string_view /*description*/) const override {
+        const std::string v = lower_ascii(vid);
+        const std::string p = lower_ascii(pid);
+        if (v == "303a" && p == "1001") return {"-f", "interface/esp_usb_jtag.cfg"};
+        if (v == "0403" && (p == "6010" || p == "6014")) return {"-f", "interface/ftdi/esp32_devkitj_v1.cfg"};
+        return {};
+    }
+    [[nodiscard]] bool handles_project(const ProjectInfo& project, const std::string& env) const override {
+        const std::string effective_env = env.empty() ? project.default_env : env;
+        if (!project.envs.empty() && !effective_env.empty() &&
+            std::ranges::find(project.envs, effective_env) == project.envs.end()) {
+            return false;
+        }
+        if (const auto platform = project.platforms.find(effective_env); platform != project.platforms.end()) {
+            return platform->second.starts_with("espressif32");
+        }
+        return !openocd_target_cfg(project, env).empty();
+    }
+    [[nodiscard]] std::string openocd_target_cfg(const ProjectInfo& project, const std::string& env) const override {
+        const std::string effective_env = env.empty() ? project.default_env : env;
+        if (!project.envs.empty() && !effective_env.empty() &&
+            std::ranges::find(project.envs, effective_env) == project.envs.end()) {
+            return {};
+        }
+        if (const auto platform = project.platforms.find(effective_env);
+            platform != project.platforms.end() && !platform->second.starts_with("espressif32")) {
+            return {};
+        }
+        bool other_variant = false;
+        auto check_text = [&](std::string_view text) -> std::string {
+            return infer_esp32_target_from_text(text, other_variant);
+        };
+        if (const auto mcu = project.mcus.find(effective_env); mcu != project.mcus.end()) {
+            if (auto cfg = check_text(mcu->second); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (const auto board = project.boards.find(effective_env); board != project.boards.end()) {
+            if (auto cfg = check_text(board->second); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (const auto idf_target = sdkconfig_idf_target(project.dir, effective_env); !idf_target.empty()) {
+            if (auto cfg = check_text(idf_target); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        if (!effective_env.empty()) {
+            if (auto cfg = check_text(effective_env); !cfg.empty()) return cfg;
+            if (other_variant) return {};
+        }
+        return {};
+    }
+    [[nodiscard]] std::vector<ProbeTargetOption> probe_target_options() const override {
+        return {
+            {"target/esp32.cfg", "ESP32"},
+            {"target/esp32s3.cfg", "ESP32-S3"},
+            {"target/esp32s2.cfg", "ESP32-S2"},
+            {"target/esp32c3.cfg", "ESP32-C3"},
+            {"target/esp32c6.cfg", "ESP32-C6"},
+        };
+    }
+    [[nodiscard]] ProbeSampleMode probe_sample_mode(std::string_view /*target_cfg*/) const override {
+        return ProbeSampleMode::HaltResume;
+    }
+    [[nodiscard]] std::optional<Arch> probe_target_arch(std::string_view target_cfg) const override {
+        const std::string lower = lower_ascii(target_cfg);
+        if (lower.find("esp32c3") != std::string::npos || lower.find("esp32c6") != std::string::npos ||
+            lower.find("esp32c2") != std::string::npos || lower.find("esp32c5") != std::string::npos ||
+            lower.find("esp32h2") != std::string::npos || lower.find("esp32p4") != std::string::npos) {
+            return Arch::RiscV32;
+        }
+        if (lower.find("esp32") != std::string::npos) return Arch::Xtensa;
+        return std::nullopt;
+    }
+};
+
+} // namespace
+
+const Family& esp32_family() {
+    static const Esp32Family instance;
+    return instance;
+}
+
+std::string merge_sdkconfig(std::string_view user, std::string_view agent) {
+    std::vector<std::string> agent_lines;
+    std::set<std::string> agent_keys;
+    for (auto& line : lines_of(agent)) {
+        if (const auto key = sdkconfig_key(line)) {
+            agent_keys.insert(*key);
+            agent_lines.push_back(std::move(line));
+        }
+    }
+    std::string out;
+    for (const auto& line : lines_of(user)) {
+        const auto key = sdkconfig_key(line);
+        if (!key || !agent_keys.contains(*key)) out += line + '\n';
+    }
+    for (const auto& line : agent_lines) out += line + '\n';
+    return out;
+}
+
+void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, const fs::path& agent_dir,
+                           unsigned rate_hz, bool check_memory) {
+    const auto p = agent_paths(project, env, agent_dir);
+    auto agent_keys = slurp(p.files / "sdkconfig.agent");
+    if (agent_keys.empty()) throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
+    std::string memcheck_keys;
+    if (check_memory) {
+        memcheck_keys = slurp(p.files / "sdkconfig.memcheck");
+        if (memcheck_keys.empty()) throw std::runtime_error("the memcheck config is missing from " + os::to_utf8(p.files));
+    }
+    fs::create_directories(p.out);
+    if (const auto stamp = agent_stamp(p.files); slurp(p.out / "agent.stamp") != stamp) {
+        std::error_code ec;
+        fs::remove_all(p.out / "build", ec); // configured with other agent files: start clean (a few minutes, once per malgrind update)
+        std::ofstream(p.out / "agent.stamp", std::ios::trunc) << stamp;
+    }
+    // The rate and memcheck options travel as sdkconfig keys, not as environment variables: IDF reconfigures and
+    // recompiles the agent when the sdkconfig changes, but would keep a stale object when only an environment variable does.
+    if (rate_hz != 0) agent_keys += "\nCONFIG_MALGRIND_RATE_HZ=" + std::to_string(rate_hz) + "\n";
+    if (check_memory) {
+        agent_keys += "\n" + memcheck_keys + "\nCONFIG_MALGRIND_MEMCHECK=y\n";
+    } else {
+        agent_keys += "\n# CONFIG_MALGRIND_MEMCHECK is not set\n";
+    }
+    fs::create_directories(p.out);
+    // an unchanged file keeps its time stamp: a newer sdkconfig makes ESP-IDF reconfigure and rebuild everything
+    const auto merged = merge_sdkconfig(slurp(project.dir / ("sdkconfig." + env)), agent_keys);
+    if (slurp(p.sdkconfig) != merged) std::ofstream(p.sdkconfig, std::ios::trunc) << merged;
+    if (!fs::exists(p.sdkconfig)) throw std::runtime_error("cannot write " + os::to_utf8(p.sdkconfig));
+}
+
+Invocation agent_command(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
+                         const fs::path& agent_dir, bool upload) {
+    const auto p = agent_paths(project, env, agent_dir);
+    std::vector<std::string> argv{os::to_utf8(pio), "run", "-d", os::to_utf8(absolute_path(project.dir)), "-e", env};
+    if (upload) argv.insert(argv.end(), {"-t", "upload", "--upload-port", port});
+    return {std::move(argv),
+            {"PLATFORMIO_BUILD_DIR=" + os::to_utf8(p.out / "build"),
+             "PLATFORMIO_EXTRA_SCRIPTS=pre:" + os::to_utf8(p.files / "inject.py"),
+             "MALGRIND_AGENT_DIR=" + os::to_utf8(p.files),
+             "MALGRIND_SDKCONFIG=" + os::to_utf8(p.sdkconfig)}};
+}
+
+Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
+                       const fs::path& agent_dir, bool upload) {
+    write_agent_sdkconfig(project, env, agent_dir);
+    return agent_command(pio, project, env, port, agent_dir, upload);
+}
+
+fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
+    return (project.dir / ".pio" / "malgrind" / "build" / env / "firmware.elf").lexically_normal();
+}
+
+std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
+    fs::path script_path;
+    for (const auto& core : os::platformio_core_dirs(home)) {
+        const fs::path candidate = core / "packages" / "tool-esptoolpy" / "esptool.py";
+        if (std::error_code ec; fs::exists(candidate, ec)) {
+            script_path = candidate;
+            break;
+        }
+    }
+    if (script_path.empty() && !home.empty()) {
+        const fs::path fallback = home / ".platformio" / "packages" / "tool-esptoolpy" / "esptool.py";
+        if (std::error_code ec; fs::exists(fallback, ec)) script_path = fallback;
+    }
+    if (script_path.empty()) return std::nullopt;
+    auto python_cmd = os::pio_python(home, pio);
+    if (!python_cmd) return std::nullopt;
+    Invocation inv;
+    inv.argv = std::move(*python_cmd);
+    for (auto& a : std::vector<std::string>{os::to_utf8(script_path), "--port", port, "--baud", std::to_string(kEsp32AgentBaud)})
+        inv.argv.push_back(std::move(a));
+    for (auto& a : args) inv.argv.push_back(std::move(a));
+    return inv;
+}
+
+std::optional<std::string> parse_chip(std::string_view out) {
+    constexpr std::string_view key = "Chip is ";
+    const auto at = out.find(key);
+    if (at == std::string_view::npos) return std::nullopt;
+    const auto start = at + key.size();
+    auto end = out.find_first_of("\r\n", start);
+    if (end == std::string_view::npos) end = out.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(out[end - 1]))) --end;
+    if (end == start) return std::nullopt;
+    return std::string(out.substr(start, end - start));
+}
+
+std::optional<std::string> parse_mac(std::string_view out) {
+    constexpr std::string_view key = "MAC: ";
+    const auto at = out.find(key);
+    if (at == std::string_view::npos) return std::nullopt;
+    const auto text = out.substr(at + key.size(), 17);
+    if (text.size() != 17) return std::nullopt;
+    std::string mac;
+    for (std::size_t i = 0; i < 17; ++i) {
+        if (i % 3 == 2) {
+            if (text[i] != ':') return std::nullopt;
+            mac += '-';
+        } else {
+            if (!is_hex(text[i])) return std::nullopt;
+            mac += static_cast<char>(std::tolower(static_cast<unsigned char>(text[i])));
+        }
+    }
+    return mac;
+}
+
+std::optional<std::uint32_t> parse_flash_size(std::string_view out) {
+    constexpr std::string_view key = "Detected flash size: ";
+    const auto at = out.find(key);
+    if (at == std::string_view::npos) return std::nullopt;
+    auto rest = out.substr(at + key.size());
+    std::uint32_t n = 0;
+    std::size_t digits = 0;
+    while (digits < rest.size() && std::isdigit(static_cast<unsigned char>(rest[digits])) && digits < 5)
+        n = n * 10 + static_cast<std::uint32_t>(rest[digits++] - '0');
+    if (digits == 0) return std::nullopt;
+    rest.remove_prefix(digits);
+    if (rest.starts_with("MB")) return n * 1024u * 1024u;
+    if (rest.starts_with("KB")) return n * 1024u;
+    return std::nullopt;
+}
+
+} // namespace malgrind::host
