@@ -15,7 +15,7 @@ namespace {
 
 fs::path env_dir(const fs::path& home) {
     if (const auto dirs = os::platformio_core_dirs(home); !dirs.empty()) return dirs[0] / "penv";
-    return home / ".platformio/penv";
+    return home / ".platformio" / "penv";
 }
 
 } // namespace

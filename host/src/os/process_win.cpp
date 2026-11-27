@@ -60,6 +60,7 @@ std::vector<fs::path> pathext_candidates(const std::string& name) {
                                                    : std::string_view(effective).substr(pos, next - pos);
         if (!raw.empty()) {
             std::string ext = raw.front() == '.' ? std::string(raw) : "." + std::string(raw);
+            for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (!is_batch_ext(ext)) out.push_back(from_utf8(name + ext));
         }
         if (next == std::string::npos) break;

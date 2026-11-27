@@ -189,9 +189,11 @@ void bytes_tracked_across_writes() {
     const auto fetched = store.get(id);
     assert(fetched && fetched->bytes == final_bytes);
 
-    std::ifstream meta_in(root / "runs" / id / "meta.json");
-    const auto meta_json = nlohmann::json::parse(meta_in);
-    assert(meta_json.contains("bytes") && meta_json["bytes"].is_number_unsigned() && meta_json["bytes"] > 0);
+    {
+        std::ifstream meta_in(root / "runs" / id / "meta.json");
+        const auto meta_json = nlohmann::json::parse(meta_in);
+        assert(meta_json.contains("bytes") && meta_json["bytes"].is_number_unsigned() && meta_json["bytes"] > 0);
+    }
     fs::remove_all(root);
 }
 

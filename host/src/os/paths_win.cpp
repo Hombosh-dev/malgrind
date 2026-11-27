@@ -47,19 +47,29 @@ std::optional<fs::path> known_folder(REFKNOWNFOLDERID id) {
 
 std::optional<std::string> get_env(std::string_view name) {
     const std::wstring wname = utf8_to_wide(name);
-    wchar_t* raw = nullptr;
-    std::size_t len = 0;
-    if (_wdupenv_s(&raw, &len, wname.c_str()) != 0 || !raw) return std::nullopt;
-    const std::unique_ptr<wchar_t, decltype(&std::free)> guard(raw, &std::free);
-    return wide_to_utf8(raw);
+    if (wname.empty()) return std::nullopt;
+    std::wstring buf(256, L'\0');
+    for (;;) {
+        SetLastError(ERROR_SUCCESS);
+        const DWORD n = GetEnvironmentVariableW(wname.c_str(), buf.data(), static_cast<DWORD>(buf.size()));
+        if (n == 0) {
+            if (GetLastError() == ERROR_ENVVAR_NOT_FOUND) return std::nullopt;
+            return std::string{};
+        }
+        if (n < buf.size()) {
+            buf.resize(n);
+            return wide_to_utf8(buf);
+        }
+        buf.resize(static_cast<std::size_t>(n) + 1);
+    }
 }
 
 void set_env(std::string_view name, std::string_view value) {
-    _wputenv_s(utf8_to_wide(name).c_str(), utf8_to_wide(value).c_str());
+    SetEnvironmentVariableW(utf8_to_wide(name).c_str(), utf8_to_wide(value).c_str());
 }
 
 void unset_env(std::string_view name) {
-    _wputenv_s(utf8_to_wide(name).c_str(), L"");
+    SetEnvironmentVariableW(utf8_to_wide(name).c_str(), nullptr);
 }
 
 fs::path home_dir() {

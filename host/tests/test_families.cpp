@@ -625,11 +625,12 @@ void stm32_agent_commands_and_image() {
         return std::ranges::find(cmds.build.env, entry) != cmds.build.env.end();
     };
     const fs::path agent_root = fs::absolute(MALGRIND_SOURCE_DIR).lexically_normal();
-    assert(has_env("PLATFORMIO_BUILD_DIR=" + os::to_utf8(proj_dir / ".pio/malgrind/build")));
-    assert(has_env("PLATFORMIO_EXTRA_SCRIPTS=pre:" + os::to_utf8(agent_root / "agent/stm32/inject.py")));
-    assert(has_env("MALGRIND_AGENT_DIR=" + os::to_utf8(agent_root / "agent/stm32")));
-    assert(has_env("MALGRIND_CORE_DIR=" + os::to_utf8(agent_root / "core")));
-    assert(has_env("MALGRIND_PLATFORMS_DIR=" + os::to_utf8(agent_root / "platforms")));
+    assert(has_env("PLATFORMIO_BUILD_DIR=" + os::to_utf8((proj_dir / ".pio" / "malgrind" / "build").lexically_normal())));
+    assert(has_env("PLATFORMIO_EXTRA_SCRIPTS=pre:" +
+                   os::to_utf8((agent_root / "agent" / "stm32" / "inject.py").lexically_normal())));
+    assert(has_env("MALGRIND_AGENT_DIR=" + os::to_utf8((agent_root / "agent" / "stm32").lexically_normal())));
+    assert(has_env("MALGRIND_CORE_DIR=" + os::to_utf8((agent_root / "core").lexically_normal())));
+    assert(has_env("MALGRIND_PLATFORMS_DIR=" + os::to_utf8((agent_root / "platforms").lexically_normal())));
     assert(has_env("MALGRIND_RATE_HZ=500"));
     assert(has_env("MALGRIND_START_SAMPLING=1"));
     assert(cmds.build.env == cmds.upload.env);
@@ -911,11 +912,12 @@ void rp2040_agent_commands_and_image() {
         return std::ranges::find(cmds.build.env, entry) != cmds.build.env.end();
     };
     const fs::path agent_root = fs::absolute(MALGRIND_SOURCE_DIR).lexically_normal();
-    assert(has_env("PLATFORMIO_BUILD_DIR=" + os::to_utf8(proj_dir / ".pio/malgrind/build")));
-    assert(has_env("PLATFORMIO_EXTRA_SCRIPTS=pre:" + os::to_utf8(agent_root / "agent/rp2040/inject.py")));
-    assert(has_env("MALGRIND_AGENT_DIR=" + os::to_utf8(agent_root / "agent/rp2040")));
-    assert(has_env("MALGRIND_CORE_DIR=" + os::to_utf8(agent_root / "core")));
-    assert(has_env("MALGRIND_PLATFORMS_DIR=" + os::to_utf8(agent_root / "platforms")));
+    assert(has_env("PLATFORMIO_BUILD_DIR=" + os::to_utf8((proj_dir / ".pio" / "malgrind" / "build").lexically_normal())));
+    assert(has_env("PLATFORMIO_EXTRA_SCRIPTS=pre:" +
+                   os::to_utf8((agent_root / "agent" / "rp2040" / "inject.py").lexically_normal())));
+    assert(has_env("MALGRIND_AGENT_DIR=" + os::to_utf8((agent_root / "agent" / "rp2040").lexically_normal())));
+    assert(has_env("MALGRIND_CORE_DIR=" + os::to_utf8((agent_root / "core").lexically_normal())));
+    assert(has_env("MALGRIND_PLATFORMS_DIR=" + os::to_utf8((agent_root / "platforms").lexically_normal())));
     assert(has_env("MALGRIND_RATE_HZ=500"));
     assert(has_env("MALGRIND_START_SAMPLING=1"));
     assert(cmds.build.env == cmds.upload.env);

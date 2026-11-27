@@ -115,7 +115,10 @@ add_dependencies(test_pio fake_tool)
 
 malgrind_add_test(settings tests/test_settings.cpp)
 target_link_libraries(test_settings PRIVATE malgrind_host)
-target_compile_definitions(test_settings PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(
+    test_settings PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+                          MALGRIND_HELPER_ECHO="$<TARGET_FILE:helper_echo>")
+add_dependencies(test_settings helper_echo)
 
 malgrind_add_test(cli tests/test_cli.cpp)
 target_link_libraries(test_cli PRIVATE malgrind_host)

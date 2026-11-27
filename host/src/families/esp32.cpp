@@ -57,7 +57,7 @@ AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const
     p.files = absolute_path(agent_dir) / "agent" / esp32_family().id();
     if (!fs::exists(p.files / "sdkconfig.agent") || !fs::exists(p.files / "inject.py"))
         throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
-    p.out = project.dir / ".pio/malgrind";
+    p.out = project.dir / ".pio" / "malgrind";
     p.sdkconfig = p.out / ("sdkconfig." + env);
     return p;
 }
@@ -505,20 +505,20 @@ Invocation agent_build(const fs::path& pio, const ProjectInfo& project, const st
 }
 
 fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
-    return project.dir / ".pio/malgrind/build" / env / "firmware.elf";
+    return (project.dir / ".pio" / "malgrind" / "build" / env / "firmware.elf").lexically_normal();
 }
 
 std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
     fs::path script_path;
     for (const auto& core : os::platformio_core_dirs(home)) {
-        const fs::path candidate = core / "packages/tool-esptoolpy/esptool.py";
+        const fs::path candidate = core / "packages" / "tool-esptoolpy" / "esptool.py";
         if (std::error_code ec; fs::exists(candidate, ec)) {
             script_path = candidate;
             break;
         }
     }
     if (script_path.empty() && !home.empty()) {
-        const fs::path fallback = home / ".platformio/packages/tool-esptoolpy/esptool.py";
+        const fs::path fallback = home / ".platformio" / "packages" / "tool-esptoolpy" / "esptool.py";
         if (std::error_code ec; fs::exists(fallback, ec)) script_path = fallback;
     }
     if (script_path.empty()) return std::nullopt;

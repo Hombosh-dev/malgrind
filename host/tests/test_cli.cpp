@@ -113,9 +113,11 @@ void attach_shows_the_live_page_and_records(const std::string& device_flag) {
     const auto runs = store.list();
     assert(runs.size() == 1 && runs[0].name == "terminal run" && runs[0].duration_ms > 0 && runs[0].ncores == 2);
     assert(runs[0].device_id == dev.id && runs[0].port == dev.name);
-    std::ifstream folded(root / "out.folded");
-    const std::string text((std::istreambuf_iterator<char>(folded)), {});
-    assert(contains(text, "core0;0x400d2fff;0x400d1fff;0x400d1000 6\n"));
+    {
+        std::ifstream folded(root / "out.folded");
+        const std::string text((std::istreambuf_iterator<char>(folded)), {});
+        assert(contains(text, "core0;0x400d2fff;0x400d1fff;0x400d1000 6\n"));
+    }
     fs::remove_all(root);
 }
 

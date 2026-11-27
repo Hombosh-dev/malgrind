@@ -366,7 +366,7 @@ AgentPaths agent_paths(const ProjectInfo& project, const fs::path& agent_dir) {
     if (!fs::exists(p.files / "inject.py") || !fs::exists(p.files / "autostart.cpp")) {
         throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
     }
-    p.out = absolute_path(project.dir) / ".pio/malgrind";
+    p.out = absolute_path(project.dir) / ".pio" / "malgrind";
     return p;
 }
 

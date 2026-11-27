@@ -163,10 +163,18 @@ void agent_build_leaves_the_project_alone() {
 
     assert(inv.argv == (std::vector<std::string>{"/opt/pio", "run", "-d", os::to_utf8(dir), "-e", "esp32dev", "-t", "upload",
                                                  "--upload-port", "/dev/ttyUSB0"}));
-    assert(std::ranges::find(inv.env, "PLATFORMIO_BUILD_DIR=" + os::to_utf8(dir / ".pio/malgrind/build")) != inv.env.end());
-    assert(std::ranges::find(inv.env, "PLATFORMIO_EXTRA_SCRIPTS=pre:" + os::to_utf8(agent / "agent/esp32/inject.py")) != inv.env.end());
-    assert(std::ranges::find(inv.env, "MALGRIND_AGENT_DIR=" + os::to_utf8(agent / "agent/esp32")) != inv.env.end());
-    assert(std::ranges::find(inv.env, "MALGRIND_SDKCONFIG=" + os::to_utf8(dir / ".pio/malgrind/sdkconfig.esp32dev")) != inv.env.end());
+    assert(std::ranges::find(inv.env, "PLATFORMIO_BUILD_DIR=" +
+                                          os::to_utf8((dir / ".pio" / "malgrind" / "build").lexically_normal())) !=
+           inv.env.end());
+    assert(std::ranges::find(inv.env, "PLATFORMIO_EXTRA_SCRIPTS=pre:" +
+                                          os::to_utf8((agent / "agent" / "esp32" / "inject.py").lexically_normal())) !=
+           inv.env.end());
+    assert(std::ranges::find(inv.env, "MALGRIND_AGENT_DIR=" +
+                                          os::to_utf8((agent / "agent" / "esp32").lexically_normal())) !=
+           inv.env.end());
+    assert(std::ranges::find(inv.env, "MALGRIND_SDKCONFIG=" +
+                                          os::to_utf8((dir / ".pio" / "malgrind" / "sdkconfig.esp32dev").lexically_normal())) !=
+           inv.env.end());
 
     const auto merged = slurp(dir / ".pio/malgrind/sdkconfig.esp32dev");
     assert(contains(merged, "CONFIG_A=1") && contains(merged, "BAUDRATE=921600") && !contains(merged, "115200"));
@@ -204,7 +212,7 @@ void find_pio_fallback() {
     ScopedEnv save_drive("SystemDrive", std::nullopt);
     const auto home = fresh("malgrind_pio_home");
     assert(!find_pio(home));
-    const auto pio = os::venv_bin(home / ".platformio/penv") / os::exe_name("pio");
+    const auto pio = os::venv_bin(home / ".platformio" / "penv") / os::exe_name("pio");
     write(pio, "");
     assert(find_pio(home) == pio);
     fs::remove_all(home);
@@ -226,8 +234,8 @@ void esptool_command_line() {
     const auto home = fresh("malgrind_pio_esptool");
     write(home / "pio", "#!/usr/bin/env python3\n");
     assert(!esptool(home / "pio", home, "/dev/ttyUSB0", {"chip_id"})); // no esptool package yet
-    write(home / ".platformio/packages/tool-esptoolpy/esptool.py", "");
-    const auto script = os::to_utf8(home / ".platformio/packages/tool-esptoolpy/esptool.py");
+    write(home / ".platformio" / "packages" / "tool-esptoolpy" / "esptool.py", "");
+    const auto script = os::to_utf8(home / ".platformio" / "packages" / "tool-esptoolpy" / "esptool.py");
     if constexpr (os::kind() != os::Kind::Windows) {
         const auto inv = esptool(home / "pio", home, "/dev/ttyUSB0", {"read_flash", "0", "4096", "out.bin"});
         assert(inv && inv->env.empty());
@@ -237,7 +245,7 @@ void esptool_command_line() {
         write(home / "notscript", "binary");
         assert(!esptool(home / "notscript", home, "p", {}));
     }
-    const auto penv_py = os::venv_bin(home / ".platformio/penv") / os::exe_name("python");
+    const auto penv_py = os::venv_bin(home / ".platformio" / "penv") / os::exe_name("python");
     write(penv_py, "");
     const auto inv = esptool(home / "pio", home, "/dev/ttyUSB0", {"read_flash", "0", "4096", "out.bin"});
     assert(inv && inv->env.empty());

@@ -48,6 +48,8 @@ void env_and_user_data_dir_checks() {
     assert(!os::get_env(kTestVar).has_value());
     os::set_env(kTestVar, "проєкт/value");
     assert(os::get_env(kTestVar) == std::optional<std::string>{"проєкт/value"});
+    os::set_env(kTestVar, "");
+    assert(os::get_env(kTestVar) == std::optional<std::string>{""});
     os::unset_env(kTestVar);
     assert(!os::get_env(kTestVar).has_value());
 

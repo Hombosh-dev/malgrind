@@ -64,29 +64,29 @@ void install_pio_steps_for_both_layouts() {
     auto steps = install_pio_steps_for(os::Kind::Linux, {"/usr/bin/python3"}, posix_env);
     assert(steps.size() == 2);
     assert((steps[0].argv == std::vector<std::string>{"/usr/bin/python3", "-m", "venv", os::to_utf8(posix_env)}));
-    assert((steps[1].argv == std::vector<std::string>{os::to_utf8(posix_env / "bin/python"), "-m", "pip", "install",
+    assert((steps[1].argv == std::vector<std::string>{os::to_utf8(posix_env / "bin" / "python"), "-m", "pip", "install",
                                                      "--disable-pip-version-check", "platformio"}));
     fs::create_directories(posix_env / "bin");
-    std::ofstream(posix_env / "bin/python") << "";
+    std::ofstream(posix_env / "bin" / "python") << "";
     assert(install_pio_steps_for(os::Kind::Linux, {"/usr/bin/python3"}, posix_env).size() == 2);
-    std::ofstream(posix_env / "bin/pip") << "";
+    std::ofstream(posix_env / "bin" / "pip") << "";
     steps = install_pio_steps_for(os::Kind::Linux, {"/usr/bin/python3"}, posix_env);
     assert(steps.size() == 1);
-    assert(steps[0].argv[0] == os::to_utf8(posix_env / "bin/python"));
+    assert(steps[0].argv[0] == os::to_utf8(posix_env / "bin" / "python"));
 
     // Windows layout: Scripts/python.exe + Scripts/pip.exe and multi-arg `py -3` prefix
     steps = install_pio_steps_for(os::Kind::Windows, {"C:\\Windows\\py.exe", "-3"}, win_env);
     assert(steps.size() == 2);
     assert((steps[0].argv == std::vector<std::string>{"C:\\Windows\\py.exe", "-3", "-m", "venv", os::to_utf8(win_env)}));
-    assert((steps[1].argv == std::vector<std::string>{os::to_utf8(win_env / "Scripts/python.exe"), "-m", "pip", "install",
+    assert((steps[1].argv == std::vector<std::string>{os::to_utf8(win_env / "Scripts" / "python.exe"), "-m", "pip", "install",
                                                      "--disable-pip-version-check", "platformio"}));
     fs::create_directories(win_env / "Scripts");
-    std::ofstream(win_env / "Scripts/python.exe") << "";
+    std::ofstream(win_env / "Scripts" / "python.exe") << "";
     assert(install_pio_steps_for(os::Kind::Windows, {"C:\\Windows\\py.exe", "-3"}, win_env).size() == 2);
-    std::ofstream(win_env / "Scripts/pip.exe") << "";
+    std::ofstream(win_env / "Scripts" / "pip.exe") << "";
     steps = install_pio_steps_for(os::Kind::Windows, {"C:\\Windows\\py.exe", "-3"}, win_env);
     assert(steps.size() == 1);
-    assert(steps[0].argv[0] == os::to_utf8(win_env / "Scripts/python.exe"));
+    assert(steps[0].argv[0] == os::to_utf8(win_env / "Scripts" / "python.exe"));
 
     fs::remove_all(root);
 }
@@ -172,7 +172,7 @@ void pio_python_checks() {
     }
 
     // With <core>/penv/<bin>/python[.exe], penv takes precedence over the shebang
-    const auto home_py = os::venv_bin(home / ".platformio/penv") / os::exe_name("python");
+    const auto home_py = os::venv_bin(home / ".platformio" / "penv") / os::exe_name("python");
     fs::create_directories(home_py.parent_path());
     std::ofstream(home_py) << "";
     assert((os::pio_python(home, pio) == std::vector<std::string>{os::to_utf8(home_py)}));
@@ -200,7 +200,7 @@ void installs_into_the_place_find_pio_looks() {
     const auto py = os::find_python();
     assert(py && (*py == std::vector<std::string>{os::to_utf8(fake.python)}));
     assert(!find_pio(fake.home)); // nothing installed yet
-    const auto venv_dir = fake.home / ".platformio/penv";
+    const auto venv_dir = fake.home / ".platformio" / "penv";
     const auto venv_bin = os::venv_bin(venv_dir);
     const auto steps = install_pio_steps(*py, fake.home);
     assert(steps.size() == 2 && steps[0].argv[2] == "venv" && steps[0].argv[3] == os::to_utf8(venv_dir));

@@ -1,5 +1,6 @@
 // Run settings self-check: the command-line splitter, and how settings turn into the commands of a run.
 #include "families/family.hpp"
+#include "os/paths.hpp"
 #include "plan.hpp"
 #include "settings.hpp"
 
@@ -157,14 +158,25 @@ void an_override_replaces_the_line_but_not_the_agent() {
     World w;
     RunSettings s;
     s.extra_args = "--ignored";
-    s.build_command = "/bin/echo build 'with space'";
+    const std::string helper = os::to_utf8(fs::path(MALGRIND_HELPER_ECHO).lexically_normal());
+    const std::string cmd_text = join_command({helper, "build", "with space"});
+    s.build_command = cmd_text;
     const auto plan = make_plan(w.prepared(), kAgent, s);
-    assert((plan.build.argv == Words{"/bin/echo", "build", "with space"})); // exactly what was typed; the extra arguments are not added to it
+    assert((plan.build.argv == Words{helper, "build", "with space"})); // exactly what was typed; the extra arguments are not added to it
     assert(has_env_starting(plan.build, "PLATFORMIO_EXTRA_SCRIPTS=") && has_env_starting(plan.build, "MALGRIND_SDKCONFIG="));
-    assert(plan.build_text == "/bin/echo build 'with space'");
+    assert(plan.build_text == cmd_text);
     assert(std::ranges::find(plan.upload.argv, "--ignored") != plan.upload.argv.end()); // the upload line is still the detected one
-    s.build_command = "sh -c 'exit 0'"; // a program found on PATH is accepted too
-    assert((make_plan(w.prepared(), kAgent, s).build.argv == Words{"sh", "-c", "exit 0"}));
+
+    struct ScopedPath {
+        std::optional<std::string> prev = os::get_env("PATH");
+        explicit ScopedPath(const fs::path& dir) { os::set_env("PATH", os::to_utf8(dir)); }
+        ~ScopedPath() {
+            if (prev) os::set_env("PATH", *prev);
+            else os::unset_env("PATH");
+        }
+    } path_guard(fs::path(MALGRIND_HELPER_ECHO).parent_path());
+    s.build_command = "helper_echo --sleep-ms 0"; // a program found on PATH is accepted too
+    assert((make_plan(w.prepared(), kAgent, s).build.argv == Words{"helper_echo", "--sleep-ms", "0"}));
 }
 
 void bad_settings_name_the_field() {
