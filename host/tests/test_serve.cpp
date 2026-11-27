@@ -409,6 +409,16 @@ void probe_lists_methods() {
     const auto stm_probe = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}, {"project", stm_id}});
     assert(stm_probe["ok"] && method(stm_probe["result"], "new_run")["available"] == true);
 
+    // A supported RP2040 project also enables new_run.
+    const auto rp_proj = h.root / "rp2040";
+    fs::create_directories(rp_proj);
+    std::ofstream(rp_proj / "platformio.ini") << "[env:pico]\nplatform = raspberrypi\nframework = arduino\n";
+    const auto added_rp = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(rp_proj)}});
+    assert(added_rp["ok"]);
+    const std::string rp_id = added_rp["result"]["id"];
+    const auto rp_probe = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}, {"project", rp_id}});
+    assert(rp_probe["ok"] && method(rp_probe["result"], "new_run")["available"] == true);
+
     const auto avr_proj = h.root / "avr";
     fs::create_directories(avr_proj);
     std::ofstream(avr_proj / "platformio.ini") << "[env:a]\nplatform = atmelavr\nframework = arduino\n";
@@ -1394,6 +1404,55 @@ void probe_and_methods_for_debug_probes() {
         assert(bad["ok"] && method(bad["result"], "no_flash")["available"] == false);
         assert(contains(bad["result"]["error"], "invalid target config"));
     }
+
+    // 3. Raspberry Pi Debug Probe (2e8a:000c) remains family-neutral without project/override and resolves
+    //    RP2040 (HaltResume) or STM32 (DwtPcsr) depending on the selected project.
+    {
+        Harness h("malgrind_serve_probe_rp");
+        const auto rpi_probe = h.plug_probe("2e8a", "000c", "RPI1", "Raspberry Pi Debug Probe");
+
+        const auto devs = h.call({{"cmd", "devices"}});
+        assert(devs["ok"]);
+        bool checked_probe_hint = false;
+        for (const auto& d : devs["result"]["devices"]) {
+            if (d["id"] == rpi_probe.id) {
+                checked_probe_hint = true;
+                assert(d["family_hint"] == "" && d["family_hint_name"] == "");
+            }
+        }
+        assert(checked_probe_hint);
+
+        const auto neutral = h.call({{"cmd", "probe"}, {"device", rpi_probe.id}});
+        assert(neutral["ok"] && neutral["result"]["family"] == "" && neutral["result"]["family_name"] == "");
+        assert(method(neutral["result"], "no_flash")["available"] == false);
+        assert(contains(neutral["result"]["error"], "target"));
+
+        const fs::path rp_dir = h.root / "rp-proj";
+        fs::create_directories(rp_dir);
+        std::ofstream(rp_dir / "platformio.ini")
+            << "[env:pico]\nplatform = raspberrypi\nframework = arduino\nboard = pico\n";
+        const auto added_rp = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(rp_dir)}});
+        assert(added_rp["ok"]);
+
+        const auto rp_res = h.call({{"cmd", "probe"}, {"device", rpi_probe.id}, {"project", added_rp["result"]["id"]}});
+        assert(rp_res["ok"] && rp_res["result"]["family"] == "rp2040");
+        assert(rp_res["result"]["probe_sample_mode"] == "halt_resume");
+        assert(rp_res["result"]["probe_config"]["target_cfg"] == "target/rp2040.cfg");
+        assert(method(rp_res["result"], "no_flash")["available"] == true);
+
+        const fs::path stm_dir = h.root / "stm-proj";
+        fs::create_directories(stm_dir);
+        std::ofstream(stm_dir / "platformio.ini")
+            << "[env:f4]\nplatform = ststm32\nframework = stm32cube\nboard = nucleo_f401re\n";
+        const auto added_stm = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(stm_dir)}});
+        assert(added_stm["ok"]);
+
+        const auto stm_res = h.call({{"cmd", "probe"}, {"device", rpi_probe.id}, {"project", added_stm["result"]["id"]}});
+        assert(stm_res["ok"] && stm_res["result"]["family"] == "stm32");
+        assert(stm_res["result"]["probe_sample_mode"] == "dwt_pcsr");
+        assert(stm_res["result"]["probe_config"]["target_cfg"] == "target/stm32f4x.cfg");
+        assert(method(stm_res["result"], "no_flash")["available"] == true);
+    }
 }
 
 void run_plan_no_flash() {
@@ -1637,6 +1696,75 @@ void probe_run_end_to_end() {
         assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
         const auto replay_fn = h.call({{"cmd", "functions"}, {"window_s", 0}})["result"].dump();
         assert(contains(replay_fn, "sensor_poll") && contains(replay_fn, "wifi_tx") && contains(replay_fn, "[sleep]"));
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+    }
+
+    // 3. Real OpenOcdSource path for RP2040 with 2e8a:000c Raspberry Pi Debug Probe (dual-core HaltResume + arm-none-eabi-addr2line).
+    {
+        ScopedEnv save_rpc("FAKE_OPENOCD_RPC_LOG");
+        ScopedEnv save_targets("FAKE_OPENOCD_TARGETS");
+        ScopedEnv save_type("FAKE_OPENOCD_TARGET_TYPE");
+        ScopedEnv save_req_halt("FAKE_OPENOCD_REQUIRE_HALT");
+        ScopedEnv save_pc0("FAKE_OPENOCD_REG_PC_0");
+        ScopedEnv save_pc1("FAKE_OPENOCD_REG_PC_1");
+        ScopedEnv save_fail("FAKE_OPENOCD_FAIL");
+        ScopedEnv save_path("PATH");
+
+        Harness h("malgrind_serve_probe_rp2040", false, /*real_openocd=*/true);
+        const auto rpi_probe = h.plug_probe("2e8a", "000c", "RP2040DBG", "Raspberry Pi Debug Probe");
+
+        const fs::path pkg = h.root / "home/.platformio/packages/tool-openocd";
+        fs::create_directories(pkg / "bin");
+        fs::create_directories(pkg / "scripts/interface");
+        fs::copy_file(MALGRIND_FAKE_TOOL, pkg / "bin" / os::exe_name("openocd"), fs::copy_options::overwrite_existing);
+        if constexpr (os::kind() != os::Kind::Windows) {
+            fs::permissions(pkg / "bin" / os::exe_name("openocd"), fs::perms::owner_all);
+        }
+        std::ofstream(pkg / "scripts/interface/stlink.cfg") << "# marker\n";
+
+        const fs::path bin_dir = h.root / "tools";
+        fs::create_directories(bin_dir);
+        const fs::path a2l = bin_dir / os::exe_name("arm-none-eabi-addr2line");
+        fs::copy_file(MALGRIND_FAKE_TOOL, a2l, fs::copy_options::overwrite_existing);
+        if constexpr (os::kind() != os::Kind::Windows) {
+            fs::permissions(a2l, fs::perms::owner_all);
+        }
+        os::set_env("PATH", os::to_utf8(bin_dir));
+
+        const fs::path elf = h.root / "pico.elf";
+        std::ofstream(elf, std::ios::binary) << "0x10001000=pico_core0_loop\n0x10002000=pico_core1_dsp\n";
+
+        const fs::path rpc_log = h.root / "rp2040_rpc.log";
+        os::set_env("FAKE_OPENOCD_RPC_LOG", os::to_utf8(rpc_log));
+        os::set_env("FAKE_OPENOCD_TARGETS", "rp2040.core0 rp2040.core1");
+        os::set_env("FAKE_OPENOCD_TARGET_TYPE", "cortex_m");
+        os::set_env("FAKE_OPENOCD_REQUIRE_HALT", "1");
+        os::set_env("FAKE_OPENOCD_REG_PC_0", "pc (/32): 0x10001000");
+        os::set_env("FAKE_OPENOCD_REG_PC_1", "pc: 0x10002000");
+
+        const auto started = h.call({{"cmd", "probe_run"},
+                                     {"device", rpi_probe.id},
+                                     {"target_cfg", "target/rp2040.cfg"},
+                                     {"elf", os::to_utf8(elf)},
+                                     {"poll_hz", 100},
+                                     {"name", "real-rp2040-probe"}});
+        assert(started["ok"]);
+        const std::string run_id = started["result"]["run"]["id"];
+
+        assert(wait_for([&] {
+            const auto dump = h.call({{"cmd", "functions"}, {"window_s", 0}})["result"].dump();
+            return contains(dump, "pico_core0_loop") && contains(dump, "pico_core1_dsp");
+        }, 3000ms));
+
+        const auto snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"];
+        assert(snap["stats"]["overhead_pct"].is_null());
+        assert(snap["stats"]["arch"] == "armv7m");
+        assert(snap["stats"]["ncores"] == 2);
+
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+        assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
+        const auto replay_fn = h.call({{"cmd", "functions"}, {"window_s", 0}})["result"].dump();
+        assert(contains(replay_fn, "pico_core0_loop") && contains(replay_fn, "pico_core1_dsp"));
         assert(h.call({{"cmd", "stop"}})["ok"]);
     }
 }

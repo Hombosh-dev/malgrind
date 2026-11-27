@@ -112,13 +112,26 @@ void resolve_device_checks() {
 void family_hint_checks() {
     assert(family_hint_for_usb("303a", "1001") == "esp32");
     assert(family_hint_for_usb("303a", "0002") == "esp32");
+    for (const char* pid : {"000a", "0003", "0005", "000f", "f00a"}) {
+        assert(family_hint_for_usb("2e8a", pid) == "rp2040");
+    }
 
-    // Generic USB-UART bridges can sit in front of any MCU: never guess.
+    // Generic USB-UART bridges and shared debug probes (like 2e8a:000c) can sit in front of any MCU: never guess.
     for (const auto& [vid, pid] : {std::pair{"1a86", "7523"}, std::pair{"1a86", "55d3"}, std::pair{"10c4", "ea60"},
                                    std::pair{"0403", "6001"}, std::pair{"0403", "6010"}, std::pair{"067b", "2303"},
-                                   std::pair{"2e8a", "000a"}, std::pair{"", ""}}) {
+                                   std::pair{"2e8a", "000c"}, std::pair{"", ""}}) {
         assert(family_hint_for_usb(vid, pid).empty());
     }
+
+    os::PortInfo pico_usb{"/dev/ttyACM0", "ttyACM0", "", os::UsbInfo{"2e8a", "000a", "Pico", "Raspberry Pi", "E660", "1-1"}};
+    const Device pico_dev = device_from_port(pico_usb);
+    assert(pico_dev.family_hint == "rp2040");
+    assert(pico_dev.title == "Raspberry Pi USB serial");
+
+    os::PortInfo debug_probe_uart{"/dev/ttyACM1", "ttyACM1", "", os::UsbInfo{"2e8a", "000c", "Debugprobe", "Raspberry Pi", "DP01", "1-2"}};
+    const Device probe_uart_dev = device_from_port(debug_probe_uart);
+    assert(probe_uart_dev.family_hint.empty());
+    assert(probe_uart_dev.title == "Raspberry Pi USB serial");
 
     os::PortInfo native_usb{"/dev/ttyACM0", "ttyACM0", "", os::UsbInfo{"303a", "1001", "USB JTAG", "Espressif", "1", "1-2"}};
     const Device esp_dev = device_from_port(native_usb);

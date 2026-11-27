@@ -1,5 +1,6 @@
 // Unit tests for chip-agnostic OpenOCD probe configuration resolution.
 #include "families/esp32.hpp"
+#include "families/rp2040.hpp"
 #include "families/stm32.hpp"
 #include "probe_config.hpp"
 
@@ -313,6 +314,49 @@ void family_and_project_resolution_cases() {
     res = resolve_probe_config(make_probe("0483", "374b", "ST-F0", "ST-Link"), nullptr, &*stm_proj, "f0");
     assert(res.config.has_value());
     assert(res.config->target_cfg == "target/stm32f0x.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
+    assert(res.config->target_arch == malgrind::Arch::ArmV7M);
+
+    // 9. Raspberry Pi Debug Probe (2e8a:000c) stays family-neutral without project/override,
+    //    resolves Rp2040Family for RP2040 projects/overrides, and still resolves Stm32Family for STM32 projects.
+    const Device rpi_probe = make_probe("2e8a", "000c", "E6614103E7", "Raspberry Pi Debug Probe");
+    assert(resolve_probe_family(rpi_probe, nullptr, {}, {}) == nullptr);
+    res = resolve_probe_config(rpi_probe);
+    assert(!res.config.has_value() && contains(res.error, "target"));
+
+    res = resolve_probe_config(rpi_probe, nullptr, &*stm_proj, "f4");
+    assert(res.config.has_value());
+    assert(resolve_probe_family(rpi_probe, &*stm_proj, "f4", {}) == &stm32_family());
+    assert(res.config->target_cfg == "target/stm32f4x.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::DwtPcsr);
+    assert(res.config->target_arch == malgrind::Arch::ArmV7M);
+
+    write_file(root / "rp2040/platformio.ini",
+               "[env:pico]\nplatform = raspberrypi\nframework = arduino\nboard = pico\n"
+               "[env:sdk]\nplatform = https://github.com/maxgerhardt/platform-raspberrypi.git\nframework = picosdk\nboard = rpipico\n");
+    const auto rp_proj = read_project(root / "rp2040", why);
+    assert(rp_proj);
+    assert(resolve_probe_family(rpi_probe, &*rp_proj, "pico", {}) == &rp2040_family());
+    res = resolve_probe_config(rpi_probe, nullptr, &*rp_proj, "pico");
+    assert(res.config.has_value());
+    assert(res.config->package == "tool-openocd");
+    assert(res.config->target_cfg == "target/rp2040.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
+    assert(res.config->target_arch == malgrind::Arch::ArmV7M);
+    assert((res.config->openocd_args == std::vector<std::string>{
+                                            "-f",
+                                            "interface/cmsis-dap.cfg",
+                                            "-c",
+                                            "adapter speed 5000",
+                                            "-c",
+                                            "adapter serial E6614103E7",
+                                            "-f",
+                                            "target/rp2040.cfg",
+                                        }));
+
+    assert(resolve_probe_family(rpi_probe, nullptr, {}, "target/rp2040.cfg") == &rp2040_family());
+    res = resolve_probe_config(rpi_probe, nullptr, nullptr, {}, "target/rp2040.cfg");
+    assert(res.config.has_value());
     assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
     assert(res.config->target_arch == malgrind::Arch::ArmV7M);
 

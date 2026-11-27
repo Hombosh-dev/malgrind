@@ -1,4 +1,4 @@
-// Portable C++ fake for external tools (git, pio, python/python3/py, esptool, echo) used in host tests.
+// Portable C++ fake for external tools (git, pio, python/python3/py, esptool, picotool, openocd, echo) used in host tests.
 #include "openocd.hpp"
 #include "os/paths.hpp"
 #include "os/socket.hpp"
@@ -356,6 +356,135 @@ int run_addr2line(const std::vector<std::string>& args) {
     return 0;
 }
 
+bool write_fake_flash_image(const fs::path& out_path, std::size_t len) {
+    std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    std::array<char, 4096> chunk{};
+    std::size_t written = 0;
+    while (written < len) {
+        const std::size_t n = std::min<std::size_t>(chunk.size(), len - written);
+        for (std::size_t k = 0; k < n; ++k) {
+            chunk[k] = static_cast<char>((written + k) & 0xFFu);
+        }
+        out.write(chunk.data(), static_cast<std::streamsize>(n));
+        written += n;
+    }
+    if (const auto agent = os::get_env("FAKE_AGENT_IMAGE"); agent && !agent->empty()) {
+        const std::string_view marker = (*agent == "v1") ? "malgrind-agent-v1" : "malgrind-agent-v2";
+        if (len >= marker.size()) {
+            const std::size_t off = (len >= 1000u + marker.size()) ? 1000u : 0u;
+            out.seekp(static_cast<std::streamoff>(off));
+            out.write(marker.data(), static_cast<std::streamsize>(marker.size()));
+        }
+    }
+    out.flush();
+    return static_cast<bool>(out);
+}
+
+int run_picotool(const std::vector<std::string>& args) {
+    append_log("picotool " + join_args(args, 1) + "\n");
+    if (os::get_env("FAKE_PICOTOOL_NO_BOOTSEL") == "1" || os::get_env("FAKE_FAIL") == "picotool_no_bootsel") {
+        std::fprintf(stderr, "No accessible RP2040 devices in BOOTSEL mode were found.\n");
+        std::fflush(stderr);
+        return 1;
+    }
+    if (os::get_env("FAKE_FAIL") == "picotool") {
+        std::fprintf(stderr, "Error: picotool failed\n");
+        std::fflush(stderr);
+        return 1;
+    }
+    if (args.size() < 2) {
+        std::fprintf(stderr, "picotool: missing command\n");
+        return 1;
+    }
+
+    const std::string_view sub = args[1];
+    if (sub == "info") {
+        if (const auto custom = os::get_env("FAKE_PICOTOOL_INFO"); custom && !custom->empty()) {
+            std::printf("%s\n", custom->c_str());
+            return 0;
+        }
+        const std::string chip = os::get_env("FAKE_PICOTOOL_CHIP").value_or("RP2040");
+        const std::string flash_size = os::get_env("FAKE_PICOTOOL_FLASH_SIZE").value_or("2048K");
+        const std::string flash_id = os::get_env("FAKE_PICOTOOL_FLASH_ID").value_or("0xE660583883276128");
+        std::printf("Program Information\n");
+        std::printf(" name:          firmware\n");
+        std::printf("Device Information\n");
+        std::printf(" type:               %s\n", chip.c_str());
+        std::printf(" package:            QFN-56\n");
+        std::printf(" chip revision:      B2\n");
+        std::printf(" flash size:         %s\n", flash_size.c_str());
+        std::printf(" flash id:           %s\n", flash_id.c_str());
+        return 0;
+    }
+
+    if (sub == "save") {
+        if (os::get_env("FAKE_FAIL") == "picotool_save") {
+            std::fprintf(stderr, "Error: picotool save failed\n");
+            return 1;
+        }
+        std::optional<std::uint32_t> start_addr, end_addr;
+        std::string out_path;
+        for (std::size_t i = 2; i < args.size(); ++i) {
+            if (args[i] == "-r" && i + 2 < args.size()) {
+                start_addr = parse_u32(args[i + 1]);
+                end_addr = parse_u32(args[i + 2]);
+                i += 2;
+            } else if (!args[i].empty() && args[i][0] == '-') {
+                continue;
+            } else {
+                out_path = args[i];
+            }
+        }
+        if (!start_addr || !end_addr || *end_addr <= *start_addr || out_path.empty()) {
+            std::fprintf(stderr, "Error: invalid picotool save arguments\n");
+            return 1;
+        }
+        const std::size_t len = static_cast<std::size_t>(*end_addr - *start_addr);
+        if (!write_fake_flash_image(os::from_utf8(out_path), len)) {
+            std::fprintf(stderr, "Error: couldn't open %s\n", out_path.c_str());
+            return 1;
+        }
+        std::printf("Saving file: %s (%zu bytes)\n", out_path.c_str(), len);
+        return 0;
+    }
+
+    if (sub == "load") {
+        if (os::get_env("FAKE_FAIL") == "picotool_load") {
+            std::fprintf(stderr, "Error: picotool load failed\n");
+            return 1;
+        }
+        std::string image_path;
+        bool verify = false;
+        bool reboot = false;
+        for (std::size_t i = 2; i < args.size(); ++i) {
+            if (args[i] == "-v") {
+                verify = true;
+            } else if (args[i] == "-x") {
+                reboot = true;
+            } else if (args[i] == "-o" && i + 1 < args.size()) {
+                ++i;
+            } else if (!args[i].empty() && args[i][0] == '-') {
+                continue;
+            } else {
+                image_path = args[i];
+            }
+        }
+        std::error_code ec;
+        if (image_path.empty() || !fs::is_regular_file(os::from_utf8(image_path), ec)) {
+            std::fprintf(stderr, "Error: image does not exist: %s\n", image_path.c_str());
+            return 1;
+        }
+        std::printf("Loading into Flash: [==============================]  100%%\n");
+        if (verify) std::printf("Verifying Flash: OK\n");
+        if (reboot) std::printf("The device was rebooted to start the application.\n");
+        return 0;
+    }
+
+    std::fprintf(stderr, "Error: unknown picotool subcommand\n");
+    return 1;
+}
+
 int run_openocd(const std::vector<std::string>& args) {
     using namespace std::chrono_literals;
     append_log("openocd " + join_args(args, 1) + "\n");
@@ -412,6 +541,9 @@ int run_openocd(const std::vector<std::string>& args) {
     std::fprintf(stderr, "Info : Listening on port %u for tcl connections\n", static_cast<unsigned>(tcl_port));
     std::fflush(stderr);
 
+    const bool is_rp2040 = std::ranges::any_of(args, [](const std::string& a) {
+        return to_lower(a).find("rp2040") != std::string::npos;
+    });
     const auto deadline = std::chrono::steady_clock::now() + 60s;
     const bool ignore_shutdown = os::get_env("FAKE_OPENOCD_IGNORE_SHUTDOWN") == "1";
     const bool demcr_ro = os::get_env("FAKE_OPENOCD_DEMCR_RO") == "1";
@@ -423,6 +555,8 @@ int run_openocd(const std::vector<std::string>& args) {
     std::vector<std::string> targets;
     if (const auto env_targets = os::get_env("FAKE_OPENOCD_TARGETS")) {
         targets = split_ws(*env_targets);
+    } else if (is_rp2040) {
+        targets = {"rp2040.core0", "rp2040.core1"};
     } else {
         targets = {"stm32f4x.cpu"};
     }
@@ -430,7 +564,7 @@ int run_openocd(const std::vector<std::string>& args) {
     bool halted = false;
 
     std::unordered_map<std::uint32_t, std::uint32_t> mem;
-    mem[0xE000ED00u] = 0x410FC241u; // ARM Cortex-M4 CPUID
+    mem[0xE000ED00u] = is_rp2040 ? 0x410CC601u : 0x410FC241u; // ARM Cortex-M0+ or Cortex-M4 CPUID
     if (const auto cpuid_env = os::get_env("FAKE_OPENOCD_CPUID"); cpuid_env && !cpuid_env->empty()) {
         if (const auto v = parse_u32(*cpuid_env)) mem[0xE000ED00u] = *v;
     }
@@ -527,7 +661,7 @@ int run_openocd(const std::vector<std::string>& args) {
                                custom && !custom->empty()) {
                         (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
                     } else {
-                        std::uint32_t idcode = 0x10076413u;
+                        std::uint32_t idcode = is_rp2040 ? 0x0bc12477u : 0x10076413u;
                         if (const auto id_env = os::get_env("FAKE_OPENOCD_IDCODE"); id_env && !id_env->empty()) {
                             if (const auto parsed = parse_u32(*id_env)) idcode = *parsed;
                         }
@@ -542,8 +676,9 @@ int run_openocd(const std::vector<std::string>& args) {
                                custom && !custom->empty()) {
                         (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
                     } else {
-                        (void)client->write_all(
-                            malgrind::host::TclRpcCodec::request("flash 'stm32f4x' found at 0x08000000"));
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                            is_rp2040 ? "flash 'rp2040_flash' found at 0x10000000"
+                                      : "flash 'stm32f4x' found at 0x08000000"));
                     }
                 } else if (*cmd == "flash banks") {
                     const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
@@ -553,13 +688,19 @@ int run_openocd(const std::vector<std::string>& args) {
                                custom && !custom->empty()) {
                         (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
                     } else {
-                        std::uint32_t flash_size = 0x00080000u;
+                        std::uint32_t flash_size = is_rp2040 ? 0x00200000u : 0x00080000u;
                         if (const auto sz_env = os::get_env("FAKE_OPENOCD_FLASH_SIZE"); sz_env && !sz_env->empty()) {
                             if (const auto parsed = parse_u32(*sz_env)) flash_size = *parsed;
                         }
-                        (void)client->write_all(malgrind::host::TclRpcCodec::request(std::format(
-                            "#0 : stm32f4x.flash (stm32f4x) at 0x08000000, size 0x{:08x}, buswidth 0, chipwidth 0",
-                            flash_size)));
+                        const std::string reply =
+                            is_rp2040
+                                ? std::format(
+                                      "#0 : rp2040.flash (rp2040_flash) at 0x10000000, size 0x{:08x}, buswidth 0, chipwidth 0",
+                                      flash_size)
+                                : std::format(
+                                      "#0 : stm32f4x.flash (stm32f4x) at 0x08000000, size 0x{:08x}, buswidth 0, chipwidth 0",
+                                      flash_size);
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(reply));
                     }
                 } else if (cmd->starts_with("dump_image ")) {
                     const auto parts = split_tcl_words(std::string_view(*cmd).substr(11));
@@ -575,37 +716,12 @@ int run_openocd(const std::vector<std::string>& args) {
                         if (!addr || !len) {
                             (void)client->write_all(
                                 malgrind::host::TclRpcCodec::request("Error: invalid dump_image address or length"));
+                        } else if (!write_fake_flash_image(os::from_utf8(parts[0]), static_cast<std::size_t>(*len))) {
+                            (void)client->write_all(
+                                malgrind::host::TclRpcCodec::request("Error: couldn't open " + parts[0]));
                         } else {
-                            std::ofstream out(os::from_utf8(parts[0]), std::ios::binary | std::ios::trunc);
-                            if (!out) {
-                                (void)client->write_all(
-                                    malgrind::host::TclRpcCodec::request("Error: couldn't open " + parts[0]));
-                            } else {
-                                std::array<char, 4096> chunk{};
-                                std::size_t written = 0;
-                                while (written < *len) {
-                                    const std::size_t n =
-                                        std::min<std::size_t>(chunk.size(), static_cast<std::size_t>(*len) - written);
-                                    for (std::size_t k = 0; k < n; ++k) {
-                                        chunk[k] = static_cast<char>((written + k) & 0xFFu);
-                                    }
-                                    out.write(chunk.data(), static_cast<std::streamsize>(n));
-                                    written += n;
-                                }
-                                if (const auto agent = os::get_env("FAKE_AGENT_IMAGE"); agent && !agent->empty()) {
-                                    const std::string_view marker =
-                                        (*agent == "v1") ? "malgrind-agent-v1" : "malgrind-agent-v2";
-                                    if (*len >= marker.size()) {
-                                        const std::size_t off = (*len >= 1000u + marker.size()) ? 1000u : 0u;
-                                        out.seekp(static_cast<std::streamoff>(off));
-                                        out.write(marker.data(), static_cast<std::streamsize>(marker.size()));
-                                    }
-                                }
-                                out.flush();
-                                (void)client->write_all(malgrind::host::TclRpcCodec::request(
-                                    out ? std::format("dumped {} bytes in 0.050000s", *len)
-                                        : "Error: dump_image write failed"));
-                            }
+                            (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                                std::format("dumped {} bytes in 0.050000s", *len)));
                         }
                     }
                 } else if (cmd->starts_with("program ")) {
@@ -633,12 +749,13 @@ int run_openocd(const std::vector<std::string>& args) {
                         (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: invalid mdw address"));
                     } else if (os::get_env("FAKE_OPENOCD_MDW_FAIL") == "1") {
                         (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: memory read failed"));
-                    } else if (*addr == 0xE0042000u || *addr == 0x40015800u || *addr == 0x5C001000u) {
+                    } else if (*addr == 0xE0042000u || *addr == 0x40015800u || *addr == 0x5C001000u ||
+                               *addr == 0x40000000u) {
                         const auto id_env = os::get_env("FAKE_OPENOCD_IDCODE");
                         if (id_env && *id_env == "none") {
                             (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: memory read failed"));
                         } else {
-                            std::uint32_t idcode = 0x10076413u;
+                            std::uint32_t idcode = (*addr == 0x40000000u || is_rp2040) ? 0x20002927u : 0x10076413u;
                             if (id_env && !id_env->empty()) {
                                 if (const auto parsed = parse_u32(*id_env)) idcode = *parsed;
                             }
@@ -792,6 +909,7 @@ int main(int argc, char** argv) {
     if (role == "pio") return run_pio(args);
     if (role == "python" || role == "python3" || role == "py") return run_python(args);
     if (role == "esptool") return run_esptool(args, 1);
+    if (role == "picotool") return run_picotool(args);
     if (role == "echo") return run_echo(args);
     if (role == "addr2line" || role.ends_with("-addr2line")) return run_addr2line(args);
     if (role == "openocd") return run_openocd(args);

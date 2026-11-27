@@ -101,6 +101,10 @@ void unsupported_projects_are_refused() {
     assert(prepare("[env:a]\nplatform = ststm32\nframework = stm32cube\n", "a") == "ok");
     assert(prepare("[env:a]\nplatform = ststm32\nframework = arduino\n", "a") == "ok");
     assert(contains(prepare("[env:a]\nplatform = ststm32\nframework = libopencm3\n", "a"), "stm32cube"));
+    assert(prepare("[env:a]\nplatform = raspberrypi\nframework = arduino\n", "a") == "ok");
+    assert(prepare("[env:a]\nplatform = https://github.com/maxgerhardt/platform-raspberrypi.git\nframework = picosdk\n",
+                   "a") == "ok");
+    assert(contains(prepare("[env:a]\nplatform = raspberrypi\nframework = mbed\n", "a"), "picosdk"));
     assert(contains(prepare("[env:a]\nplatform = atmelavr\nframework = arduino\n", "a"), "ESP32"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\n", "missing"), "no environment"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = espidf\n", "a", dir / "my proj"), "space"));

@@ -1,8 +1,10 @@
-// Chip family interface, registry, ESP32, and STM32 family implementation self-checks.
+// Chip family interface, registry, ESP32, STM32, and RP2040 family implementation self-checks.
 #include "backup.hpp"
+#include "devices.hpp"
 #include "env.hpp"
 #include "families/esp32.hpp"
 #include "families/family.hpp"
+#include "families/rp2040.hpp"
 #include "families/stm32.hpp"
 #include "os/paths.hpp"
 
@@ -61,12 +63,14 @@ public:
 
 void registry_lookups() {
     const auto& families = all_families();
-    assert(families.size() >= 2);
+    assert(families.size() >= 3);
     const Family* esp = family_by_id("esp32");
     const Family* stm = family_by_id("stm32");
+    const Family* rp = family_by_id("rp2040");
     assert(esp == &esp32_family());
     assert(stm == &stm32_family());
-    assert(families[0] == esp && families[1] == stm);
+    assert(rp == &rp2040_family());
+    assert(families[0] == esp && families[1] == stm && families[2] == rp);
     assert(family_by_id("unknown") == nullptr && family_by_id("") == nullptr);
 
     assert(family_for_arch(Arch::Xtensa) == esp);
@@ -183,12 +187,18 @@ void project_matching_and_problems() {
     assert(stm_proj);
     assert(family_for_project(*stm_proj, "a", why) == &stm32_family() && why.empty());
 
-    // Unsupported platform -> no family matches, combined why names both ESP32 and STM32
+    // RP2040 ini -> matches RP2040 family
+    write(dir / "platformio.ini", "[env:a]\nplatform = raspberrypi\nframework = arduino\n");
+    const auto rp_proj = read_project(dir, why);
+    assert(rp_proj);
+    assert(family_for_project(*rp_proj, "a", why) == &rp2040_family() && why.empty());
+
+    // Unsupported platform -> no family matches, combined why names ESP32, STM32, and RP2040
     write(dir / "platformio.ini", "[env:a]\nplatform = atmelavr\nframework = arduino\n");
     const auto avr_proj = read_project(dir, why);
     assert(avr_proj);
     assert(family_for_project(*avr_proj, "a", why) == nullptr);
-    assert(contains(why, "atmelavr") && contains(why, "ESP32") && contains(why, "STM32"));
+    assert(contains(why, "atmelavr") && contains(why, "ESP32") && contains(why, "STM32") && contains(why, "RP2040"));
 
     // Space in project path -> rejected by ESP32 project_problem
     write(dir / "with space/platformio.ini", "[env:a]\nplatform = espressif32\nframework = espidf\n");
@@ -784,6 +794,352 @@ void stm32_helpers_and_mocked_flash_ops() {
     fs::remove_all(root);
 }
 
+void rp2040_metadata_and_usb() {
+    const Family& rp = rp2040_family();
+    assert(rp.id() == "rp2040" && rp.name() == "RP2040 (Raspberry Pi Pico)");
+    const auto caps = rp.caps();
+    assert(caps.agent && caps.backup && caps.identify && !caps.identify_resets_board && !caps.memcheck);
+    assert(rp.handles_arch(Arch::ArmV7M));
+    assert(!rp.handles_arch(Arch::Xtensa) && !rp.handles_arch(Arch::RiscV32) && !rp.handles_arch(Arch::Host));
+    assert(rp.agent_baud() == 115200);
+
+    assert(rp.addr2line_names(Arch::ArmV7M) == (std::vector<std::string>{"arm-none-eabi-addr2line"}));
+    assert(rp.addr2line_names(Arch::Xtensa).empty());
+
+    for (const char* pid : {"000a", "0003", "0005", "000f", "f00a", "000A", "F00A"}) {
+        assert(rp.family_hint_for_usb("2e8a", pid) == "rp2040");
+        assert(rp.family_hint_for_usb("2E8A", pid) == "rp2040");
+        assert(!rp.usb_adapter_name("2e8a", pid).empty());
+    }
+    // CRITICAL: 2e8a:000c (Raspberry Pi Debug Probe) must stay family-neutral.
+    assert(rp.family_hint_for_usb("2e8a", "000c").empty());
+    assert(rp.usb_probe_name("2e8a", "000c").empty());
+    assert(rp.usb_adapter_name("2e8a", "000c").empty());
+    assert(family_hint_for_usb("2e8a", "000c").empty());
+    assert(rp.family_hint_for_usb("10c4", "ea60").empty());
+
+    assert(rp.openocd_package() == "tool-openocd");
+    assert(rp.openocd_interface_args("2e8a", "000c").empty());
+    assert(rp.openocd_interface_args("0d28", "0204").empty());
+
+    assert((rp.probe_target_options() ==
+            std::vector<ProbeTargetOption>{{"target/rp2040.cfg", "RP2040 (Cortex-M0+)"}}));
+    assert(rp.probe_sample_mode("target/rp2040.cfg") == ProbeSampleMode::HaltResume);
+    assert(rp.probe_sample_mode("rp2040") == ProbeSampleMode::HaltResume);
+    assert(rp.probe_sample_mode("target/stm32f4x.cfg") == ProbeSampleMode::Auto);
+    assert(rp.probe_sample_mode("") == ProbeSampleMode::Auto);
+    assert(rp.probe_target_arch("target/rp2040.cfg") == Arch::ArmV7M);
+    assert(rp.probe_target_arch("rp2040") == Arch::ArmV7M);
+    assert(!rp.probe_target_arch("target/stm32f4x.cfg").has_value());
+    assert(!rp.probe_target_arch("").has_value());
+}
+
+void rp2040_project_and_target_inference() {
+    ScopedEnv save_core("PLATFORMIO_CORE_DIR", std::nullopt);
+    ScopedEnv save_drive("SystemDrive", std::nullopt);
+
+    const auto root = fresh("malgrind_families_rp2040_proj");
+    const Family& rp = rp2040_family();
+    std::string why;
+
+    // 1. Supported frameworks (arduino and picosdk), URL platform containing raspberrypi, and spaces in path
+    write(root / "with space/platformio.ini",
+          "[env:ard]\nplatform = raspberrypi\nframework = arduino\nboard = pico\n"
+          "[env:sdk]\nplatform = https://github.com/maxgerhardt/platform-raspberrypi.git\nframework = picosdk\nboard = rpipico\n"
+          "[env:badfw]\nplatform = raspberrypi\nframework = mbed\nboard = pico\n"
+          "[env:esp_pico]\nplatform = espressif32\nframework = espidf\nboard = pico32\n");
+    const auto proj = read_project(root / "with space", why);
+    assert(proj);
+    assert(family_for_project(*proj, "ard", why) == &rp && why.empty());
+    assert(family_for_project(*proj, "sdk", why) == &rp && why.empty());
+    assert(family_for_project(*proj, "badfw", why) == nullptr && contains(why, "arduino") && contains(why, "picosdk"));
+    assert(rp.handles_project(*proj, "badfw"));
+    assert(rp.openocd_target_cfg(*proj, "ard") == "target/rp2040.cfg");
+    assert(rp.openocd_target_cfg(*proj, "sdk") == "target/rp2040.cfg");
+    assert(!rp.handles_project(*proj, "esp_pico"));
+    assert(rp.openocd_target_cfg(*proj, "esp_pico").empty());
+
+    // 2. Board manifest overrides under <core>/platforms/raspberrypi/boards/<board>.json
+    const auto pio_core = root / "pio_core";
+    write(pio_core / "platforms/raspberrypi/boards/custom_rp_target.json",
+          R"({"debug":{"openocd_target":"rp2040"}})");
+    write(pio_core / "platforms/raspberrypi/boards/custom_rp_board.json",
+          R"({"debug":{"openocd_board":"pico-debug"}})");
+    write(pio_core / "platforms/raspberrypi@1.12.0/boards/versioned_rp.json",
+          R"({"debug":{"openocd_target":"target/rp2040.cfg"}})");
+    ScopedEnv override_core("PLATFORMIO_CORE_DIR", os::to_utf8(pio_core));
+
+    write(root / "manifests/platformio.ini",
+          "[env:t1]\nplatform = raspberrypi\nboard = custom_rp_target\n"
+          "[env:b1]\nplatform = raspberrypi\nboard = custom_rp_board\n"
+          "[env:v1]\nplatform = raspberrypi@1.12.0\nboard = versioned_rp\n"
+          "[env:fb]\nplatform = raspberrypi\nboard = unknown_custom_rp_board\n");
+    const auto man = read_project(root / "manifests", why);
+    assert(man);
+    assert(rp.openocd_target_cfg(*man, "t1") == "target/rp2040.cfg");
+    assert(rp.openocd_target_cfg(*man, "b1") == "board/pico-debug.cfg");
+    assert(rp.openocd_target_cfg(*man, "v1") == "target/rp2040.cfg");
+    assert(rp.openocd_target_cfg(*man, "fb") == "target/rp2040.cfg");
+
+    fs::remove_all(root);
+}
+
+void rp2040_agent_commands_and_image() {
+    const fs::path src_agent = fs::path(MALGRIND_SOURCE_DIR) / "agent/rp2040";
+    assert(fs::exists(src_agent / "family.json"));
+    assert(fs::exists(src_agent / "inject.py"));
+    assert(fs::exists(src_agent / "autostart.cpp"));
+    assert(fs::exists(src_agent / "README.md"));
+
+    const auto root = fresh("malgrind_families_rp2040_cmds");
+    const auto proj_dir = root / "my pico proj";
+    write(proj_dir / "platformio.ini", "[env:pico]\nplatform = raspberrypi\nframework = arduino\n");
+    std::string why;
+    const auto proj = read_project(proj_dir, why);
+    assert(proj);
+
+    const ToolContext tools{{}, "/opt/pio", MALGRIND_SOURCE_DIR};
+    const Family& rp = rp2040_family();
+    const auto cmds = rp.agent_commands(tools, *proj, "pico", "/dev/ttyACM0", {.rate_hz = 500}, false);
+    assert(!fs::exists(proj_dir / ".pio"));
+    assert(cmds.elf == fs::absolute(proj_dir / ".pio/malgrind/build/pico/firmware.elf").lexically_normal());
+    assert(std::ranges::find(cmds.build.argv, "upload") == cmds.build.argv.end());
+    assert(std::ranges::find(cmds.upload.argv, "upload") != cmds.upload.argv.end());
+    assert(std::ranges::find(cmds.upload.argv, "/dev/ttyACM0") != cmds.upload.argv.end());
+
+    const auto has_env = [&](const std::string& entry) {
+        return std::ranges::find(cmds.build.env, entry) != cmds.build.env.end();
+    };
+    const fs::path agent_root = fs::absolute(MALGRIND_SOURCE_DIR).lexically_normal();
+    assert(has_env("PLATFORMIO_BUILD_DIR=" + os::to_utf8(proj_dir / ".pio/malgrind/build")));
+    assert(has_env("PLATFORMIO_EXTRA_SCRIPTS=pre:" + os::to_utf8(agent_root / "agent/rp2040/inject.py")));
+    assert(has_env("MALGRIND_AGENT_DIR=" + os::to_utf8(agent_root / "agent/rp2040")));
+    assert(has_env("MALGRIND_CORE_DIR=" + os::to_utf8(agent_root / "core")));
+    assert(has_env("MALGRIND_PLATFORMS_DIR=" + os::to_utf8(agent_root / "platforms")));
+    assert(has_env("MALGRIND_RATE_HZ=500"));
+    assert(has_env("MALGRIND_START_SAMPLING=1"));
+    assert(cmds.build.env == cmds.upload.env);
+
+    const auto def_cmds = rp.agent_commands(tools, *proj, "pico", "/dev/ttyACM0", {}, true);
+    assert(std::ranges::find(def_cmds.build.env, "MALGRIND_RATE_HZ=997") != def_cmds.build.env.end());
+
+    bool missing_threw = false;
+    try {
+        (void)rp.agent_commands({{}, "/opt/pio", root / "missing-agent"}, *proj, "pico", "/dev/ttyACM0", {}, false);
+    } catch (const std::runtime_error&) {
+        missing_threw = true;
+    }
+    assert(missing_threw);
+
+    write(root / "v1.bin", std::string("boot") + std::string(kRp2040AgentMarker) + "tail");
+    write(root / "v2.bin", std::string("boot") + std::string(kRp2040AgentMarkerV2) + "tail");
+    std::string straddle(70000, 'x');
+    straddle.insert(65536 - 6, kRp2040AgentMarkerV2);
+    write(root / "straddle.bin", straddle);
+    write(root / "plain.bin", "ordinary pico firmware binary");
+    assert(rp.is_agent_image(root / "v1.bin"));
+    assert(rp.is_agent_image(root / "v2.bin"));
+    assert(rp.is_agent_image(root / "straddle.bin"));
+    assert(!rp.is_agent_image(root / "plain.bin"));
+    assert(!rp.is_agent_image(root / "missing.bin"));
+
+    fs::remove_all(root);
+}
+
+void rp2040_helpers_and_flash_ops() {
+    // 1. Pure helpers
+    assert(parse_rp2040_flash_size_bytes(
+               "#0 : rp2040.flash (rp2040_flash) at 0x10000000, size 0x00200000, buswidth 0, chipwidth 0") ==
+           2097152u);
+    assert(parse_rp2040_flash_size_bytes("flash size: 2048K\n") == 2048u * 1024u);
+    assert(parse_rp2040_flash_size_bytes("flash size = 4MB\n") == 4u * 1024u * 1024u);
+    assert(!parse_rp2040_flash_size_bytes("flash size: 0"));
+    assert(!parse_rp2040_flash_size_bytes("Error: flash probe failed"));
+
+    const auto parsed_pico = parse_picotool_info(
+        "Program Information\n"
+        " name:          blink\n"
+        "Device Information\n"
+        " type:               RP2040\n"
+        " package:            QFN-56\n"
+        " chip revision:      B2\n"
+        " flash size:         2048K\n"
+        " flash id:           0xE660583883276128\n");
+    assert(parsed_pico.has_value());
+    assert(parsed_pico->key == "e660583883276128-00200000");
+    assert(parsed_pico->flash_bytes == 2097152u);
+    assert(parsed_pico->chip == "RP2040");
+    assert(backup_path("/tmp/backups", parsed_pico->key, "20261127-120000").has_value());
+
+    const auto parsed_no_id = parse_picotool_info("Device Information\n type: RP2040\n flash size: 4MB\n");
+    assert(parsed_no_id.has_value());
+    assert(parsed_no_id->flash_bytes == 4u * 1024u * 1024u);
+    assert(backup_path("/tmp/backups", parsed_no_id->key, "20261127-120000").has_value());
+    assert(!parse_picotool_info("No accessible RP2040 devices in BOOTSEL mode were found.\n"));
+    assert(!parse_picotool_info(""));
+
+    assert((rp2040_openocd_args("2e8a", "000c", "E66141", "target/rp2040.cfg") ==
+            std::vector<std::string>{"-f", "interface/cmsis-dap.cfg", "-c", "adapter speed 5000", "-c",
+                                     "adapter serial E66141", "-f", "target/rp2040.cfg"}));
+    assert((rp2040_openocd_args("0d28", "0204", "", "target/rp2040.cfg") ==
+            std::vector<std::string>{"-f", "interface/cmsis-dap.cfg", "-f", "target/rp2040.cfg"}));
+    assert((rp2040_openocd_args("", "", "", "target/rp2040.cfg") ==
+            std::vector<std::string>{"-f", "interface/cmsis-dap.cfg", "-c", "adapter speed 5000", "-f",
+                                     "target/rp2040.cfg"}));
+
+    ScopedEnv save_path("PATH", "");
+    ScopedEnv save_core("PLATFORMIO_CORE_DIR", std::nullopt);
+    ScopedEnv save_drive("SystemDrive", std::nullopt);
+    ScopedEnv save_log("FAKE_LOG", std::nullopt);
+    ScopedEnv save_rpc("FAKE_OPENOCD_RPC_LOG", std::nullopt);
+    ScopedEnv save_id("FAKE_OPENOCD_IDCODE", std::nullopt);
+    ScopedEnv save_sz("FAKE_OPENOCD_FLASH_SIZE", std::nullopt);
+    ScopedEnv save_ocd_fail("FAKE_OPENOCD_FAIL", std::nullopt);
+    ScopedEnv save_agent("FAKE_AGENT_IMAGE", std::nullopt);
+    ScopedEnv save_bootsel("FAKE_PICOTOOL_NO_BOOTSEL", std::nullopt);
+    ScopedEnv save_mdw_fail("FAKE_OPENOCD_MDW_FAIL", std::nullopt);
+    ScopedEnv save_target("MALGRIND_RP2040_TARGET", std::nullopt);
+
+    const auto root = fresh("malgrind_families_rp2040_ops");
+    const auto home = root / "home";
+    fs::create_directories(home);
+    assert(!find_picotool(home).has_value());
+
+    const auto pkg_pico = home / ".platformio/packages/tool-picotool@1.1.2";
+    const auto pico_exe = pkg_pico / os::exe_name("picotool");
+    fs::create_directories(pico_exe.parent_path());
+    fs::copy_file(MALGRIND_FAKE_TOOL, pico_exe, fs::copy_options::overwrite_existing);
+    if constexpr (os::kind() != os::Kind::Windows) {
+        fs::permissions(pico_exe, fs::perms::owner_all);
+    }
+    assert(find_picotool(home) == pico_exe);
+
+    // PATH picotool takes precedence over PlatformIO packages when present.
+    const auto path_dir = root / "path_bin";
+    const auto path_pico = path_dir / os::exe_name("picotool");
+    fs::create_directories(path_dir);
+    fs::copy_file(MALGRIND_FAKE_TOOL, path_pico, fs::copy_options::overwrite_existing);
+    if constexpr (os::kind() != os::Kind::Windows) {
+        fs::permissions(path_pico, fs::perms::owner_all);
+    }
+    os::set_env("PATH", os::to_utf8(path_dir));
+    assert(find_picotool(home) == path_pico);
+    os::set_env("PATH", "");
+
+    // 2. OpenOCD SWD path (identify, read_flash at 0x10000000, write_flash at 0x10000000)
+    const auto pkg_ocd = home / ".platformio/packages/tool-openocd";
+    const auto ocd_exe = pkg_ocd / "bin" / os::exe_name("openocd");
+    fs::create_directories(ocd_exe.parent_path());
+    fs::copy_file(MALGRIND_FAKE_TOOL, ocd_exe, fs::copy_options::overwrite_existing);
+    if constexpr (os::kind() != os::Kind::Windows) {
+        fs::permissions(ocd_exe, fs::perms::owner_all);
+    }
+    write(pkg_ocd / "scripts/interface/stlink.cfg", "# marker\n");
+
+    const auto rpc_log = root / "rpc.log";
+    const auto tool_log = root / "tool.log";
+    os::set_env("FAKE_OPENOCD_RPC_LOG", os::to_utf8(rpc_log));
+    os::set_env("FAKE_LOG", os::to_utf8(tool_log));
+
+    const Family& rp = rp2040_family();
+    const ToolContext tools{home, {}, {}};
+
+    const BoardIdentity swd_id = rp.identify(tools, "", {});
+    assert(swd_id.key == "20002927-00200000");
+    assert(swd_id.flash_bytes == 2097152u);
+    assert(swd_id.chip == "RP2040");
+    {
+        const std::string rpc = slurp(rpc_log);
+        assert(contains(rpc, "init\n"));
+        assert(contains(rpc, "mdw 0x40000000\n"));
+        assert(contains(rpc, "flash probe 0\n"));
+        assert(contains(rpc, "flash banks\n"));
+        assert(!contains(slurp(tool_log), "picotool "));
+    }
+
+    fs::remove(rpc_log);
+    const fs::path swd_dump = root / "swd backup/rp2040 flash.bin";
+    fs::create_directories(swd_dump.parent_path());
+    rp.read_flash(tools, "", swd_id, swd_dump, {});
+    assert(fs::exists(swd_dump) && fs::file_size(swd_dump) == swd_id.flash_bytes);
+    assert(!rp.is_agent_image(swd_dump));
+    {
+        const std::string rpc = slurp(rpc_log);
+        assert(contains(rpc, "halt\n"));
+        assert(contains(rpc, "dump_image "));
+        assert(contains(rpc, "0x10000000 2097152"));
+        assert(contains(rpc, "resume\n"));
+    }
+
+    fs::remove(rpc_log);
+    rp.write_flash(tools, "", swd_dump, {});
+    {
+        const std::string rpc = slurp(rpc_log);
+        assert(contains(rpc, "program "));
+        assert(contains(rpc, "0x10000000 verify reset\n"));
+    }
+
+    // Fallback to `dap info` when `mdw` fails
+    fs::remove(rpc_log);
+    os::set_env("FAKE_OPENOCD_MDW_FAIL", "1");
+    const BoardIdentity dap_id = rp.identify(tools, "", {});
+    assert(dap_id.key == "0bc12477-00200000");
+    assert(dap_id.chip == "RP2040");
+    assert(contains(slurp(rpc_log), "dap info\n"));
+    os::unset_env("FAKE_OPENOCD_MDW_FAIL");
+
+    // 3. Fallback to picotool when OpenOCD fails startup
+    os::set_env("FAKE_OPENOCD_FAIL", "startup");
+    fs::remove(tool_log);
+    const BoardIdentity pico_id = rp.identify(tools, "", {});
+    assert(pico_id.key == "e660583883276128-00200000");
+    assert(pico_id.flash_bytes == 2097152u);
+    assert(pico_id.chip == "RP2040");
+    assert(contains(slurp(tool_log), "picotool info -a\n"));
+
+    fs::remove(tool_log);
+    const fs::path pico_dump = root / "pico backup/bootsel dump.bin";
+    fs::create_directories(pico_dump.parent_path());
+    os::set_env("FAKE_AGENT_IMAGE", "v2");
+    rp.read_flash(tools, "", pico_id, pico_dump, {});
+    assert(fs::exists(pico_dump) && fs::file_size(pico_dump) == pico_id.flash_bytes);
+    assert(rp.is_agent_image(pico_dump));
+    assert(contains(slurp(tool_log), "picotool save -r 0x10000000 0x10200000 "));
+    os::unset_env("FAKE_AGENT_IMAGE");
+
+    fs::remove(tool_log);
+    rp.write_flash(tools, "", pico_dump, {});
+    assert(contains(slurp(tool_log), "picotool load -v -x "));
+
+    // 4. OpenOCD unavailable + FAKE_PICOTOOL_NO_BOOTSEL=1 throws actionable BOOTSEL / CMSIS-DAP error
+    fs::remove_all(pkg_ocd);
+    os::set_env("FAKE_PICOTOOL_NO_BOOTSEL", "1");
+    for (const auto& op : {
+             std::function<void()>{[&] { (void)rp.identify(tools, "", {}); }},
+             std::function<void()>{[&] { rp.read_flash(tools, "", pico_id, root / "fail.bin", {}); }},
+             std::function<void()>{[&] { rp.write_flash(tools, "", pico_dump, {}); }},
+         }) {
+        bool threw_actionable = false;
+        try {
+            op();
+        } catch (const std::runtime_error& e) {
+            const std::string msg = e.what();
+            threw_actionable = contains(msg, "BOOTSEL") && contains(msg, "CMSIS-DAP") && contains(msg, "debug probe");
+        }
+        assert(threw_actionable);
+    }
+
+    bool missing_img_threw = false;
+    try {
+        rp.write_flash(tools, "", root / "no_such_rp2040_image.bin", {});
+    } catch (const std::runtime_error&) {
+        missing_img_threw = true;
+    }
+    assert(missing_img_threw);
+
+    fs::remove_all(root);
+}
+
 } // namespace
 
 int main() {
@@ -800,5 +1156,9 @@ int main() {
     stm32_project_and_target_inference();
     stm32_agent_commands_and_image();
     stm32_helpers_and_mocked_flash_ops();
+    rp2040_metadata_and_usb();
+    rp2040_project_and_target_inference();
+    rp2040_agent_commands_and_image();
+    rp2040_helpers_and_flash_ops();
     std::puts("families ok");
 }

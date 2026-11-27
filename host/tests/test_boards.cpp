@@ -1,5 +1,6 @@
 // Board adapter naming, probe identification table, and Linux USB device enumeration self-checks.
 #include "boards.hpp"
+#include "devices.hpp"
 #include "os/usb.hpp"
 
 #include <algorithm>
@@ -25,6 +26,9 @@ void adapter_name_checks() {
     assert(adapter_name(os::UsbInfo{"303a", "1001", "USB JTAG/serial debug unit", "", "", "1-5"})
            == "Espressif USB-Serial/JTAG (built-in debug port)");
     assert(adapter_name(os::UsbInfo{"2e8a", "000a", "Pico", "Raspberry Pi", "", "1-6"}) == "Raspberry Pi USB serial");
+    for (const char* pid : {"0003", "0005", "000f", "f00a", "000c"}) {
+        assert(adapter_name(os::UsbInfo{"2e8a", pid, "", "Raspberry Pi", "", "1-6"}) == "Raspberry Pi USB serial");
+    }
     assert(adapter_name(os::UsbInfo{"abcd", "0001", "My Gadget", "", "", ""}) == "My Gadget");
     assert(adapter_name(os::UsbInfo{"abcd", "0001", "", "", "", ""}) == "USB serial adapter");
 }
@@ -42,7 +46,11 @@ void probe_name_checks() {
     assert(!probe_name("0d28", "0205"));
 
     assert(probe_name("2e8a", "000c") == "Raspberry Pi Debug Probe");
-    assert(!probe_name("2e8a", "000a"));
+    for (const char* pid : {"000a", "0003", "0005", "000f", "f00a"}) {
+        assert(!probe_name("2e8a", pid));
+        assert(family_hint_for_usb("2e8a", pid) == "rp2040");
+    }
+    assert(family_hint_for_usb("2e8a", "000c").empty());
 
     assert(probe_name("15ba", "002a") == "Olimex debugger");
 
