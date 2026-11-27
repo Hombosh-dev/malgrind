@@ -115,10 +115,12 @@ void elf_copy() {
     fs::create_directories(root);
     std::ofstream(elf) << "ELF!";
     RunStore store(root / "runs");
-    auto w = store.create({});
-    assert(store.elf(w.meta().id).empty());
-    w.set_elf(elf);
-    assert(store.get(w.meta().id)->has_elf && fs::file_size(store.elf(w.meta().id)) == 4);
+    {
+        auto w = store.create({});
+        assert(store.elf(w.meta().id).empty());
+        w.set_elf(elf);
+        assert(store.get(w.meta().id)->has_elf && fs::file_size(store.elf(w.meta().id)) == 4);
+    }
     fs::remove_all(root);
 }
 

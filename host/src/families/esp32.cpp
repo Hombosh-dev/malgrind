@@ -57,7 +57,7 @@ AgentPaths agent_paths(const ProjectInfo& project, const std::string& env, const
     p.files = absolute_path(agent_dir) / "agent" / esp32_family().id();
     if (!fs::exists(p.files / "sdkconfig.agent") || !fs::exists(p.files / "inject.py"))
         throw std::runtime_error("the agent files are missing from " + os::to_utf8(p.files));
-    p.out = project.dir / ".pio" / "malgrind";
+    p.out = absolute_path(project.dir) / ".pio" / "malgrind";
     p.sdkconfig = p.out / ("sdkconfig." + env);
     return p;
 }
@@ -489,7 +489,7 @@ void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, c
 Invocation agent_command(const fs::path& pio, const ProjectInfo& project, const std::string& env, const std::string& port,
                          const fs::path& agent_dir, bool upload) {
     const auto p = agent_paths(project, env, agent_dir);
-    std::vector<std::string> argv{os::to_utf8(pio), "run", "-d", os::to_utf8(project.dir), "-e", env};
+    std::vector<std::string> argv{os::to_utf8(pio), "run", "-d", os::to_utf8(absolute_path(project.dir)), "-e", env};
     if (upload) argv.insert(argv.end(), {"-t", "upload", "--upload-port", port});
     return {std::move(argv),
             {"PLATFORMIO_BUILD_DIR=" + os::to_utf8(p.out / "build"),

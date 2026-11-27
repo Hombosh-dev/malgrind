@@ -28,7 +28,7 @@ bool any_contains(const std::vector<std::string>& v, std::string_view part) {
 }
 fs::path fresh(const char* name) {
     // canonical: on macOS /tmp and /var are symlinks, and the current directory is reported without them
-    const auto p = fs::canonical(fs::temp_directory_path()) / os::from_utf8(name);
+    const auto p = (fs::canonical(fs::temp_directory_path()) / os::from_utf8(name)).lexically_normal();
     fs::remove_all(p);
     fs::create_directories(p);
     return p;

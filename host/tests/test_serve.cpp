@@ -936,13 +936,13 @@ void export_and_write_file_commands() {
     h.source()->push(make_stream(1));
     assert(wait_for([&] { return h.samples() == 12; }));
 
-    // Time-windowed export (`at_ms: 0` with `window_s: 5` on stored run A).
+    // Time-windowed export (`at_ms: 5000` with `window_s: 5` covering [0, 5000 ms] on stored run A).
     const auto windowed_path = out_dir / "windowed.folded";
     const auto windowed = h.call({{"cmd", "export"},
                                   {"run", id_a},
                                   {"format", "folded"},
                                   {"window_s", 5},
-                                  {"at_ms", 0},
+                                  {"at_ms", 5000},
                                   {"path", os::to_utf8(windowed_path)}});
     assert(windowed["ok"] && contains(read_binary(windowed_path), "core0;0x400d2fff;0x400d1fff;0x400d1000 3\n"));
     const auto future_empty = h.call({{"cmd", "export"},
