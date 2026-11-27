@@ -111,6 +111,42 @@ std::vector<std::string> split_sep(std::string_view s, char sep) {
     return out;
 }
 
+std::vector<std::string> split_tcl_words(std::string_view s) {
+    std::vector<std::string> out;
+    std::size_t i = 0;
+    while (i < s.size()) {
+        while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+        if (i >= s.size()) break;
+        std::string word;
+        if (s[i] == '"') {
+            ++i;
+            while (i < s.size() && s[i] != '"') {
+                if (s[i] == '\\' && i + 1 < s.size()) ++i;
+                word.push_back(s[i++]);
+            }
+            if (i < s.size() && s[i] == '"') ++i;
+        } else if (s[i] == '{') {
+            ++i;
+            int depth = 1;
+            while (i < s.size() && depth > 0) {
+                if (s[i] == '{') ++depth;
+                else if (s[i] == '}') {
+                    --depth;
+                    if (depth == 0) {
+                        ++i;
+                        break;
+                    }
+                }
+                word.push_back(s[i++]);
+            }
+        } else {
+            while (i < s.size() && !std::isspace(static_cast<unsigned char>(s[i]))) word.push_back(s[i++]);
+        }
+        out.push_back(std::move(word));
+    }
+    return out;
+}
+
 std::optional<std::uint32_t> parse_u32(std::string_view s) {
     s = trim_ws(s);
     if (s.empty()) return std::nullopt;
@@ -478,6 +514,144 @@ int run_openocd(const std::vector<std::string>& args) {
 
                 if (*cmd == "version") {
                     (void)client->write_all(malgrind::host::TclRpcCodec::request("Open On-Chip Debugger 0.12.0"));
+                } else if (*cmd == "init") {
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                        (fail && *fail == "init") ? "Error: init failed" : ""));
+                } else if (*cmd == "dap info") {
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    if (fail && *fail == "dap") {
+                        (void)client->write_all(
+                            malgrind::host::TclRpcCodec::request("invalid command name \"dap\""));
+                    } else if (const auto custom = os::get_env("FAKE_OPENOCD_DAP_INFO");
+                               custom && !custom->empty()) {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
+                    } else {
+                        std::uint32_t idcode = 0x10076413u;
+                        if (const auto id_env = os::get_env("FAKE_OPENOCD_IDCODE"); id_env && !id_env->empty()) {
+                            if (const auto parsed = parse_u32(*id_env)) idcode = *parsed;
+                        }
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                            std::format("AP ID register 0x24770011\nIDCODE 0x{:08x}", idcode)));
+                    }
+                } else if (*cmd == "flash probe 0") {
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    if (fail && *fail == "flash_probe") {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: flash probe failed"));
+                    } else if (const auto custom = os::get_env("FAKE_OPENOCD_FLASH_PROBE");
+                               custom && !custom->empty()) {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
+                    } else {
+                        (void)client->write_all(
+                            malgrind::host::TclRpcCodec::request("flash 'stm32f4x' found at 0x08000000"));
+                    }
+                } else if (*cmd == "flash banks") {
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    if (fail && *fail == "flash_banks") {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: no flash banks"));
+                    } else if (const auto custom = os::get_env("FAKE_OPENOCD_FLASH_BANKS");
+                               custom && !custom->empty()) {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(*custom));
+                    } else {
+                        std::uint32_t flash_size = 0x00080000u;
+                        if (const auto sz_env = os::get_env("FAKE_OPENOCD_FLASH_SIZE"); sz_env && !sz_env->empty()) {
+                            if (const auto parsed = parse_u32(*sz_env)) flash_size = *parsed;
+                        }
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request(std::format(
+                            "#0 : stm32f4x.flash (stm32f4x) at 0x08000000, size 0x{:08x}, buswidth 0, chipwidth 0",
+                            flash_size)));
+                    }
+                } else if (cmd->starts_with("dump_image ")) {
+                    const auto parts = split_tcl_words(std::string_view(*cmd).substr(11));
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    if (fail && *fail == "dump_image") {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: dump_image failed"));
+                    } else if (parts.size() < 3) {
+                        (void)client->write_all(
+                            malgrind::host::TclRpcCodec::request("Error: wrong # args: dump_image file addr size"));
+                    } else {
+                        const auto addr = parse_u32(parts[1]);
+                        const auto len = parse_u32(parts[2]);
+                        if (!addr || !len) {
+                            (void)client->write_all(
+                                malgrind::host::TclRpcCodec::request("Error: invalid dump_image address or length"));
+                        } else {
+                            std::ofstream out(os::from_utf8(parts[0]), std::ios::binary | std::ios::trunc);
+                            if (!out) {
+                                (void)client->write_all(
+                                    malgrind::host::TclRpcCodec::request("Error: couldn't open " + parts[0]));
+                            } else {
+                                std::array<char, 4096> chunk{};
+                                std::size_t written = 0;
+                                while (written < *len) {
+                                    const std::size_t n =
+                                        std::min<std::size_t>(chunk.size(), static_cast<std::size_t>(*len) - written);
+                                    for (std::size_t k = 0; k < n; ++k) {
+                                        chunk[k] = static_cast<char>((written + k) & 0xFFu);
+                                    }
+                                    out.write(chunk.data(), static_cast<std::streamsize>(n));
+                                    written += n;
+                                }
+                                if (const auto agent = os::get_env("FAKE_AGENT_IMAGE"); agent && !agent->empty()) {
+                                    const std::string_view marker =
+                                        (*agent == "v1") ? "malgrind-agent-v1" : "malgrind-agent-v2";
+                                    if (*len >= marker.size()) {
+                                        const std::size_t off = (*len >= 1000u + marker.size()) ? 1000u : 0u;
+                                        out.seekp(static_cast<std::streamoff>(off));
+                                        out.write(marker.data(), static_cast<std::streamsize>(marker.size()));
+                                    }
+                                }
+                                out.flush();
+                                (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                                    out ? std::format("dumped {} bytes in 0.050000s", *len)
+                                        : "Error: dump_image write failed"));
+                            }
+                        }
+                    }
+                } else if (cmd->starts_with("program ")) {
+                    const auto parts = split_tcl_words(std::string_view(*cmd).substr(8));
+                    const auto fail = os::get_env("FAKE_OPENOCD_FAIL");
+                    if (fail && *fail == "program") {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: programming failed"));
+                    } else if (parts.empty()) {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: missing image path"));
+                    } else {
+                        std::error_code ec;
+                        if (!fs::is_regular_file(os::from_utf8(parts[0]), ec)) {
+                            (void)client->write_all(
+                                malgrind::host::TclRpcCodec::request("Error: couldn't open " + parts[0]));
+                        } else {
+                            (void)client->write_all(malgrind::host::TclRpcCodec::request(
+                                "** Programming Started **\n** Programming Finished **\n** Verify Started **\n"
+                                "** Verified OK **\n** Resetting Target **"));
+                        }
+                    }
+                } else if (*cmd == "mdw" || cmd->starts_with("mdw ")) {
+                    const std::string_view arg = cmd->size() > 4 ? trim_ws(std::string_view(*cmd).substr(4)) : "";
+                    const auto addr = parse_u32(arg);
+                    if (!addr) {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: invalid mdw address"));
+                    } else if (os::get_env("FAKE_OPENOCD_MDW_FAIL") == "1") {
+                        (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: memory read failed"));
+                    } else if (*addr == 0xE0042000u || *addr == 0x40015800u || *addr == 0x5C001000u) {
+                        const auto id_env = os::get_env("FAKE_OPENOCD_IDCODE");
+                        if (id_env && *id_env == "none") {
+                            (void)client->write_all(malgrind::host::TclRpcCodec::request("Error: memory read failed"));
+                        } else {
+                            std::uint32_t idcode = 0x10076413u;
+                            if (id_env && !id_env->empty()) {
+                                if (const auto parsed = parse_u32(*id_env)) idcode = *parsed;
+                            }
+                            (void)client->write_all(
+                                malgrind::host::TclRpcCodec::request(std::format("0x{:08x}: {:08x}", *addr, idcode)));
+                        }
+                    } else if (const auto it = mem.find(*addr); it != mem.end()) {
+                        (void)client->write_all(
+                            malgrind::host::TclRpcCodec::request(std::format("0x{:08x}: {:08x}", *addr, it->second)));
+                    } else {
+                        (void)client->write_all(
+                            malgrind::host::TclRpcCodec::request(std::format("0x{:08x}: 08001234", *addr)));
+                    }
                 } else if (cmd->starts_with("echo ")) {
                     (void)client->write_all(malgrind::host::TclRpcCodec::request(cmd->substr(5)));
                 } else if (*cmd == "target names") {

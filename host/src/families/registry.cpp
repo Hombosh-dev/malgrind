@@ -1,6 +1,7 @@
 #include "families/family.hpp"
 
 #include "families/esp32.hpp"
+#include "families/stm32.hpp"
 
 #include <stdexcept>
 
@@ -47,7 +48,7 @@ ProbeSampleMode Family::probe_sample_mode(std::string_view) const { return Probe
 std::optional<Arch> Family::probe_target_arch(std::string_view) const { return std::nullopt; }
 
 const std::vector<const Family*>& all_families() {
-    static const std::vector<const Family*> families{&esp32_family()};
+    static const std::vector<const Family*> families{&esp32_family(), &stm32_family()};
     return families;
 }
 

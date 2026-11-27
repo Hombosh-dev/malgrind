@@ -98,7 +98,10 @@ void unsupported_projects_are_refused() {
     assert(prepare("[env]\nframework = espidf\n[env:a]\nplatform = espressif32\n", "a") == "ok"); // the shared [env] section counts
     assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = arduino\n", "a"), "arduino"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = arduino\n[env:b]\nframework = espidf\n", "a"), "espidf")); // per env
-    assert(contains(prepare("[env:a]\nplatform = ststm32\nframework = stm32cube\n", "a"), "ESP32"));
+    assert(prepare("[env:a]\nplatform = ststm32\nframework = stm32cube\n", "a") == "ok");
+    assert(prepare("[env:a]\nplatform = ststm32\nframework = arduino\n", "a") == "ok");
+    assert(contains(prepare("[env:a]\nplatform = ststm32\nframework = libopencm3\n", "a"), "stm32cube"));
+    assert(contains(prepare("[env:a]\nplatform = atmelavr\nframework = arduino\n", "a"), "ESP32"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\n", "missing"), "no environment"));
     assert(contains(prepare("[env:a]\nplatform = espressif32\nframework = espidf\n", "a", dir / "my proj"), "space"));
     fs::remove_all(dir);

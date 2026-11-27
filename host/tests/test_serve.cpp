@@ -312,7 +312,7 @@ void probe_finds_agent() {
     assert(silent["ok"] && silent["result"]["agent"] == false);
     assert(silent["result"]["family"] == "" && silent["result"]["family_name"] == "");
 
-    // Agent frame whose arch has no registered family also reports empty family.
+    // Agent frame for ArmV7M reports STM32 family; an arch with no registered family reports empty family.
     h.set_source_factory([](const Device&, unsigned) {
         auto src = std::make_unique<MemorySource>();
         malgrind::Profiler p({"arm", malgrind::Arch::ArmV7M, 72'000'000, 1}, 997);
@@ -324,8 +324,23 @@ void probe_finds_agent() {
         src->close();
         return std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(std::move(src));
     });
+    const auto stm_agent = h.call({{"cmd", "probe"}, {"device", dev.id}});
+    assert(stm_agent["ok"] && stm_agent["result"]["agent"] == true && stm_agent["result"]["arch"] == "armv7m");
+    assert(stm_agent["result"]["family"] == "stm32" && stm_agent["result"]["family_name"] == "STM32 (Cortex-M)");
+
+    h.set_source_factory([](const Device&, unsigned) {
+        auto src = std::make_unique<MemorySource>();
+        malgrind::Profiler p({"host", malgrind::Arch::Host, 1'000'000, 1}, 997);
+        const std::uint32_t pc = 0x08001000;
+        p.record(0, &pc, 1, 10);
+        std::vector<std::uint8_t> bytes;
+        p.flush([&](const std::uint8_t* d, std::size_t n) { bytes.insert(bytes.end(), d, d + n); }, [] {}, 100);
+        src->push(bytes);
+        src->close();
+        return std::variant<std::unique_ptr<ByteSource>, os::OpenFailure>(std::move(src));
+    });
     const auto unhandled = h.call({{"cmd", "probe"}, {"device", dev.id}});
-    assert(unhandled["ok"] && unhandled["result"]["agent"] == true && unhandled["result"]["arch"] == "armv7m");
+    assert(unhandled["ok"] && unhandled["result"]["agent"] == true && unhandled["result"]["arch"] == "host");
     assert(unhandled["result"]["family"] == "" && unhandled["result"]["family_name"] == "");
 }
 
@@ -384,7 +399,7 @@ void probe_lists_methods() {
     assert(no_proj["ok"] && method(no_proj["result"], "new_run")["available"] == false);
     assert(contains(method(no_proj["result"], "new_run")["why"], "family"));
 
-    // A non-ESP32 project reports the family mismatch from family_for_project.
+    // A supported STM32 project enables new_run; an unsupported platform reports the family mismatch from family_for_project.
     const auto stm_proj = h.root / "stm32";
     fs::create_directories(stm_proj);
     std::ofstream(stm_proj / "platformio.ini") << "[env:a]\nplatform = ststm32\nframework = stm32cube\n";
@@ -392,8 +407,17 @@ void probe_lists_methods() {
     assert(added_stm["ok"]);
     const std::string stm_id = added_stm["result"]["id"];
     const auto stm_probe = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}, {"project", stm_id}});
-    assert(stm_probe["ok"] && method(stm_probe["result"], "new_run")["available"] == false);
-    assert(contains(method(stm_probe["result"], "new_run")["why"], "ststm32"));
+    assert(stm_probe["ok"] && method(stm_probe["result"], "new_run")["available"] == true);
+
+    const auto avr_proj = h.root / "avr";
+    fs::create_directories(avr_proj);
+    std::ofstream(avr_proj / "platformio.ini") << "[env:a]\nplatform = atmelavr\nframework = arduino\n";
+    const auto added_avr = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(avr_proj)}});
+    assert(added_avr["ok"]);
+    const std::string avr_id = added_avr["result"]["id"];
+    const auto avr_probe = h.call({{"cmd", "probe"}, {"device", quiet_dev.id}, {"project", avr_id}});
+    assert(avr_probe["ok"] && method(avr_probe["result"], "new_run")["available"] == false);
+    assert(contains(method(avr_probe["result"], "new_run")["why"], "atmelavr"));
 }
 
 void remove_agent_restores_or_says_why_not() {
@@ -1323,10 +1347,15 @@ void probe_and_methods_for_debug_probes() {
             h.call({{"cmd", "probe"}, {"device", stlink.id}, {"target_cfg", "target/stm32f4x.cfg"}});
         assert(p_ready["ok"] && p_ready["result"]["openocd"]["found"] == true);
         assert(p_ready["result"]["probe_config"]["target_cfg"] == "target/stm32f4x.cfg");
-        assert(p_ready["result"]["probe_sample_mode"] == "auto");
-        assert(contains(p_ready["result"]["probe_rate_hint"], "Auto"));
+        assert(p_ready["result"]["probe_sample_mode"] == "dwt_pcsr");
+        assert(contains(p_ready["result"]["probe_rate_hint"], "DWT PCSR"));
         assert(method(p_ready["result"], "no_flash")["available"] == true);
         assert(method(p_ready["result"], "attach")["available"] == false);
+
+        const auto p_unknown_target =
+            h.call({{"cmd", "probe"}, {"device", stlink.id}, {"target_cfg", "target/nrf52.cfg"}});
+        assert(p_unknown_target["ok"] && p_unknown_target["result"]["probe_sample_mode"] == "auto");
+        assert(contains(p_unknown_target["result"]["probe_rate_hint"], "Auto"));
 
         // `methods` resolves probe automatically from devices list, or by VID:PID.
         const auto m_auto = h.call({{"cmd", "methods"}, {"target_cfg", "target/stm32f4x.cfg"}});

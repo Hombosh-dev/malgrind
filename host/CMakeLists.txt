@@ -8,7 +8,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_SOURCE_DI
 
 add_library(malgrind_host STATIC
     src/wire.cpp src/symbols.cpp src/aggregate.cpp src/series.cpp src/memcheck.cpp src/diff.cpp src/http.cpp src/source.cpp src/discover.cpp src/store.cpp src/session.cpp src/pio.cpp src/openocd.cpp src/openocd_source.cpp src/probe_config.cpp src/backup.cpp src/projects.cpp src/github.cpp src/boards.cpp src/devices.cpp src/setup.cpp src/settings.cpp src/plan.cpp src/ops.cpp src/serve.cpp src/cli.cpp
-    src/families/registry.cpp src/families/esp32.cpp
+    src/families/registry.cpp src/families/esp32.cpp src/families/stm32.cpp
     src/os/paths.cpp src/os/process.cpp src/os/ports.cpp src/os/tools.cpp)
 if(WIN32)
     target_sources(malgrind_host PRIVATE
@@ -86,7 +86,8 @@ target_link_libraries(test_backup PRIVATE malgrind_host)
 
 malgrind_add_test(families tests/test_families.cpp)
 target_link_libraries(test_families PRIVATE malgrind_host)
-target_compile_definitions(test_families PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(test_families PRIVATE MALGRIND_SOURCE_DIR="${CMAKE_SOURCE_DIR}" MALGRIND_FAKE_TOOL="$<TARGET_FILE:fake_tool>")
+add_dependencies(test_families fake_tool)
 
 malgrind_add_test(projects tests/test_projects.cpp)
 target_link_libraries(test_projects PRIVATE malgrind_host)

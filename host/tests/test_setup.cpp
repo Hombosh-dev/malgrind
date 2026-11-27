@@ -145,8 +145,8 @@ void platformio_core_dirs_checks() {
         assert(find_addr2line(malgrind::Arch::Host) == host_tool);
         assert(find_addr2line(malgrind::Arch::Xtensa) == tool);
         assert(find_addr2line(malgrind::Arch::RiscV32) == riscv_tool);
-        // No registered family handles ArmV7M yet, so find_addr2line returns empty instead of hardcoding a tool name.
-        assert(find_addr2line(malgrind::Arch::ArmV7M).empty());
+        assert(find_addr2line(malgrind::Arch::ArmV7M) == arm_tool);
+        assert(find_addr2line(static_cast<malgrind::Arch>(99)).empty());
     }
 
     fs::remove_all(root);

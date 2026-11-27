@@ -1,5 +1,6 @@
 // Unit tests for chip-agnostic OpenOCD probe configuration resolution.
 #include "families/esp32.hpp"
+#include "families/stm32.hpp"
 #include "probe_config.hpp"
 
 #include <cassert>
@@ -106,8 +107,8 @@ void generic_probe_table_cases() {
         assert(res.config->package == "tool-openocd");
         assert(res.config->interface_desc == "ST-Link");
         assert(res.config->target_cfg == "target/stm32f4x.cfg");
-        assert(res.config->sample_mode == ProbeSampleMode::Auto);
-        assert(!res.config->target_arch.has_value());
+        assert(res.config->sample_mode == ProbeSampleMode::DwtPcsr);
+        assert(res.config->target_arch == malgrind::Arch::ArmV7M);
         assert((res.config->openocd_args == std::vector<std::string>{
                                                 "-f",
                                                 "interface/stlink.cfg",
@@ -124,6 +125,8 @@ void generic_probe_table_cases() {
         assert(res.config.has_value());
         assert(res.config->package == "tool-openocd");
         assert(res.config->interface_desc == "CMSIS-DAP (DAPLink)");
+        assert(res.config->sample_mode == ProbeSampleMode::Auto);
+        assert(!res.config->target_arch.has_value());
         assert((res.config->openocd_args == std::vector<std::string>{"-f", "interface/cmsis-dap.cfg", "-f", "target/nrf52.cfg"}));
     }
 
@@ -285,6 +288,33 @@ void family_and_project_resolution_cases() {
                                             "-f",
                                             "target/esp32s3.cfg",
                                         }));
+
+    // 8. ST-Link paired with STM32 project resolves Stm32Family, tool-openocd, and target/sample mode
+    write_file(root / "stm32/platformio.ini",
+               "[env:f4]\nplatform = ststm32\nframework = stm32cube\nboard = nucleo_f401re\n"
+               "[env:f0]\nplatform = ststm32\nframework = arduino\nboard_build.mcu = stm32f030f4p6\n");
+    const auto stm_proj = read_project(root / "stm32", why);
+    assert(stm_proj);
+    res = resolve_probe_config(make_probe("0483", "374b", "ST-NUCLEO", "ST-Link"), nullptr, &*stm_proj, "f4");
+    assert(res.config.has_value());
+    assert(res.config->package == "tool-openocd");
+    assert(res.config->target_cfg == "target/stm32f4x.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::DwtPcsr);
+    assert(res.config->target_arch == malgrind::Arch::ArmV7M);
+    assert((res.config->openocd_args == std::vector<std::string>{
+                                            "-f",
+                                            "interface/stlink.cfg",
+                                            "-c",
+                                            "adapter serial ST-NUCLEO",
+                                            "-f",
+                                            "target/stm32f4x.cfg",
+                                        }));
+
+    res = resolve_probe_config(make_probe("0483", "374b", "ST-F0", "ST-Link"), nullptr, &*stm_proj, "f0");
+    assert(res.config.has_value());
+    assert(res.config->target_cfg == "target/stm32f0x.cfg");
+    assert(res.config->sample_mode == ProbeSampleMode::HaltResume);
+    assert(res.config->target_arch == malgrind::Arch::ArmV7M);
 
     fs::remove_all(root);
 }
