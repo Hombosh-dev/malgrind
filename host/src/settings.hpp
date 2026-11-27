@@ -6,7 +6,9 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace malgrind::host {
 
@@ -21,9 +23,14 @@ struct RunSettings {
     bool check_memory = false;  // opt-in memory error/leak hooks (slower, uses extra RAM)
     std::filesystem::path elf{}; // firmware ELF for function names; empty: found automatically
     std::string build_command{}, upload_command{}; // replace the detected command line (the agent's environment variables stay)
+    std::string target_cfg{};   // OpenOCD target/board config for debug probe runs (e.g. "target/<chip>.cfg")
 
     bool operator==(const RunSettings&) const = default;
 };
+
+// Validates and trims an OpenOCD target config path (empty stays empty). Rejects control characters (including \x1a),
+// blank whitespace-only values, and leading '-'.
+[[nodiscard]] std::optional<std::string> sanitize_target_cfg(std::string_view raw, std::string& error);
 
 void to_json(nlohmann::json& j, const RunSettings& s);
 void from_json(const nlohmann::json& j, RunSettings& s); // tolerant: missing keys keep their defaults

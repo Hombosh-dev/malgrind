@@ -185,6 +185,8 @@ void bad_settings_name_the_field() {
     assert(contains(message({.build_command = "no-such-program-xyz run"}), "build command") && contains(message({.build_command = "no-such-program-xyz run"}), "not found"));
     assert(contains(message({.upload_command = "/no/such/tool"}), "upload command"));
     assert(contains(message({.build_command = "echo \"open"}), "not a command line"));
+    assert(contains(message({.target_cfg = "-c shutdown"}), "invalid target config"));
+    assert(contains(message({.target_cfg = std::string("target/a.cfg\x1a")}), "control characters"));
 }
 
 void a_plan_writes_nothing() {
@@ -194,13 +196,79 @@ void a_plan_writes_nothing() {
 }
 
 void settings_survive_json() {
-    RunSettings s{.env = "b", .extra_args = "-v", .build_flags = "-DX", .rate_hz = 800, .check_memory = true, .elf = "/x/y.elf", .build_command = "pio run", .upload_command = ""};
+    RunSettings s{.env = "b", .extra_args = "-v", .build_flags = "-DX", .rate_hz = 800, .check_memory = true, .elf = "/x/y.elf", .build_command = "pio run", .upload_command = "", .target_cfg = "target/esp32s3.cfg"};
     const nlohmann::json j = s;
-    assert(j["rate_hz"] == 800 && j["check_memory"] == true && j["elf"] == "/x/y.elf" && j.get<RunSettings>() == s);
+    assert(j["rate_hz"] == 800 && j["check_memory"] == true && j["elf"] == "/x/y.elf" &&
+           j["target_cfg"] == "target/esp32s3.cfg" && j.get<RunSettings>() == s);
     assert(RunSettings{}.check_memory == false);
+    assert(RunSettings{}.target_cfg.empty());
     assert(nlohmann::json::parse(R"({"rate_hz": 500})").get<RunSettings>() == RunSettings{.rate_hz = 500}); // missing keys: defaults
-    assert(nlohmann::json::parse(R"({"rate_hz": "fast", "env": 3, "check_memory": "yes"})").get<RunSettings>() == RunSettings{}); // wrong types are ignored, never thrown
+    assert(nlohmann::json::parse(R"({"rate_hz": "fast", "env": 3, "check_memory": "yes", "target_cfg": 9})").get<RunSettings>() == RunSettings{}); // wrong types are ignored, never thrown
     assert(nlohmann::json(nullptr).get<RunSettings>() == RunSettings{});
+}
+
+void target_cfg_validation_and_probe_plan() {
+    std::string err;
+    assert(sanitize_target_cfg("", err) == std::optional<std::string>{""});
+    assert(sanitize_target_cfg("  target/stm32f4x.cfg  ", err) == std::optional<std::string>{"target/stm32f4x.cfg"});
+    for (const std::string_view bad : {std::string_view{"   "},
+                                       std::string_view{"-c shutdown"},
+                                       std::string_view{"target/a.cfg\x1a"},
+                                       std::string_view{"target/a.cfg\n"},
+                                       std::string_view{"target/a.cfg\0x", 14}}) {
+        err.clear();
+        assert(!sanitize_target_cfg(bad, err).has_value() && !err.empty());
+    }
+
+    const fs::path root = fs::canonical(fs::temp_directory_path()) / "malgrind_probe_plan";
+    fs::remove_all(root);
+    fs::create_directories(root / "proj/.pio/build/s3");
+    std::ofstream(root / "proj/platformio.ini") << "[env:s3]\nplatform = espressif32\nboard = esp32-s3-devkitc-1\n";
+    // Minimal Xtensa ELF header (e_machine = 94).
+    const unsigned char elf_hdr[20] = {0x7f, 'E', 'L', 'F', 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 94, 0};
+    {
+        std::ofstream out(root / "proj/.pio/build/s3/firmware.elf", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(elf_hdr), sizeof elf_hdr);
+    }
+
+    std::string why;
+    const auto proj = read_project(root / "proj", why);
+    assert(proj.has_value());
+
+    Device probe;
+    probe.id = "probe-303a-1001-sn-1";
+    probe.kind = DeviceKind::Probe;
+    probe.name = "ESP USB JTAG (built-in)";
+    probe.title = probe.name;
+    probe.usb = os::UsbInfo{"303a", "1001", "USB JTAG", "Espressif", "1", "1-2"};
+
+    // Missing OpenOCD fails clearly when assume_openocd_available is false.
+    {
+        bool threw = false;
+        try {
+            (void)make_probe_plan({.home = root / "home", .probe = probe, .project = proj});
+        } catch (const std::runtime_error& e) {
+            threw = contains(e.what(), "tool-openocd-esp32");
+        }
+        assert(threw);
+    }
+
+    // With assume_openocd_available, infers target_cfg, ELF, command preview, and no-flash note.
+    const auto plan = make_probe_plan({
+        .home = root / "home",
+        .probe = probe,
+        .project = proj,
+        .assume_openocd_available = true,
+    });
+    assert(plan.config.target_cfg == "target/esp32s3.cfg");
+    assert(plan.config.package == "tool-openocd-esp32");
+    assert(plan.elf == root / "proj/.pio/build/s3/firmware.elf");
+    assert(contains(plan.command_text, "target/esp32s3.cfg"));
+    assert(contains(plan.note, "No firmware will be modified or flashed"));
+    assert(contains(plan.summary, "No firmware will be modified or flashed"));
+    assert(!plan.targets.empty());
+
+    fs::remove_all(root);
 }
 
 } // namespace
@@ -215,5 +283,6 @@ int main() {
     bad_settings_name_the_field();
     a_plan_writes_nothing();
     settings_survive_json();
+    target_cfg_validation_and_probe_plan();
     std::puts("settings ok");
 }

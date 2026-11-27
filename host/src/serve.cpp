@@ -1,9 +1,11 @@
 #include "serve.hpp"
 
+#include "boards.hpp"
 #include "devices.hpp"
 #include "diff.hpp"
 #include "discover.hpp"
 #include "github.hpp"
+#include "openocd_source.hpp"
 #include "ops.hpp"
 #include "os/access.hpp"
 #include "os/paths.hpp"
@@ -11,6 +13,7 @@
 #include "os/tools.hpp"
 #include "plan.hpp"
 #include "pio.hpp"
+#include "probe_config.hpp"
 #include "projects.hpp"
 #include "setup.hpp"
 #include "session.hpp"
@@ -212,6 +215,7 @@ private:
         }
         if (cmd == "devices") return devices_command();
         if (cmd == "probe") return probe(req);
+        if (cmd == "methods") return methods_command(req);
         if (cmd == "project") {
             std::string why;
             const auto project = read_project(os::from_utf8(str_arg(req, "dir")), why);
@@ -228,6 +232,7 @@ private:
             return json::object();
         }
         if (cmd == "attach") return attach(req);
+        if (cmd == "probe_run") return probe_run(req);
         if (cmd == "agent_start") return agent_start_command(req);
         if (cmd == "agent_stop") return agent_stop_command();
         if (cmd == "stop") {
@@ -247,7 +252,7 @@ private:
         if (cmd == "open") {
             if (live()) throw std::runtime_error("stop the live run first");
             const auto id = str_arg(req, "run");
-            auto session = Session::replay(store_, id, emitter());
+            auto session = Session::replay(store_, id, emitter(), options_.home);
             if (!session) throw std::runtime_error("no such run: " + id);
             set_session(std::move(session));
             return {{"run", *store_.get(id)}};
@@ -296,7 +301,7 @@ private:
         } else if (cur && cur->run_id() == *run_arg) {
             sess = cur;
         } else {
-            sess = Session::replay(store_, *run_arg, [](const json&) {});
+            sess = Session::replay(store_, *run_arg, [](const json&) {}, options_.home);
             if (!sess) throw std::runtime_error("no such run: " + *run_arg);
         }
 
@@ -387,30 +392,61 @@ private:
         return json::object();
     }
 
-    Device resolve_serial(const std::string& ref) const {
+    Device resolve_any_device(const std::string& ref) const {
         const auto now = options_.devices ? options_.devices() : list_devices();
         const auto dev = resolve_device(ref, now);
         if (!dev) throw std::runtime_error(std::format("device {} is not plugged in", ref));
-        if (dev->kind != DeviceKind::Serial) throw std::runtime_error(std::format("device {} is not a serial port", ref));
         return *dev;
     }
 
-    json probe(const json& req) {
-        const auto dev = resolve_serial(device_arg(req));
+    Device resolve_serial(const std::string& ref) const {
+        const auto dev = resolve_any_device(ref);
+        if (dev.kind != DeviceKind::Serial) throw std::runtime_error(std::format("device {} is not a serial port", ref));
+        return dev;
+    }
+
+    Device resolve_probe(const std::string& ref) const {
+        const auto dev = resolve_any_device(ref);
+        if (dev.kind != DeviceKind::Probe) throw std::runtime_error(std::format("device {} is not a debug probe", ref));
+        return dev;
+    }
+
+    static json methods_json(const std::vector<Method>& list) {
+        json out = json::array();
+        for (const auto& m : list) out.push_back({{"id", m.id}, {"available", m.available}, {"why", m.why}});
+        return out;
+    }
+
+    static json probe_targets_json(const std::vector<ProbeTargetOption>& targets) {
+        json out = json::array();
+        for (const auto& opt : targets) out.push_back({{"cfg", opt.cfg}, {"label", opt.label}});
+        return out;
+    }
+
+    static json openocd_status_json(const ProbeInspection& insp) {
+        return {
+            {"package", insp.openocd_package},
+            {"found", insp.openocd_available},
+            {"exe", insp.openocd ? json(os::to_utf8(insp.openocd->exe)) : json(nullptr)},
+            {"scripts",
+             (insp.openocd && !insp.openocd->scripts.empty()) ? json(os::to_utf8(insp.openocd->scripts)) : json(nullptr)},
+        };
+    }
+
+    static json probe_config_json(const ProbeConfig& cfg) {
+        return {
+            {"package", cfg.package},
+            {"interface_desc", cfg.interface_desc},
+            {"target_cfg", cfg.target_cfg},
+            {"openocd_args", cfg.openocd_args},
+            {"sample_mode", std::string(probe_sample_mode_name(cfg.sample_mode))},
+            {"target_arch", cfg.target_arch ? json(std::string(arch_name(*cfg.target_arch))) : json(nullptr)},
+        };
+    }
+
+    json probe_serial_report(const Device& dev, const json& req) {
         const auto r = probe_device(dev, options_.open_source);
         const Family* probed_family = r.agent ? family_for_arch(r.arch) : nullptr;
-        json result = {{"busy", r.busy},
-                       {"agent", r.agent},
-                       {"denied", r.denied},
-                       {"family", probed_family ? std::string(probed_family->id()) : ""},
-                       {"family_name", probed_family ? std::string(probed_family->name()) : ""}};
-        if (r.agent) {
-            result["arch"] = std::string(arch_name(r.arch));
-            result["ncores"] = r.ncores;
-            result["cpu_mhz"] = r.cpu_mhz;
-            result["caps"] = r.caps;
-            result["state"] = r.state;
-        }
         const Family* method_family =
             probed_family ? probed_family : (!dev.family_hint.empty() ? family_by_id(dev.family_hint) : nullptr);
         std::string problem; // why the chosen project cannot be built with the agent; none chosen: no problem yet
@@ -424,18 +460,233 @@ private:
                 problem = e.what();
             }
         }
-        json list = json::array();
-        for (const auto& m : methods(r, method_family, find_pio(options_.home).has_value(), problem))
-            list.push_back({{"id", m.id}, {"available", m.available}, {"why", m.why}});
-        result["methods"] = std::move(list);
+        const auto targets = probe_targets(method_family);
+        const ProbeSampleMode mode =
+            method_family ? method_family->probe_sample_mode() : ProbeSampleMode::Auto;
+        json result = {{"kind", "serial"},
+                       {"busy", r.busy},
+                       {"agent", r.agent},
+                       {"denied", r.denied},
+                       {"family", probed_family ? std::string(probed_family->id()) : ""},
+                       {"family_name", probed_family ? std::string(probed_family->name()) : ""},
+                       {"probe_targets", probe_targets_json(targets)},
+                       {"probe_sample_mode", std::string(probe_sample_mode_name(mode))},
+                       {"probe_rate_hint", probe_rate_hint(mode)}};
+        if (r.agent) {
+            result["arch"] = std::string(arch_name(r.arch));
+            result["ncores"] = r.ncores;
+            result["cpu_mhz"] = r.cpu_mhz;
+            result["caps"] = r.caps;
+            result["state"] = r.state;
+        }
+        result["methods"] =
+            methods_json(methods(r, method_family, find_pio(options_.home).has_value(), problem));
         return result;
+    }
+
+    json probe_device_report(const Device& dev, const json& req) {
+        std::optional<ProjectMeta> proj_meta;
+        std::optional<ProjectInfo> proj_info;
+        std::string project_problem;
+        if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
+            try {
+                proj_meta = project_of(*id);
+                if (proj_meta->origin != Origin::None) {
+                    if (auto info = read_project(proj_meta->dir, project_problem)) {
+                        proj_info = std::move(*info);
+                    }
+                }
+            } catch (const std::exception& e) {
+                project_problem = e.what();
+            }
+        }
+        const std::string env = opt_str_arg(req, "env").value_or(proj_meta ? proj_meta->env : std::string{});
+        const std::string target_cfg = opt_str_arg(req, "target_cfg").value_or(std::string{});
+        const auto insp = inspect_probe(options_.home,
+                                        dev,
+                                        nullptr,
+                                        proj_info ? &*proj_info : nullptr,
+                                        env,
+                                        target_cfg,
+                                        bool(options_.open_probe));
+        std::string diag = insp.error;
+        if (diag.empty() && !project_problem.empty()) diag = project_problem;
+        auto ctx = insp.method_context(false);
+        if (!diag.empty()) {
+            ctx.available = false;
+            ctx.why = diag;
+        }
+        return {{"kind", "probe"},
+                {"busy", false},
+                {"agent", false},
+                {"denied", false},
+                {"family", insp.family ? std::string(insp.family->id()) : ""},
+                {"family_name", insp.family ? std::string(insp.family->name()) : ""},
+                {"openocd", openocd_status_json(insp)},
+                {"probe_config", insp.config.config ? probe_config_json(*insp.config.config) : json(nullptr)},
+                {"probe_targets", probe_targets_json(insp.targets)},
+                {"probe_sample_mode", std::string(probe_sample_mode_name(insp.sample_mode))},
+                {"probe_rate_hint", insp.rate_hint},
+                {"error", diag},
+                {"methods",
+                 methods_json(methods(ProbeResult{}, insp.family, find_pio(options_.home).has_value(), project_problem, ctx))}};
+    }
+
+    json probe(const json& req) {
+        const auto dev = resolve_any_device(device_arg(req));
+        return dev.kind == DeviceKind::Probe ? probe_device_report(dev, req) : probe_serial_report(dev, req);
+    }
+
+    json methods_command(const json& req) {
+        if (opt_str_arg(req, "device") || opt_str_arg(req, "port")) {
+            return probe(req);
+        }
+        if (const auto vid = opt_str_arg(req, "vid"), pid = opt_str_arg(req, "pid"); vid && pid) {
+            Device synth;
+            synth.kind = DeviceKind::Probe;
+            synth.id = "probe-" + *vid + "-" + *pid;
+            synth.name = probe_name(*vid, *pid).value_or("Debug probe");
+            synth.title = synth.name;
+            synth.family_hint = family_hint_for_usb(*vid, *pid);
+            os::UsbInfo usb;
+            usb.vid = *vid;
+            usb.pid = *pid;
+            usb.serial = opt_str_arg(req, "serial").value_or("");
+            synth.usb = std::move(usb);
+            return probe_device_report(synth, req);
+        }
+        const auto now = options_.devices ? options_.devices() : list_devices();
+        for (const auto& d : now) {
+            if (d.kind == DeviceKind::Probe) return probe_device_report(d, req);
+        }
+
+        const Family* method_family = nullptr;
+        std::string project_problem;
+        if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
+            try {
+                const auto project = project_of(*id);
+                if (project.origin != Origin::None) {
+                    std::string why;
+                    if (const auto info = read_project(project.dir, why)) {
+                        const std::string env = opt_str_arg(req, "env").value_or(project.env.empty() ? info->default_env : project.env);
+                        std::string fam_why;
+                        method_family = family_for_project(*info, env, fam_why);
+                        if (!method_family) {
+                            for (const Family* f : all_families()) {
+                                if (f->handles_project(*info, env)) {
+                                    method_family = f;
+                                    break;
+                                }
+                            }
+                            project_problem = fam_why;
+                        }
+                    } else {
+                        project_problem = why;
+                    }
+                }
+            } catch (const std::exception& e) {
+                project_problem = e.what();
+            }
+        }
+        const auto targets = probe_targets(method_family);
+        const ProbeSampleMode mode = method_family ? method_family->probe_sample_mode() : ProbeSampleMode::Auto;
+        return {
+            {"kind", nullptr},
+            {"methods", methods_json(methods(ProbeResult{}, method_family, find_pio(options_.home).has_value(), project_problem))},
+            {"probe_targets", probe_targets_json(targets)},
+            {"probe_sample_mode", std::string(probe_sample_mode_name(mode))},
+            {"probe_rate_hint", probe_rate_hint(mode)},
+            {"openocd", nullptr},
+            {"probe_config", nullptr},
+            {"error", "connect a debug probe (JTAG/SWD)"},
+        };
     }
 
     json start_live(std::unique_ptr<ByteSource> source, RunMeta meta, fs::path elf, fs::path project) {
         auto writer = store_.create(std::move(meta));
         json run = writer.meta();
-        set_session(Session::live(std::move(source), std::move(writer), std::move(elf), std::move(project), emitter()));
+        set_session(Session::live(
+            std::move(source), std::move(writer), std::move(elf), std::move(project), emitter(), kLargeRunBytes, options_.home));
         return {{"run", std::move(run)}};
+    }
+
+    json probe_run(const json& req) {
+        if (busy_) throw std::runtime_error("busy: a build or flash is running");
+        if (live()) throw std::runtime_error("a run is live: stop it first");
+        const auto dev = resolve_probe(device_arg(req));
+        auto settings = settings_arg(req);
+        if (settings.env.empty()) {
+            if (const auto env_arg = opt_str_arg(req, "env"); env_arg && !env_arg->empty()) settings.env = *env_arg;
+        }
+        if (settings.target_cfg.empty()) {
+            if (const auto t_arg = opt_str_arg(req, "target_cfg"); t_arg && !t_arg->empty()) settings.target_cfg = *t_arg;
+        }
+        if (settings.elf.empty()) {
+            if (const auto e_arg = opt_str_arg(req, "elf"); e_arg && !e_arg->empty()) settings.elf = os::from_utf8(*e_arg);
+        }
+
+        std::string project_id;
+        fs::path project_dir, project_elf;
+        std::optional<ProjectInfo> project_info;
+        std::string project_env;
+        if (const auto id = opt_str_arg(req, "project"); id && !id->empty()) {
+            const auto project = project_of(*id);
+            project_id = project.id;
+            project_dir = project.dir;
+            project_elf = project.elf;
+            project_env = project.env;
+            if (project.origin != Origin::None) {
+                std::string why;
+                project_info = read_project(project.dir, why);
+                if (!project_info) throw std::runtime_error(why);
+            }
+        }
+
+        RunSettings plan_settings = settings;
+        if (plan_settings.env.empty() && !project_env.empty()) plan_settings.env = project_env;
+
+        const auto plan = make_probe_plan(ProbePlanRequest{
+            .home = options_.home,
+            .probe = dev,
+            .project = project_info,
+            .project_elf = project_elf,
+            .settings = plan_settings,
+            .assume_openocd_available = bool(options_.open_probe),
+        });
+
+        OpenOcdSourceOptions ocd_opts;
+        ocd_opts.sample_mode = plan.config.sample_mode;
+        ocd_opts.arch = plan.config.target_arch;
+        ocd_opts.elf = plan.elf;
+        if (req.contains("poll_hz") && !req["poll_hz"].is_null()) {
+            if (!req["poll_hz"].is_number_integer()) throw std::runtime_error("invalid argument: poll_hz");
+            const auto v = req["poll_hz"].get<long long>();
+            if (v < 0 || v > 65535) throw std::runtime_error("invalid argument: poll_hz out of range");
+            ocd_opts.poll_hz = static_cast<std::uint16_t>(v);
+        }
+        ocd_opts.label = plan.config.target_cfg.empty()
+                             ? plan.config.interface_desc
+                             : std::format("{} ({})", plan.config.interface_desc, plan.config.target_cfg);
+
+        std::unique_ptr<ByteSource> source;
+        if (options_.open_probe) {
+            source = options_.open_probe(plan.config, ocd_opts);
+            if (!source) throw std::runtime_error("probe source factory returned null");
+        } else {
+            source = OpenOcdSource::start_with_config(*plan.openocd, plan.config, ocd_opts);
+        }
+
+        remember_settings(project_id, settings);
+        return start_live(std::move(source),
+                          {.name = str_arg(req, "name"),
+                           .project = os::to_utf8(project_dir),
+                           .env = plan.env,
+                           .port = dev.name.empty() ? dev.title : dev.name,
+                           .device_id = dev.id,
+                           .project_id = project_id,
+                           .settings = settings},
+                          plan.elf,
+                          std::move(project_dir));
     }
 
     json attach(const json& req) {
@@ -723,6 +974,81 @@ private:
             result["caps"] = {{"memcheck", false}};
             return result;
         }
+        if (mode == "no_flash") {
+            const auto dev = resolve_probe(device_arg(req));
+            const auto settings = settings_arg(req);
+            std::optional<ProjectInfo> project_info;
+            std::string project_err;
+            if (project.origin != Origin::None) {
+                project_info = read_project(project.dir, project_err);
+            }
+            if (project_info) {
+                detected.env = project.env.empty() ? project_info->default_env : project.env;
+                if (const Family* fam = resolve_probe_family(dev, &*project_info, detected.env)) {
+                    detected.target_cfg = fam->openocd_target_cfg(*project_info, detected.env);
+                }
+            }
+            const std::string effective_env = !settings.env.empty() ? settings.env : detected.env;
+            const auto insp = inspect_probe(options_.home,
+                                            dev,
+                                            nullptr,
+                                            project_info ? &*project_info : nullptr,
+                                            effective_env,
+                                            settings.target_cfg,
+                                            bool(options_.open_probe));
+            std::string elf_hint;
+            if (!project.elf.empty()) {
+                elf_hint = os::to_utf8(project.elf);
+            } else if (project_info) {
+                const auto arch = insp.config.config
+                                      ? insp.config.config->target_arch
+                                      : (insp.family ? insp.family->probe_target_arch(settings.target_cfg) : std::nullopt);
+                if (const auto found = find_probe_elf(*project_info, effective_env, arch); !found.empty()) {
+                    elf_hint = os::to_utf8(found);
+                }
+            }
+
+            result["detected"] = detected;
+            result["caps"] = {{"memcheck", false}};
+            result["envs"] = project_info ? json(project_info->envs) : json::array();
+            result["elf_hint"] = elf_hint;
+            result["probe_targets"] = probe_targets_json(insp.targets);
+            result["probe_sample_mode"] = std::string(probe_sample_mode_name(insp.sample_mode));
+            result["probe_rate_hint"] = insp.rate_hint;
+            result["openocd"] = openocd_status_json(insp);
+            result["probe_config"] = insp.config.config ? probe_config_json(*insp.config.config) : json(nullptr);
+            result["note"] = "No firmware will be modified or flashed. Profiles flat PCs via debug probe.";
+            result["summary"] = "";
+            result["warning"] = "";
+            if (!project_err.empty()) {
+                result["error"] = project_err;
+                return result;
+            }
+            try {
+                RunSettings plan_settings = settings;
+                if (plan_settings.env.empty() && !detected.env.empty()) plan_settings.env = detected.env;
+                const auto plan = make_probe_plan(ProbePlanRequest{
+                    .home = options_.home,
+                    .probe = dev,
+                    .project = project_info,
+                    .project_elf = project.elf,
+                    .settings = plan_settings,
+                    .assume_openocd_available = bool(options_.open_probe),
+                });
+                result["commands"] = {{"openocd", plan.command_text},
+                                      {"package", plan.config.package},
+                                      {"interface", plan.config.interface_desc},
+                                      {"target_cfg", plan.config.target_cfg},
+                                      {"env", json::array()}};
+                result["summary"] = plan.summary;
+                result["note"] = plan.note;
+                if (!plan.elf.empty()) result["elf_hint"] = os::to_utf8(plan.elf);
+            } catch (const std::exception& e) {
+                result["error"] = e.what();
+            }
+            return result;
+        }
+        if (mode != "new_run") throw std::runtime_error("unknown mode: " + mode);
         require_buildable(project);
         const auto dev = resolve_serial(device_arg(req));
         const auto p = prepare_project(options_.home, project.dir, project.env, dev.path);

@@ -31,12 +31,17 @@ std::string large_run_notice(std::uint64_t threshold_bytes, std::uint64_t curren
 }
 } // namespace
 
-Session::Session(Emit emit, fs::path elf, fs::path project, bool search_elf)
-    : emit_(std::move(emit)), elf_(std::move(elf)), project_(std::move(project)), search_elf_(search_elf) {}
+Session::Session(Emit emit, fs::path elf, fs::path project, bool search_elf, fs::path home)
+    : emit_(std::move(emit)),
+      elf_(std::move(elf)),
+      project_(std::move(project)),
+      search_elf_(search_elf),
+      home_(std::move(home)) {}
 
 std::unique_ptr<Session> Session::live(std::unique_ptr<ByteSource> source, RunWriter writer, fs::path elf,
-                                       fs::path project, Emit emit, std::uint64_t large_run_bytes) {
-    std::unique_ptr<Session> s(new Session(std::move(emit), std::move(elf), std::move(project), true));
+                                       fs::path project, Emit emit, std::uint64_t large_run_bytes, fs::path home) {
+    std::unique_ptr<Session> s(
+        new Session(std::move(emit), std::move(elf), std::move(project), true, std::move(home)));
     s->run_id_ = writer.meta().id;
     s->desired_rate_hz_ = writer.meta().settings
         ? static_cast<std::uint16_t>(std::min(writer.meta().settings->rate_hz, 65535u))
@@ -49,10 +54,10 @@ std::unique_ptr<Session> Session::live(std::unique_ptr<ByteSource> source, RunWr
     return s;
 }
 
-std::unique_ptr<Session> Session::replay(const RunStore& store, std::string_view id, Emit emit) {
+std::unique_ptr<Session> Session::replay(const RunStore& store, std::string_view id, Emit emit, fs::path home) {
     const auto meta = store.get(id);
     if (!meta) return nullptr;
-    std::unique_ptr<Session> s(new Session(std::move(emit), store.elf(id), {}, false));
+    std::unique_ptr<Session> s(new Session(std::move(emit), store.elf(id), {}, false, std::move(home)));
     s->run_id_ = meta->id;
     for (const auto& chunk : store.chunks(id)) s->on_bytes(chunk.bytes, Aggregator::Ms{chunk.t_ms});
     return s;
@@ -119,12 +124,16 @@ void Session::read_loop(std::unique_ptr<ByteSource> source) {
         }
     }
     record([&](RunWriter& w) { w.finish(static_cast<std::uint64_t>(elapsed().count())); });
+    const std::string source_err = (ended && owned) ? owned->last_error() : std::string{};
     {
         std::scoped_lock lock(source_mutex_);
         active_source_ = nullptr;
         live_ = false;
     }
-    if (ended) emit_({{"event", "ended"}, {"run", run_id_}, {"reason", "eof"}});
+    if (ended) {
+        if (!source_err.empty()) notice(source_err);
+        emit_({{"event", "ended"}, {"run", run_id_}, {"reason", "eof"}});
+    }
 }
 
 void Session::on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t) {
@@ -215,7 +224,8 @@ void Session::setup_target(Arch arch, std::uint8_t ncores, std::uint32_t cpu_hz,
         notice(std::format("no addr2line found for {}: functions show as raw addresses", arch_name(arch)));
     std::vector<ExtraElf> extras;
     if (const Family* family = family_for_arch(arch)) {
-        extras = family->extra_symbol_files(os::home_dir(), arch, elf);
+        const fs::path sym_home = home_.empty() ? os::home_dir() : home_;
+        extras = family->extra_symbol_files(sym_home, arch, elf);
     }
     if (!symbols_) {
         symbols_.emplace(elf, tool, std::move(extras));

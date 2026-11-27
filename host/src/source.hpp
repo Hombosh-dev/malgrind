@@ -31,6 +31,8 @@ public:
     [[nodiscard]] virtual bool write(std::span<const std::uint8_t>) { return false; }
     // Short human-readable label for logs and diagnostics (e.g. port name, "stdin", "memory").
     [[nodiscard]] virtual std::string describe() const = 0;
+    // Optional diagnostic explaining why the stream ended prematurely.
+    [[nodiscard]] virtual std::string last_error() const { return {}; }
 
 protected:
     ByteSource() = default;

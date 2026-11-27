@@ -4,7 +4,15 @@
   import RunSettingsPanel from '../components/RunSettings.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import { accessProblem, boardDetail, boardFamily } from '../lib/boards';
+  import {
+    accessProblem,
+    boardDetail,
+    boardFamily,
+    canOpenMethod,
+    defaultMethodForDevice,
+    probeDetail,
+    probeTileStatus,
+  } from '../lib/boards';
   import type { Sidecar } from '../lib/sidecar';
   import type { Device, DevicesInfo, Method, Probe, ProjectMeta, RunMeta, RunSettings } from '../lib/types';
 
@@ -27,19 +35,19 @@
 
   let step = $state<'board' | 'mode' | 'process'>('board');
   let tiles = $state<Tile[]>([]);
-  let probes = $state<Device[]>([]);
   let scanned = $state(false);
   let chosen = $state<Tile | null>(null);
   let lines = $state<string[]>([]);
   let building = $state(false);
+  let starting = $state(false);
   let error = $state('');
   let notice = $state('');
-  let setting = $state<'attach' | 'new_run' | null>(null); // the settings panel is open for this way of looking at the board
+  let setting = $state<'attach' | 'new_run' | 'no_flash' | null>(null); // the settings panel is open for this way of looking at the board
   let projectTitle = $state(untrack(() => project.name)); // follows a rename made in the panel
   let scanId = 0;
 
-  // One tile per serial port, shown at once; each port is then listened to in turn (2 s, read-only) to see whether the agent runs.
-  // A port this user may not open is not listened to: its tile offers to grant access instead.
+  // One tile per device (serial ports and debug probes), shown at once; each accessible port or probe is then inspected in turn.
+  // A serial port this user may not open is not listened to: its tile offers to grant access instead.
   async function scan() {
     const mine = ++scanId;
     scanned = false;
@@ -48,10 +56,15 @@
       const info = await sidecar.call<DevicesInfo>('devices');
       if (mine !== scanId) return;
       const previousId = chosen?.id;
-      probes = info.devices.filter((d) => d.kind === 'probe');
-      tiles = info.devices
-        .filter((d) => d.kind === 'serial')
-        .map((d) => ({ ...d, probe: null, error: '', chip: '', identifying: false, granting: false, grantError: '' }));
+      tiles = info.devices.map((d) => ({
+        ...d,
+        probe: null,
+        error: '',
+        chip: '',
+        identifying: false,
+        granting: false,
+        grantError: '',
+      }));
       if (previousId) {
         const match = tiles.find((t) => t.id === previousId) ?? null;
         if (match) chosen = match;
@@ -59,10 +72,15 @@
       }
       scanned = true;
       for (const tile of tiles) {
-        if (!tile.access.ok) continue;
+        if (tile.kind === 'serial' && !tile.access.ok) continue;
         try {
           const probe = await sidecar.call<Probe>('probe', { device: tile.id, project: project.id });
-          if (mine === scanId) tile.probe = probe;
+          if (mine === scanId) {
+            tile.probe = probe;
+            if (chosen?.id === tile.id && step === 'mode' && setting === null) {
+              setting = defaultMethodForDevice(tile, probe);
+            }
+          }
         } catch (e) {
           if (mine === scanId) tile.error = String(e instanceof Error ? e.message : e);
         }
@@ -122,26 +140,32 @@
   const methods = $derived(
     order.map((id) => chosen?.probe?.methods.find((m) => m.id === id) ?? { id, available: false, why: 'unknown' })
   );
-  const chosenLine = $derived(chosen ? [chosen.title, boardDetail(chosen) || chosen.name].filter(Boolean).join(' · ') : '');
+  const chosenLine = $derived(
+    chosen
+      ? chosen.kind === 'probe'
+        ? [chosen.title || chosen.name, probeDetail(chosen)].filter(Boolean).join(' · ')
+        : [chosen.title, boardDetail(chosen) || chosen.name].filter(Boolean).join(' · ')
+      : ''
+  );
 
   function choose(tile: Tile) {
     chosen = tile;
     error = '';
-    setting = null;
+    setting = defaultMethodForDevice(tile, tile.probe);
     step = 'mode';
   }
 
-  // Both ways open the settings panel first (shown before every run, so a run can be made differently from the last one). It
-  // names the board, which catches a click on the wrong one of two plugged-in boards; Build & flash replaces what is on the board.
+  // Selecting a method opens the settings panel first (shown before every run, so a run can be made differently from the last one).
   function pick(method: Method) {
-    if (!chosen || !method.available || (method.id !== 'attach' && method.id !== 'new_run')) return;
+    if (!chosen || !canOpenMethod(chosen, chosen.probe, method)) return;
     error = '';
     setting = method.id;
   }
 
   async function start(args: { projectName: string; runName: string; settings: RunSettings }) {
-    if (!chosen || !setting) return;
+    if (!chosen || !setting || starting) return;
     const mode = setting;
+    starting = true;
     error = '';
     try {
       if (args.projectName !== projectTitle) {
@@ -153,12 +177,20 @@
         building = true;
         lines = [];
       }
-      const { run } = await sidecar.call<{ run: RunMeta }>(mode, { project: project.id, device: chosen.id, name: args.runName, settings: args.settings });
+      const cmd = mode === 'no_flash' ? 'probe_run' : mode;
+      const { run } = await sidecar.call<{ run: RunMeta }>(cmd, {
+        project: project.id,
+        device: chosen.id,
+        name: args.runName,
+        settings: args.settings,
+      });
       onRun(run, true);
     } catch (e) {
       error = String(e instanceof Error ? e.message : e);
+    } finally {
+      building = false;
+      starting = false;
     }
-    building = false;
   }
 </script>
 
@@ -186,8 +218,8 @@
         <button class="btn ghost small" onclick={scan}>Rescan</button>
       </div>
 
-      {#if scanned && tiles.length === 0 && probes.length === 0}
-        <p class="empty">No board found. Connect it with a USB cable, then press Rescan.</p>
+      {#if scanned && tiles.length === 0}
+        <p class="empty">No board or debug probe found. Connect one with a USB cable, then press Rescan.</p>
       {/if}
 
       {#if notice}<p class="notice" role="status">{notice}</p>{/if}
@@ -195,48 +227,65 @@
       <div class="tiles">
         {#each tiles as tile (tile.id)}
           {@const family = boardFamily(tile, tile.probe)}
-          <div class="tile" class:wait={tile.access.ok && !tile.probe && !tile.error} class:denied={!tile.access.ok}>
-            <button class="pick" disabled={!tile.probe || !tile.access.ok} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} on ${tile.name}`}>
-              <span class="chipicon" aria-hidden="true">▦</span>
-              <span class="t">
-                <b>{tile.title || tile.name}</b>
-                {#if family}<span class="family" class:muted={family.tentative}>{family.text}</span>{/if}
-                <span class="muted">{tile.name}</span>
-                {#if boardDetail(tile)}<span class="muted detail">{boardDetail(tile)}</span>{/if}
-              </span>
-              <span class="status">
-                {#if !tile.access.ok}<span class="bad">{accessProblem(tile)}</span>
-                {:else if tile.error}<span class="bad">{tile.error}</span>
-                {:else if !tile.probe}Listening for the agent…
-                {:else if tile.probe.busy}<span class="bad">Busy: another program uses this port</span>
-                {:else if tile.probe.agent}<span class="good">● malgrind agent running · {tile.probe.arch} · {tile.probe.ncores} cores · {tile.probe.cpu_mhz} MHz</span>
-                {:else}No malgrind agent detected{/if}
-              </span>
-            </button>
-            {#if !tile.access.ok && tile.access.fixable}
-              <div class="grant">
-                <button class="btn small" onclick={() => grant(tile)} disabled={tile.granting}>{tile.granting ? 'Waiting for your password…' : 'Grant access…'}</button>
-                <span class="muted small">asks for your password once, in the system's own window</span>
-                {#if tile.grantError}<pre class="bad">{tile.grantError}</pre>{/if}
-              </div>
-            {:else}
-              <div class="foot">
-                {#if tile.chip}<span class="muted chip">{tile.chip}</span>{/if}
-                <button class="link" onclick={() => identify(tile)} disabled={tile.identifying || !tile.probe || tile.probe.busy} title="Asks the chip for its name. This resets the board.">
-                  {tile.identifying ? 'Asking the chip…' : 'Identify chip (resets the board)'}
-                </button>
-              </div>
-            {/if}
-          </div>
-        {/each}
-        {#each probes as probe (probe.id)}
-          <div class="tile off" aria-disabled="true">
-            <div class="pick">
-              <span class="chipicon" aria-hidden="true">⌁</span>
-              <span class="t"><b>{probe.title || probe.name}</b><span class="muted">debug probe</span></span>
-              <span class="status">Found. Profiling through a probe is in development.</span>
+          {#if tile.kind === 'serial'}
+            <div class="tile" class:wait={tile.access.ok && !tile.probe && !tile.error} class:denied={!tile.access.ok}>
+              <button class="pick" disabled={!tile.probe || !tile.access.ok} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} on ${tile.name}`}>
+                <span class="tile-head">
+                  <span class="chipicon" aria-hidden="true">▦</span>
+                  <span class="kind-pill">Serial port</span>
+                </span>
+                <span class="t">
+                  <b>{tile.title || tile.name}</b>
+                  {#if family}<span class="family" class:muted={family.tentative}>{family.text}</span>{/if}
+                  <span class="muted">{tile.name}</span>
+                  {#if boardDetail(tile)}<span class="muted detail">{boardDetail(tile)}</span>{/if}
+                </span>
+                <span class="status">
+                  {#if !tile.access.ok}<span class="bad">{accessProblem(tile)}</span>
+                  {:else if tile.error}<span class="bad">{tile.error}</span>
+                  {:else if !tile.probe}Listening for the agent…
+                  {:else if tile.probe.busy}<span class="bad">Busy: another program uses this port</span>
+                  {:else if tile.probe.agent}<span class="good">● malgrind agent running · {tile.probe.arch} · {tile.probe.ncores} cores · {tile.probe.cpu_mhz} MHz</span>
+                  {:else}No malgrind agent detected{/if}
+                </span>
+              </button>
+              {#if !tile.access.ok && tile.access.fixable}
+                <div class="grant">
+                  <button class="btn small" onclick={() => grant(tile)} disabled={tile.granting}>{tile.granting ? 'Waiting for your password…' : 'Grant access…'}</button>
+                  <span class="muted small">asks for your password once, in the system's own window</span>
+                  {#if tile.grantError}<pre class="bad">{tile.grantError}</pre>{/if}
+                </div>
+              {:else}
+                <div class="foot">
+                  {#if tile.chip}<span class="muted chip">{tile.chip}</span>{/if}
+                  <button class="link" onclick={() => identify(tile)} disabled={tile.identifying || !tile.probe || tile.probe.busy} title="Asks the chip for its name. This resets the board.">
+                    {tile.identifying ? 'Asking the chip…' : 'Identify chip (resets the board)'}
+                  </button>
+                </div>
+              {/if}
             </div>
-          </div>
+          {:else}
+            {@const st = probeTileStatus(tile.probe, tile.error)}
+            <div class="tile" class:wait={!tile.probe && !tile.error}>
+              <button class="pick" disabled={!tile.probe && !tile.error} onclick={() => choose(tile)} aria-label={`Use ${tile.title || tile.name} debug probe`}>
+                <span class="tile-head">
+                  <span class="chipicon" aria-hidden="true">⌁</span>
+                  <span class="kind-pill probe">Debug probe</span>
+                </span>
+                <span class="t">
+                  <b>{tile.title || tile.name}</b>
+                  {#if family}<span class="family" class:muted={family.tentative}>{family.text}</span>{/if}
+                  {#if probeDetail(tile)}<span class="muted detail">{probeDetail(tile)}</span>{/if}
+                </span>
+                <span class="status">
+                  <span class:good={st.tone === 'good'} class:bad={st.tone === 'bad'}>{st.text}</span>
+                </span>
+              </button>
+              <div class="foot">
+                <span class="muted chip">No flashing · OpenOCD</span>
+              </div>
+            </div>
+          {/if}
         {/each}
       </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -247,11 +296,11 @@
       <p class="muted">{chosenLine}</p>
       <div class="cards">
         {#each methods as m (m.id)}
-          <button class="card" class:off={!m.available} class:picked={m.id === setting} disabled={!m.available} onclick={() => pick(m)}>
+          {@const enabled = canOpenMethod(chosen, chosen.probe, m)}
+          <button class="card" class:off={!enabled} class:picked={m.id === setting} disabled={!enabled} onclick={() => pick(m)}>
             <b>{labels[m.id].title}</b>
-            {#if m.id === 'no_flash'}<span class="soon">in development</span>{/if}
             <span class="muted text">{labels[m.id].text}</span>
-            {#if !m.available && m.id !== 'no_flash'}<span class="why">{m.why}</span>{/if}
+            {#if !m.available && m.why}<span class="why">{m.why}</span>{/if}
           </button>
         {/each}
       </div>
@@ -263,6 +312,7 @@
             device={chosen.id}
             mode={setting}
             boardLine={chosenLine}
+            busy={starting}
             onStart={start}
             onCancel={() => (setting = null)}
           />
@@ -292,11 +342,13 @@
   .steps li.on { background: var(--accent); color: var(--accent-fg); font-weight: 600; }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 18px; }
   .tile { display: flex; flex-direction: column; border: 1.5px solid var(--line); border-radius: 16px; background: var(--panel); overflow: hidden; }
-  .tile:not(.off):hover { border-color: var(--accent); box-shadow: 0 6px 24px #ff5a1f22; }
-  .tile.off { opacity: 0.55; }
+  .tile:hover { border-color: var(--accent); box-shadow: 0 6px 24px #ff5a1f22; }
   .tile.wait { opacity: 0.8; }
   .pick { display: flex; flex-direction: column; gap: 8px; padding: 20px; text-align: left; background: none; border: 0; flex: 1; }
   button.pick:disabled { cursor: default; }
+  .tile-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; }
+  .kind-pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
+  .kind-pill.probe { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-weight: 600; }
   .chipicon { font-size: 34px; color: var(--accent); line-height: 1; }
   .t { display: flex; flex-direction: column; }
   .t b { font-size: 16px; }
@@ -316,7 +368,6 @@
   .card.off { opacity: 0.75; cursor: default; }
   .text { font-size: 13px; }
   .why { font-size: 12.5px; color: var(--danger); margin-top: 4px; }
-  .soon { align-self: flex-start; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--line); color: var(--muted); }
   .error { color: var(--danger); }
   .detail { font-size: 12px; }
   .tile.denied { border-color: var(--danger); }

@@ -65,7 +65,7 @@ public:
     [[nodiscard]] std::optional<std::size_t> read(std::span<std::uint8_t> out, int timeout_ms = 200) override;
     [[nodiscard]] std::string describe() const override;
 
-    [[nodiscard]] std::string last_error() const;
+    [[nodiscard]] std::string last_error() const override;
     [[nodiscard]] ProbeSampleMode effective_sample_mode() const noexcept;
     [[nodiscard]] std::optional<Arch> detected_arch() const noexcept;
     [[nodiscard]] unsigned detected_cores() const noexcept;

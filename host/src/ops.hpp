@@ -7,8 +7,10 @@
 #include "github.hpp"
 #include "malgrind/profiler.hpp"
 #include "malgrind/target_info.hpp"
+#include "openocd.hpp"
 #include "os/serial.hpp"
 #include "pio.hpp"
+#include "probe_config.hpp"
 #include "source.hpp"
 
 #include <cstdint>
@@ -99,9 +101,46 @@ struct Method {
     bool available = false;
     std::string why; // empty when available
 };
+
+struct ProbeMethodContext {
+    bool has_probe = false;
+    bool available = false;
+    std::string why{};
+    bool serial_device = true; // false when inspecting a debug probe device directly
+};
+
+struct ProbeInspection {
+    const Family* family = nullptr;
+    ProbeConfigResult config;
+    std::optional<OpenOcdInstall> openocd;
+    std::string openocd_package;
+    bool openocd_available = false;
+    std::vector<ProbeTargetOption> targets;
+    ProbeSampleMode sample_mode = ProbeSampleMode::Auto;
+    std::string rate_hint;
+    std::string error;
+
+    [[nodiscard]] ProbeMethodContext method_context(bool serial_device = false) const;
+};
+
+// Chip-agnostic target options for OpenOCD: `family->probe_target_options()` when non-null, else aggregated from `all_families()`.
+[[nodiscard]] std::vector<ProbeTargetOption> probe_targets(const Family* family = nullptr);
+[[nodiscard]] std::string_view probe_sample_mode_name(ProbeSampleMode mode) noexcept;
+[[nodiscard]] std::string probe_rate_hint(ProbeSampleMode mode);
+
+// Inspects a debug probe device with optional family/project/env/target override and checks OpenOCD availability.
+[[nodiscard]] ProbeInspection inspect_probe(const std::filesystem::path& home,
+                                            const Device& probe,
+                                            const Family* family = nullptr,
+                                            const ProjectInfo* project = nullptr,
+                                            std::string_view env = {},
+                                            std::string_view target_cfg_override = {},
+                                            bool assume_openocd_available = false);
+
 // `family`: target family for building the agent (nullable); `project_problem`: why the chosen project cannot be used
-// with the agent (empty: fine, or none chosen yet).
+// with the agent (empty: fine, or none chosen yet); `probe_ctx`: debug probe context for `no_flash`.
 [[nodiscard]] std::vector<Method> methods(const ProbeResult& probe, const Family* family, bool have_pio,
-                                          const std::string& project_problem);
+                                          const std::string& project_problem,
+                                          const ProbeMethodContext& probe_ctx = {});
 
 } // namespace malgrind::host

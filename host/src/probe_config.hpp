@@ -38,6 +38,12 @@ struct ProbeConfigResult {
     std::string error;                      // Non-empty explanation when config is nullopt
 };
 
+[[nodiscard]] const Family* resolve_probe_family(const Device& probe,
+                                                 const ProjectInfo* project = nullptr,
+                                                 std::string_view env = {},
+                                                 std::string_view target_cfg_override = {},
+                                                 const Family* explicit_family = nullptr);
+
 [[nodiscard]] ProbeConfigResult resolve_probe_config(const ProbeConfigRequest& req);
 
 [[nodiscard]] ProbeConfigResult resolve_probe_config(const Device& probe,

@@ -38,9 +38,11 @@ public:
     // firmware ELF under `project` when the first frame names the architecture; with no project, names stay raw addresses.
     [[nodiscard]] static std::unique_ptr<Session> live(std::unique_ptr<ByteSource> source, RunWriter writer,
                                                        std::filesystem::path elf, std::filesystem::path project,
-                                                       Emit emit, std::uint64_t large_run_bytes = kLargeRunBytes);
+                                                       Emit emit, std::uint64_t large_run_bytes = kLargeRunBytes,
+                                                       std::filesystem::path home = {});
     // A stored run, fully loaded before this returns. nullptr if there is no such run.
-    [[nodiscard]] static std::unique_ptr<Session> replay(const RunStore& store, std::string_view id, Emit emit);
+    [[nodiscard]] static std::unique_ptr<Session> replay(const RunStore& store, std::string_view id, Emit emit,
+                                                         std::filesystem::path home = {});
 
     ~Session(); // live: stops the thread and closes the run (writer.finish)
     Session(const Session&) = delete;
@@ -84,7 +86,8 @@ public:
     [[nodiscard]] std::vector<NamedStack> named_stacks(std::optional<unsigned> core = std::nullopt) const;
 
 private:
-    Session(Emit emit, std::filesystem::path elf, std::filesystem::path project, bool search_elf);
+    Session(Emit emit, std::filesystem::path elf, std::filesystem::path project, bool search_elf,
+            std::filesystem::path home);
     void on_bytes(std::span<const std::uint8_t> bytes, Aggregator::Ms t); // decode, then aggregate
     void ensure_memcheck();
     void setup_target(Arch arch, std::uint8_t ncores, std::uint32_t cpu_hz, std::uint16_t rate_hz,
@@ -98,6 +101,7 @@ private:
     Emit emit_;
     std::filesystem::path elf_, project_;
     bool search_elf_;
+    std::filesystem::path home_;
     std::string run_id_;
     std::optional<RunWriter> writer_; // only touched by the reader thread (and by replay before it returns)
     bool recording_ = true;

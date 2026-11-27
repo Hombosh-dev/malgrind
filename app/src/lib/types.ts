@@ -8,6 +8,30 @@ export interface RunSettings {
   elf: string;
   build_command: string; // replaces the detected build command line
   upload_command: string; // replaces the detected upload command line
+  target_cfg?: string; // OpenOCD target/board config for debug probe runs
+}
+
+export interface ProbeTargetOption {
+  cfg: string;
+  label: string;
+}
+
+export type ProbeSampleMode = 'auto' | 'dwt_pcsr' | 'halt_resume';
+
+export interface OpenOcdStatus {
+  package: string;
+  found: boolean;
+  exe: string | null;
+  scripts: string | null;
+}
+
+export interface ProbeConfig {
+  package: string;
+  interface_desc: string;
+  target_cfg: string;
+  openocd_args: string[];
+  sample_mode: ProbeSampleMode;
+  target_arch: string | null;
 }
 
 // What the settings panel needs before a run (`run_plan`).
@@ -18,7 +42,22 @@ export interface RunPlan {
   envs?: string[];
   elf_hint?: string; // where the build puts its ELF
   detected_commands?: { build: string; upload: string };
-  commands: { build: string; upload: string; env: string[] } | null; // for the settings that were sent; null when `error` is set
+  commands: {
+    build?: string;
+    upload?: string;
+    openocd?: string;
+    package?: string;
+    interface?: string;
+    target_cfg?: string;
+    env: string[];
+  } | null; // for the settings that were sent; null when `error` is set
+  probe_targets?: ProbeTargetOption[];
+  probe_sample_mode?: ProbeSampleMode;
+  probe_rate_hint?: string;
+  openocd?: OpenOcdStatus;
+  probe_config?: ProbeConfig | null;
+  summary?: string;
+  note?: string;
   error: string; // the field that does not hold up, in words
   warning?: string; // allowed, but probably not meant (a typed upload line that names no device)
 }
@@ -58,6 +97,7 @@ export interface Method {
 }
 
 export interface Probe {
+  kind?: 'serial' | 'probe';
   busy: boolean;
   agent: boolean;
   denied: boolean; // this user may not open the port (not in its group)
@@ -66,6 +106,14 @@ export interface Probe {
   arch?: string;
   ncores?: number;
   cpu_mhz?: number;
+  caps?: number;
+  state?: number;
+  openocd?: OpenOcdStatus;
+  probe_config?: ProbeConfig | null;
+  probe_targets?: ProbeTargetOption[];
+  probe_sample_mode?: ProbeSampleMode;
+  probe_rate_hint?: string;
+  error?: string;
   methods: Method[];
 }
 

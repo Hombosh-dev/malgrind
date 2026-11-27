@@ -3,6 +3,7 @@
 #include "backup.hpp"
 #include "discover.hpp"
 #include "os/process.hpp"
+#include "settings.hpp"
 #include "store.hpp"
 #include "wire.hpp"
 
@@ -11,6 +12,7 @@
 #include <chrono>
 #include <format>
 #include <optional>
+#include <set>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -305,27 +307,129 @@ fs::path clone_project(const GithubRepo& repo, const fs::path& dest, const LineF
     return *project;
 }
 
+ProbeMethodContext ProbeInspection::method_context(bool serial_device) const {
+    return {
+        .has_probe = config.error != "selected device is not a debug probe",
+        .available = config.config.has_value() && openocd_available && error.empty(),
+        .why = error,
+        .serial_device = serial_device,
+    };
+}
+
+std::vector<ProbeTargetOption> probe_targets(const Family* family) {
+    if (family != nullptr) return family->probe_target_options();
+    std::vector<ProbeTargetOption> out;
+    std::set<std::string> seen;
+    for (const Family* f : all_families()) {
+        for (const auto& opt : f->probe_target_options()) {
+            if (seen.insert(opt.cfg).second) out.push_back(opt);
+        }
+    }
+    return out;
+}
+
+std::string_view probe_sample_mode_name(ProbeSampleMode mode) noexcept {
+    switch (mode) {
+        case ProbeSampleMode::DwtPcsr: return "dwt_pcsr";
+        case ProbeSampleMode::HaltResume: return "halt_resume";
+        case ProbeSampleMode::Auto:
+        default: return "auto";
+    }
+}
+
+std::string probe_rate_hint(ProbeSampleMode mode) {
+    switch (mode) {
+        case ProbeSampleMode::DwtPcsr:
+            return "DWT PCSR sampling (non-intrusive, no target halt; typically 200+ samples/s)";
+        case ProbeSampleMode::HaltResume:
+            return "Halt/resume sampling (pauses core briefly per sample; typically 10–50 samples/s)";
+        case ProbeSampleMode::Auto:
+        default:
+            return "Auto (uses non-intrusive DWT PCSR 200+ samples/s if supported, else halt/resume ~10–50 samples/s)";
+    }
+}
+
+ProbeInspection inspect_probe(const fs::path& home,
+                              const Device& probe,
+                              const Family* family,
+                              const ProjectInfo* project,
+                              std::string_view env,
+                              std::string_view target_cfg_override,
+                              bool assume_openocd_available) {
+    ProbeInspection out;
+    out.config = resolve_probe_config(probe, family, project, env, target_cfg_override);
+
+    std::string effective_env;
+    if (project != nullptr) {
+        effective_env = env.empty() ? project->default_env : std::string(env);
+        if (effective_env.empty() && !project->envs.empty()) effective_env = project->envs.front();
+    }
+    std::string sanitize_err;
+    const auto sanitized_target = sanitize_target_cfg(target_cfg_override, sanitize_err);
+    const std::string effective_target = sanitized_target.value_or(std::string{});
+    out.family = resolve_probe_family(probe, project, effective_env, effective_target, family);
+    out.targets = probe_targets(out.family);
+
+    if (out.config.config) {
+        out.openocd_package = out.config.config->package;
+        out.sample_mode = out.config.config->sample_mode;
+    } else {
+        out.openocd_package = out.family ? out.family->openocd_package() : std::string("tool-openocd");
+        if (out.openocd_package.empty()) out.openocd_package = "tool-openocd";
+        std::string resolved_cfg = effective_target;
+        if (resolved_cfg.empty() && out.family != nullptr && project != nullptr) {
+            resolved_cfg = out.family->openocd_target_cfg(*project, effective_env);
+        }
+        out.sample_mode = out.family ? out.family->probe_sample_mode(resolved_cfg) : ProbeSampleMode::Auto;
+    }
+    out.rate_hint = probe_rate_hint(out.sample_mode);
+
+    out.openocd = find_openocd(home, out.openocd_package);
+    out.openocd_available = out.openocd.has_value() || assume_openocd_available;
+
+    if (!out.config.config) {
+        out.error = out.config.error;
+    } else if (!out.openocd_available) {
+        out.error = std::format("OpenOCD ({}) was not found: install PlatformIO package '{}' or openocd on PATH",
+                                out.openocd_package, out.openocd_package);
+    }
+    return out;
+}
+
 std::vector<Method> methods(const ProbeResult& probe, const Family* family, bool have_pio,
-                            const std::string& project_problem) {
+                            const std::string& project_problem, const ProbeMethodContext& probe_ctx) {
     const std::string busy = "the port is busy: another program is using it";
     const std::string denied = "no permission to use this port: choose Grant access on the board's tile";
     const std::string blocked = probe.denied ? denied : probe.busy ? busy : "";
     std::vector<Method> list;
-    list.push_back({"attach", probe.agent, probe.agent ? "" : !blocked.empty() ? blocked : "no malgrind agent is running on this board"});
-    std::string new_run_why;
-    if (!blocked.empty()) {
-        new_run_why = blocked;
-    } else if (!project_problem.empty()) {
-        new_run_why = project_problem;
-    } else if (!family) {
-        new_run_why = "no matching target family";
-    } else if (!family->caps().agent) {
-        new_run_why = std::string(family->name()) + ": building with the agent is not supported";
-    } else if (!have_pio) {
-        new_run_why = kNoPio;
+    if (!probe_ctx.serial_device) {
+        list.push_back({"attach", false, "requires a serial port"});
+        list.push_back({"new_run", false, "requires a serial port"});
+    } else {
+        list.push_back(
+            {"attach", probe.agent, probe.agent ? "" : !blocked.empty() ? blocked : "no malgrind agent is running on this board"});
+        std::string new_run_why;
+        if (!blocked.empty()) {
+            new_run_why = blocked;
+        } else if (!project_problem.empty()) {
+            new_run_why = project_problem;
+        } else if (!family) {
+            new_run_why = "no matching target family";
+        } else if (!family->caps().agent) {
+            new_run_why = std::string(family->name()) + ": building with the agent is not supported";
+        } else if (!have_pio) {
+            new_run_why = kNoPio;
+        }
+        list.push_back({"new_run", new_run_why.empty(), new_run_why});
     }
-    list.push_back({"new_run", new_run_why.empty(), new_run_why});
-    list.push_back({"no_flash", false, "needs a debug probe (JTAG/SWD); not supported yet"});
+
+    if (!probe_ctx.has_probe) {
+        list.push_back({"no_flash", false, "connect a debug probe (JTAG/SWD)"});
+    } else if (probe_ctx.available) {
+        list.push_back({"no_flash", true, ""});
+    } else {
+        list.push_back({"no_flash", false, probe_ctx.why.empty() ? "choose the chip target config for OpenOCD" : probe_ctx.why});
+    }
     return list;
 }
 

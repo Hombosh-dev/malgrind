@@ -14,7 +14,21 @@ export function emptySettings(): RunSettings {
     elf: '',
     build_command: '',
     upload_command: '',
+    target_cfg: '',
   };
+}
+
+// A message when the OpenOCD target config path is invalid, else null. Mirrors sanitize_target_cfg (host/src/settings.cpp).
+export function targetCfgProblem(targetCfg: string): string | null {
+  if (targetCfg === '') return null;
+  for (let i = 0; i < targetCfg.length; i++) {
+    const code = targetCfg.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return 'Target config must not contain control characters.';
+  }
+  const trimmed = targetCfg.trim();
+  if (trimmed === '') return 'Target config must not be blank.';
+  if (trimmed.startsWith('-')) return 'Target config must not start with "-".';
+  return null;
 }
 
 // The value of the rate field as a number: a whole number from the field, 0 for "use the default" (an empty field).
@@ -41,6 +55,9 @@ export function hasOverrides(s: Pick<RunSettings, 'build_command' | 'upload_comm
 export function changes(s: RunSettings, detected: RunSettings): string[] {
   const out: string[] = [];
   if (s.env && s.env !== detected.env) out.push('environment');
+  if ((s.target_cfg ?? '').trim() && (s.target_cfg ?? '').trim() !== (detected.target_cfg ?? '').trim()) {
+    out.push('target config');
+  }
   if (s.rate_hz && s.rate_hz !== (detected.rate_hz || defaultRate)) out.push('sampling rate');
   if (s.elf && s.elf !== detected.elf) out.push('firmware ELF');
   if (s.extra_args.trim()) out.push('extra arguments');

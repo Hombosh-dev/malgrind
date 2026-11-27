@@ -2,7 +2,7 @@
   import { onMount, untrack } from 'svelte';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { bytesToBase64, defaultExportFilename, serializeFlameSvg, svgToPngBase64 } from '../lib/export';
-  import { formatDuration } from '../lib/format';
+  import { formatDuration, formatRunStats, isProbeDeviceId } from '../lib/format';
   import { clampLeakAgeS, memcheckProblemCount } from '../lib/memcheck';
   import { formatClockMs, hasCap } from '../lib/series';
   import type { Node as FlameNode } from '../lib/blend';
@@ -61,11 +61,13 @@
   let flame = $state<ReturnType<typeof Flame> | null | undefined>(null);
   let exportWrap = $state<HTMLDivElement | null>(null);
   let exportBtn = $state<HTMLButtonElement | null>(null);
+  const isProbeRun = $derived(isProbeDeviceId(run.device_id));
   // the fields the user set; an empty one was the detected value
   const used = $derived(
     run.settings
       ? ([
           ['Environment', run.settings.env],
+          ['Target config', run.settings.target_cfg ?? ''],
           ['Sampling rate', run.settings.rate_hz ? `${run.settings.rate_hz} Hz` : ''],
           ['Firmware ELF', run.settings.elf],
           ['Extra arguments', run.settings.extra_args],
@@ -320,7 +322,7 @@
     {#if run.port}<span class="muted stat" title="The board this run was recorded from">{run.port}</span>{/if}
     <span class="spacer"></span>
     {#if stats.arch}
-      <span class="stat muted">{stats.samples_per_s ?? '–'} samples/s · {stats.dropped ?? 0} dropped · {stats.overhead_pct == null ? '–' : stats.overhead_pct + ' %'} overhead</span>
+      <span class="stat muted">{formatRunStats(stats)}</span>
     {/if}
     {#if run.settings}<button class="btn ghost small" onclick={() => (showSettings = !showSettings)}>Settings</button>{/if}
     <button class="btn ghost small notes-btn" class:active={showNotes} onclick={() => (showNotes = !showNotes)} aria-pressed={showNotes}>
@@ -381,7 +383,7 @@
   {#if exportNotice}
     <div class="notice">{exportNotice}<button class="x" onclick={() => (exportNotice = '')} aria-label="Dismiss">×</button></div>
   {/if}
-  {#if !live && startsLive}<div class="notice">The board stopped sending data (unplugged, or reset?). The run is saved.</div>{/if}
+  {#if !live && startsLive}<div class="notice">{isProbeRun ? 'Debug probe sampling stopped. The run is saved.' : 'The board stopped sending data (unplugged, or reset?). The run is saved.'}</div>{/if}
   {#if error}<div class="notice bad" role="alert">{error}</div>{/if}
 
   <div class="body">
@@ -413,7 +415,7 @@
           </select>
         </label>
       </div>
-      {#if live}<button class="remove" onclick={() => onRemoveAgent(run.device_id || run.port)}>Remove agent…</button>{/if}
+      {#if live && !isProbeRun}<button class="remove" onclick={() => onRemoveAgent(run.device_id || run.port)}>Remove agent…</button>{/if}
     </nav>
 
     <main>

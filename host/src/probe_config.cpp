@@ -1,5 +1,7 @@
 #include "probe_config.hpp"
 
+#include "settings.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -14,37 +16,6 @@ std::string lower_ascii(std::string_view s) {
     std::string out(s);
     for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return out;
-}
-
-std::string trim_spaces(std::string_view s) {
-    while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
-    while (!s.empty() && s.back() == ' ') s.remove_suffix(1);
-    return std::string(s);
-}
-
-bool has_control_char(std::string_view s) {
-    for (unsigned char c : s) {
-        if (c < 0x20 || c == 0x7f) return true;
-    }
-    return false;
-}
-
-std::optional<std::string> sanitize_target_cfg(std::string_view raw, std::string& error) {
-    if (raw.empty()) return std::string{};
-    if (has_control_char(raw)) {
-        error = "invalid target config path: control characters are not allowed";
-        return std::nullopt;
-    }
-    std::string trimmed = trim_spaces(raw);
-    if (trimmed.empty()) {
-        error = "invalid target config path: must not be blank";
-        return std::nullopt;
-    }
-    if (trimmed.front() == '-') {
-        error = "invalid target config path: must not start with '-'";
-        return std::nullopt;
-    }
-    return trimmed;
 }
 
 bool is_safe_serial(std::string_view serial) {
@@ -75,6 +46,9 @@ const Family* resolve_family(const Device& probe, std::string_view vid, std::str
             for (const auto& opt : f->probe_target_options()) {
                 if (opt.cfg == target_cfg_override) return f;
             }
+        }
+        for (const Family* f : all_families()) {
+            if (f->probe_target_arch(target_cfg_override).has_value()) return f;
         }
     }
     for (const Family* f : all_families()) {
@@ -125,6 +99,23 @@ bool contains_serial_arg(const std::vector<std::string>& args) {
 }
 
 } // namespace
+
+const Family* resolve_probe_family(const Device& probe,
+                                   const ProjectInfo* project,
+                                   std::string_view env,
+                                   std::string_view target_cfg_override,
+                                   const Family* explicit_family) {
+    const std::string vid = probe.usb ? lower_ascii(probe.usb->vid) : std::string{};
+    const std::string pid = probe.usb ? lower_ascii(probe.usb->pid) : std::string{};
+    std::string effective_env;
+    if (project != nullptr) {
+        effective_env = env.empty() ? project->default_env : std::string(env);
+        if (effective_env.empty() && !project->envs.empty()) effective_env = project->envs.front();
+    }
+    std::string ignore_err;
+    const auto sanitized = sanitize_target_cfg(target_cfg_override, ignore_err);
+    return resolve_family(probe, vid, pid, project, effective_env, sanitized.value_or(std::string{}), explicit_family);
+}
 
 ProbeConfigResult resolve_probe_config(const ProbeConfigRequest& req) {
     if (req.probe.kind != DeviceKind::Probe) {

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { isProbeDeviceId } from './lib/format';
   import { startSidecar, type Sidecar } from './lib/sidecar';
   import { installMenu } from './lib/menu';
   import type { Hello, ProjectMeta, RunMeta } from './lib/types';
@@ -47,7 +48,10 @@
           sidecar?.call('stop').finally(() => (route = back));
         },
         removeAgent: () =>
-          (removingDevice = route.name === 'run' && route.live ? (route.run.device_id || route.run.port || '') : ''), // '' = the dialog picks the device
+          (removingDevice =
+            route.name === 'run' && route.live && !isProbeDeviceId(route.run.device_id)
+              ? (route.run.device_id || route.run.port || '')
+              : ''), // '' = the dialog picks the device
       });
     } catch (e) {
       fatal = String(e instanceof Error ? e.message : e);

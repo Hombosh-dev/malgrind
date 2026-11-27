@@ -56,13 +56,14 @@ struct Harness {
     bool override_devices = false;
     std::mutex source_mutex;
     SourceFactory source_factory;
+    ProbeSourceFactory probe_factory;
     MemorySource* last_source = nullptr;
     std::thread thread;
     int exit_code = -1;
     int next_id = 1;
     std::vector<json> events; // everything without an id that arrived while waiting for a reply
 
-    explicit Harness(const char* name, bool real_serial = false)
+    explicit Harness(const char* name, bool real_serial = false, bool real_openocd = false)
         : root(fs::temp_directory_path() / os::from_utf8(name)),
           save_path("PATH", os::to_utf8(root / "empty-path")) {
         fs::remove_all(root);
@@ -86,6 +87,23 @@ struct Harness {
                 return std::unique_ptr<ByteSource>(std::move(src));
             };
         }
+        if (!real_openocd) {
+            opts.open_probe = [this](const ProbeConfig& cfg, const OpenOcdSourceOptions& ocd_opts)
+                -> std::unique_ptr<ByteSource> {
+                ProbeSourceFactory fn;
+                {
+                    std::scoped_lock lock(source_mutex);
+                    fn = probe_factory;
+                }
+                if (fn) return fn(cfg, ocd_opts);
+                auto src = std::make_unique<MemorySource>(ocd_opts.label.empty() ? cfg.interface_desc : ocd_opts.label);
+                {
+                    std::scoped_lock lock(source_mutex);
+                    last_source = src.get();
+                }
+                return std::unique_ptr<ByteSource>(std::move(src));
+            };
+        }
         thread = std::thread([this, opts = std::move(opts)] { exit_code = serve(in, out, opts); });
     }
     ~Harness() {
@@ -95,6 +113,10 @@ struct Harness {
     void set_source_factory(SourceFactory fn) {
         std::scoped_lock lock(source_mutex);
         source_factory = std::move(fn);
+    }
+    void set_probe_factory(ProbeSourceFactory fn) {
+        std::scoped_lock lock(source_mutex);
+        probe_factory = std::move(fn);
     }
     MemorySource* source() {
         std::scoped_lock lock(source_mutex);
@@ -106,6 +128,29 @@ struct Harness {
         auto devs = list_devices();
         devs.insert(devs.end(), extra_devices.begin(), extra_devices.end());
         return devs;
+    }
+    Device plug_probe(std::string vid, std::string pid, std::string serial = "", std::string name = "Debug Probe",
+                      std::string id = "", std::string family_hint = "") {
+        Device d;
+        d.kind = DeviceKind::Probe;
+        d.path = "";
+        d.name = std::move(name);
+        d.title = d.name;
+        d.family_hint = std::move(family_hint);
+        d.usb = os::UsbInfo{.vid = std::move(vid),
+                            .pid = std::move(pid),
+                            .product = d.name,
+                            .manufacturer = {},
+                            .serial = std::move(serial),
+                            .location = "1-2"};
+        if (id.empty()) {
+            DebugProbe dp{d.name, d.usb->vid, d.usb->pid, d.usb->serial, d.usb->location, d.usb->product, {}};
+            id = probe_device_id(dp);
+        }
+        d.id = std::move(id);
+        std::scoped_lock lock(devices_mutex);
+        extra_devices.push_back(d);
+        return d;
     }
     Device plug(const std::string& path, std::string id = "", std::string name = "") {
         Device d;
@@ -596,7 +641,6 @@ void devices_shape_and_id_resolution() {
 
     // Probe device is rejected by commands requiring a serial port.
     for (const json& req : {json{{"cmd", "attach"}, {"device", probe.id}, {"name", "x"}},
-                            json{{"cmd", "probe"}, {"device", probe.id}},
                             json{{"cmd", "grant_access"}, {"device", probe.id}},
                             json{{"cmd", "chip_id"}, {"device", probe.id}},
                             json{{"cmd", "remove_agent"}, {"device", probe.id}},
@@ -604,6 +648,13 @@ void devices_shape_and_id_resolution() {
         const auto err = h.call(req);
         assert(err["ok"] == false && contains(err["error"], "not a serial port"));
     }
+
+    // `probe` on a probe device returns probe diagnostics (here missing USB info).
+    const auto probe_res = h.call({{"cmd", "probe"}, {"device", probe.id}});
+    assert(probe_res["ok"] && probe_res["result"]["kind"] == "probe");
+    assert(contains(probe_res["result"]["error"], "USB"));
+    assert(method(probe_res["result"], "attach")["available"] == false);
+    assert(method(probe_res["result"], "no_flash")["available"] == false);
 
     // attach {device: "<id>"} resolves device id to MemorySource and saves device_id + port on RunMeta.
     const auto attached = h.call({{"cmd", "attach"}, {"device", serial.id}, {"name", "by-id"}});
@@ -1230,6 +1281,337 @@ void pty_serial_attach_and_busy() {
 }
 #endif
 
+void probe_and_methods_for_debug_probes() {
+    // 1. With real_openocd=true and no OpenOCD installed, missing OpenOCD is reported clearly.
+    {
+        Harness h("malgrind_serve_probe_noocd", false, /*real_openocd=*/true);
+        {
+            std::scoped_lock lock(h.devices_mutex);
+            h.override_devices = true;
+        }
+        // No probe connected -> methods returns no_flash unavailable + aggregated probe_targets.
+        const auto no_probe = h.call({{"cmd", "methods"}});
+        assert(no_probe["ok"]);
+        assert(method(no_probe["result"], "no_flash")["available"] == false);
+        assert(contains(method(no_probe["result"], "no_flash")["why"], "debug probe"));
+        assert(!no_probe["result"]["probe_targets"].empty());
+
+        const auto stlink = h.plug_probe("0483", "374b", "ST1", "ST-Link");
+        const auto p_no_cfg = h.call({{"cmd", "probe"}, {"device", stlink.id}});
+        assert(p_no_cfg["ok"] && p_no_cfg["result"]["openocd"]["found"] == false);
+        assert(method(p_no_cfg["result"], "no_flash")["available"] == false);
+        assert(contains(p_no_cfg["result"]["error"], "target"));
+
+        const auto p_with_cfg =
+            h.call({{"cmd", "probe"}, {"device", stlink.id}, {"target_cfg", "target/stm32f4x.cfg"}});
+        assert(p_with_cfg["ok"] && p_with_cfg["result"]["openocd"]["found"] == false);
+        assert(p_with_cfg["result"]["openocd"]["package"] == "tool-openocd");
+        assert(method(p_with_cfg["result"], "no_flash")["available"] == false);
+        assert(contains(method(p_with_cfg["result"], "no_flash")["why"], "OpenOCD"));
+
+        // Install fake openocd under home/.platformio/packages/tool-openocd -> probe becomes ready.
+        const fs::path pkg_dir = h.root / "home/.platformio/packages/tool-openocd";
+        fs::create_directories(pkg_dir / "bin");
+        fs::create_directories(pkg_dir / "scripts/interface");
+        fs::copy_file(MALGRIND_FAKE_TOOL, pkg_dir / "bin" / os::exe_name("openocd"), fs::copy_options::overwrite_existing);
+        if constexpr (os::kind() != os::Kind::Windows) {
+            fs::permissions(pkg_dir / "bin" / os::exe_name("openocd"), fs::perms::owner_all);
+        }
+        std::ofstream(pkg_dir / "scripts/interface/stlink.cfg") << "# stlink\n";
+
+        const auto p_ready =
+            h.call({{"cmd", "probe"}, {"device", stlink.id}, {"target_cfg", "target/stm32f4x.cfg"}});
+        assert(p_ready["ok"] && p_ready["result"]["openocd"]["found"] == true);
+        assert(p_ready["result"]["probe_config"]["target_cfg"] == "target/stm32f4x.cfg");
+        assert(p_ready["result"]["probe_sample_mode"] == "auto");
+        assert(contains(p_ready["result"]["probe_rate_hint"], "Auto"));
+        assert(method(p_ready["result"], "no_flash")["available"] == true);
+        assert(method(p_ready["result"], "attach")["available"] == false);
+
+        // `methods` resolves probe automatically from devices list, or by VID:PID.
+        const auto m_auto = h.call({{"cmd", "methods"}, {"target_cfg", "target/stm32f4x.cfg"}});
+        assert(m_auto["ok"] && method(m_auto["result"], "no_flash")["available"] == true);
+
+        const auto m_vid = h.call({{"cmd", "methods"}, {"vid", "303a"}, {"pid", "1001"}, {"target_cfg", "target/esp32s3.cfg"}});
+        assert(m_vid["ok"]);
+        assert(m_vid["result"]["probe_sample_mode"] == "halt_resume");
+        assert(contains(m_vid["result"]["probe_rate_hint"], "Halt/resume"));
+        assert(m_vid["result"]["openocd"]["package"] == "tool-openocd-esp32");
+        assert(m_vid["result"]["openocd"]["found"] == false); // tool-openocd-esp32 not installed
+    }
+
+    // 2. With open_probe hook enabled, ESP32 project infers target_cfg and HaltResume mode.
+    {
+        Harness h("malgrind_serve_probe_esp");
+        const auto esp_probe = h.plug_probe("303a", "1001", "ESP1", "ESP USB JTAG (built-in)", "", "esp32");
+        const fs::path proj_dir = h.root / "esp-s3";
+        fs::create_directories(proj_dir);
+        std::ofstream(proj_dir / "platformio.ini")
+            << "[env:s3]\nplatform = espressif32\nframework = arduino\nboard = esp32-s3-devkitc-1\n";
+        const auto added = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(proj_dir)}});
+        assert(added["ok"]);
+        const std::string proj_id = added["result"]["id"];
+
+        const auto res = h.call({{"cmd", "probe"}, {"device", esp_probe.id}, {"project", proj_id}});
+        assert(res["ok"] && res["result"]["kind"] == "probe");
+        assert(res["result"]["family"] == "esp32");
+        assert(res["result"]["probe_sample_mode"] == "halt_resume");
+        assert(res["result"]["probe_config"]["target_cfg"] == "target/esp32s3.cfg");
+        assert(method(res["result"], "no_flash")["available"] == true);
+        assert(!res["result"]["probe_targets"].empty());
+
+        // Invalid target_cfg is rejected cleanly.
+        const auto bad = h.call({{"cmd", "probe"}, {"device", esp_probe.id}, {"target_cfg", "-c shutdown"}});
+        assert(bad["ok"] && method(bad["result"], "no_flash")["available"] == false);
+        assert(contains(bad["result"]["error"], "invalid target config"));
+    }
+}
+
+void run_plan_no_flash() {
+    Harness h("malgrind_serve_plan_nf");
+    const auto stlink = h.plug_probe("0483", "374b", "ST2", "ST-Link");
+    const auto esp_probe = h.plug_probe("303a", "1001", "ESP2", "ESP USB JTAG (built-in)", "", "esp32");
+
+    // 1. No-code project works with no_flash without pio.
+    const auto none = add_project(h, {{"source", "none"}, {"name", "NoCode"}});
+    assert(none["ok"]);
+    const std::string none_id = none["result"]["id"];
+
+    const auto missing_target =
+        h.call({{"cmd", "run_plan"}, {"project", none_id}, {"device", stlink.id}, {"mode", "no_flash"}});
+    assert(missing_target["ok"]);
+    assert(missing_target["result"]["commands"].is_null());
+    assert(contains(missing_target["result"]["error"], "target"));
+    assert(contains(missing_target["result"]["note"], "No firmware will be modified or flashed"));
+    assert(missing_target["result"]["caps"]["memcheck"] == false);
+    assert(!missing_target["result"]["probe_targets"].empty());
+
+    const auto with_target = h.call({{"cmd", "run_plan"},
+                                     {"project", none_id},
+                                     {"device", stlink.id},
+                                     {"mode", "no_flash"},
+                                     {"settings", {{"target_cfg", "target/stm32f4x.cfg"}}}});
+    assert(with_target["ok"] && with_target["result"]["error"] == "");
+    assert(contains(with_target["result"]["commands"]["openocd"], "target/stm32f4x.cfg"));
+    assert(contains(with_target["result"]["summary"], "No firmware will be modified or flashed"));
+
+    // Invalid target_cfg reports error in result["error"] cleanly.
+    const auto bad_target = h.call({{"cmd", "run_plan"},
+                                    {"project", none_id},
+                                    {"device", stlink.id},
+                                    {"mode", "no_flash"},
+                                    {"settings", {{"target_cfg", "bad\x1a" "cfg"}}}});
+    assert(bad_target["ok"] && bad_target["result"]["commands"].is_null());
+    assert(contains(bad_target["result"]["error"], "control characters"));
+
+    // 2. Folder project infers target_cfg and plain .pio/build ELF even without pio.
+    const fs::path proj_dir = h.root / "c3-proj";
+    fs::create_directories(proj_dir / ".pio/build/c3");
+    std::ofstream(proj_dir / "platformio.ini")
+        << "[env:c3]\nplatform = espressif32\nframework = arduino\nboard = esp32-c3-devkitm-1\n";
+    const unsigned char rv_hdr[20] = {0x7f, 'E', 'L', 'F', 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 243, 0};
+    {
+        std::ofstream out(proj_dir / ".pio/build/c3/firmware.elf", std::ios::binary);
+        out.write(reinterpret_cast<const char*>(rv_hdr), sizeof rv_hdr);
+    }
+    const auto folder = add_project(h, {{"source", "folder"}, {"dir", os::to_utf8(proj_dir)}});
+    assert(folder["ok"]);
+    const std::string folder_id = folder["result"]["id"];
+
+    const auto inferred =
+        h.call({{"cmd", "run_plan"}, {"project", folder_id}, {"device", esp_probe.id}, {"mode", "no_flash"}});
+    assert(inferred["ok"] && inferred["result"]["error"] == "");
+    assert(inferred["result"]["detected"]["target_cfg"] == "target/esp32c3.cfg");
+    assert(inferred["result"]["probe_sample_mode"] == "halt_resume");
+    assert(contains(inferred["result"]["elf_hint"], "firmware.elf"));
+    assert(contains(inferred["result"]["commands"]["openocd"], "target/esp32c3.cfg"));
+}
+
+void probe_run_end_to_end() {
+    // 1. Injected open_probe verifies ProbeConfig/OpenOcdSourceOptions, flat samples, overhead_pct=null, and replay.
+    {
+        Harness h("malgrind_serve_probe_mock");
+        const auto stlink = h.plug_probe("0483", "374b", "ST-MOCK", "ST-Link");
+        const auto serial = h.plug("fake-serial", "usb-10c4-ea60-sn-s1", "ttyUSB0");
+        const auto none = add_project(h, {{"source", "none"}, {"name", "ProbeProj"}});
+        const std::string proj_id = none["result"]["id"];
+
+        // Rejects serial device and bad settings.
+        assert(h.call({{"cmd", "probe_run"}, {"device", serial.id}, {"name", "bad"}})["ok"] == false);
+        assert(h.call({{"cmd", "probe_run"}, {"device", stlink.id}, {"name", "bad"}})["ok"] == false);
+        assert(h.call({{"cmd", "probe_run"},
+                       {"device", stlink.id},
+                       {"name", "bad"},
+                       {"target_cfg", "-c shutdown"}})["ok"] == false);
+
+        ProbeConfig seen_cfg;
+        OpenOcdSourceOptions seen_opts;
+        MemorySource* raw_src = nullptr;
+        h.set_probe_factory([&](const ProbeConfig& cfg, const OpenOcdSourceOptions& opts) {
+            seen_cfg = cfg;
+            seen_opts = opts;
+            auto mem = std::make_unique<MemorySource>(opts.label);
+            raw_src = mem.get();
+            return std::unique_ptr<ByteSource>(std::move(mem));
+        });
+
+        const auto started = h.call({{"cmd", "probe_run"},
+                                     {"device", stlink.id},
+                                     {"project", proj_id},
+                                     {"name", "flat-mock"},
+                                     {"settings", {{"target_cfg", "target/stm32f4x.cfg"}}}});
+        assert(started["ok"]);
+        const std::string run_id = started["result"]["run"]["id"];
+        assert(started["result"]["run"]["device_id"] == stlink.id);
+        assert(started["result"]["run"]["settings"]["target_cfg"] == "target/stm32f4x.cfg");
+        assert(seen_cfg.target_cfg == "target/stm32f4x.cfg");
+        assert(seen_cfg.interface_desc == "ST-Link");
+
+        // Push flat probe Hello (cpu_hz=0) + 2 sample flushes with kSleepPseudoPc.
+        {
+            std::array<std::uint8_t, 64> hbuf{};
+            const std::size_t hn = malgrind::encode_hello(
+                hbuf.data(), hbuf.size(),
+                {.seq = 0, .arch = malgrind::Arch::ArmV7M, .ncores = 1, .cpu_hz = 0, .agent_ver = 2, .caps = malgrind::kCapSamples, .state = 1});
+            raw_src->push(std::span<const std::uint8_t>(hbuf.data(), hn));
+
+            malgrind::Profiler p({"probe", malgrind::Arch::ArmV7M, 0, 1}, 0);
+            const std::uint32_t pc_a = 0x08001000;
+            const std::uint32_t pc_sleep = kSleepPseudoPc;
+            p.record(0, &pc_a, 1, 0);
+            p.record(0, &pc_a, 1, 0);
+            p.record(0, &pc_sleep, 1, 0);
+            std::vector<std::uint8_t> bytes;
+            p.flush([&](const std::uint8_t* d, std::size_t n) { bytes.insert(bytes.end(), d, d + n); }, [] {}, 0);
+            raw_src->push(bytes);
+            std::this_thread::sleep_for(30ms);
+            p.record(0, &pc_a, 1, 0);
+            bytes.clear();
+            p.flush([&](const std::uint8_t* d, std::size_t n) { bytes.insert(bytes.end(), d, d + n); }, [] {}, 0);
+            raw_src->push(bytes);
+        }
+
+        assert(wait_for([&] { return h.samples() == 4; }));
+        const auto snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"];
+        assert(snap["stats"]["overhead_pct"].is_null());
+        assert(snap["stats"]["caps"] == malgrind::kCapSamples);
+        assert(snap["stats"]["arch"] == "armv7m");
+
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+        const auto runs = h.runs();
+        assert(runs.size() == 1 && runs[0]["id"] == run_id && runs[0]["settings"]["target_cfg"] == "target/stm32f4x.cfg");
+
+        // Last settings remembered on project.
+        const auto plan_again =
+            h.call({{"cmd", "run_plan"}, {"project", proj_id}, {"device", stlink.id}, {"mode", "no_flash"}})["result"];
+        assert(plan_again["last"]["target_cfg"] == "target/stm32f4x.cfg");
+
+        // Replay matches.
+        assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
+        assert(h.samples() == 4);
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+    }
+
+    // 2. Real OpenOcdSource path (open_probe unset) backed by fake_tool OpenOCD + fake addr2line + TCL RPC.
+    {
+        ScopedEnv save_rpc("FAKE_OPENOCD_RPC_LOG");
+        ScopedEnv save_targets("FAKE_OPENOCD_TARGETS");
+        ScopedEnv save_type("FAKE_OPENOCD_TARGET_TYPE");
+        ScopedEnv save_req_halt("FAKE_OPENOCD_REQUIRE_HALT");
+        ScopedEnv save_pc0("FAKE_OPENOCD_REG_PC_0");
+        ScopedEnv save_pc1("FAKE_OPENOCD_REG_PC_1");
+        ScopedEnv save_fail("FAKE_OPENOCD_FAIL");
+        ScopedEnv save_path("PATH");
+
+        Harness h("malgrind_serve_probe_real", false, /*real_openocd=*/true);
+        const auto esp_probe = h.plug_probe("303a", "1001", "SN-REAL", "ESP USB JTAG (built-in)", "", "esp32");
+
+        // Install fake tool-openocd-esp32 under home/.platformio/packages and xtensa addr2line on PATH.
+        const fs::path pkg = h.root / "home/.platformio/packages/tool-openocd-esp32";
+        fs::create_directories(pkg / "bin");
+        fs::create_directories(pkg / "scripts/interface");
+        fs::copy_file(MALGRIND_FAKE_TOOL, pkg / "bin" / os::exe_name("openocd"), fs::copy_options::overwrite_existing);
+        if constexpr (os::kind() != os::Kind::Windows) {
+            fs::permissions(pkg / "bin" / os::exe_name("openocd"), fs::perms::owner_all);
+        }
+        std::ofstream(pkg / "scripts/interface/stlink.cfg") << "# marker\n";
+
+        const fs::path bin_dir = h.root / "tools";
+        fs::create_directories(bin_dir);
+        const fs::path a2l = bin_dir / os::exe_name("xtensa-esp32-elf-addr2line");
+        fs::copy_file(MALGRIND_FAKE_TOOL, a2l, fs::copy_options::overwrite_existing);
+        if constexpr (os::kind() != os::Kind::Windows) {
+            fs::permissions(a2l, fs::perms::owner_all);
+        }
+        os::set_env("PATH", os::to_utf8(bin_dir));
+
+        const fs::path elf = h.root / "app.elf";
+        std::ofstream(elf, std::ios::binary) << "0x400d1000=sensor_poll\n0x400d2000=wifi_tx\n";
+
+        const fs::path rpc_log = h.root / "rpc.log";
+        os::set_env("FAKE_OPENOCD_RPC_LOG", os::to_utf8(rpc_log));
+        os::set_env("FAKE_OPENOCD_TARGETS", "esp32.cpu0 esp32.cpu1");
+        os::set_env("FAKE_OPENOCD_TARGET_TYPE", "esp32");
+        os::set_env("FAKE_OPENOCD_REQUIRE_HALT", "1");
+        os::set_env("FAKE_OPENOCD_REG_PC_0", "pc (/32): 0x400d1000,0xffffffff");
+        os::set_env("FAKE_OPENOCD_REG_PC_1", "pc: 0x400d2000");
+
+        // Startup failure leaves no orphan run behind.
+        os::set_env("FAKE_OPENOCD_FAIL", "startup");
+        const auto failed = h.call({{"cmd", "probe_run"},
+                                    {"device", esp_probe.id},
+                                    {"target_cfg", "target/esp32.cfg"},
+                                    {"elf", os::to_utf8(elf)},
+                                    {"name", "should-fail"}});
+        assert(failed["ok"] == false && contains(failed["error"], "unable to open debug probe"));
+        assert(h.runs().empty());
+        os::unset_env("FAKE_OPENOCD_FAIL");
+
+        const auto started = h.call({{"cmd", "probe_run"},
+                                     {"device", esp_probe.id},
+                                     {"target_cfg", "target/esp32.cfg"},
+                                     {"elf", os::to_utf8(elf)},
+                                     {"poll_hz", 100},
+                                     {"name", "real-esp-probe"}});
+        assert(started["ok"]);
+        const std::string run_id = started["result"]["run"]["id"];
+
+        assert(wait_for([&] {
+            const auto fn = h.call({{"cmd", "functions"}, {"window_s", 0}})["result"];
+            const std::string dump = fn.dump();
+            return contains(dump, "sensor_poll") && contains(dump, "wifi_tx") && contains(dump, "[sleep]");
+        }, 3000ms));
+
+        const auto snap = h.call({{"cmd", "snapshot"}, {"window_s", 0}})["result"];
+        assert(snap["stats"]["overhead_pct"].is_null());
+        assert(snap["stats"]["ncores"] == 2);
+        assert(snap["stats"]["caps"] == malgrind::kCapSamples);
+
+        // Starting another run while probe_run is live is refused.
+        assert(h.call({{"cmd", "probe_run"},
+                       {"device", esp_probe.id},
+                       {"target_cfg", "target/esp32.cfg"},
+                       {"name", "dup"}})["ok"] == false);
+
+        // Stop shuts down OpenOCD cleanly and persists the run.
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+        {
+            std::ifstream in(rpc_log, std::ios::binary);
+            const std::string rpc((std::istreambuf_iterator<char>(in)), {});
+            assert(contains(rpc, "shutdown\n"));
+        }
+
+        const auto runs = h.runs();
+        assert(runs.size() == 1 && runs[0]["id"] == run_id && runs[0]["ncores"] == 2 && runs[0]["has_elf"] == true);
+
+        // Stored run replays with symbolized functions and [sleep].
+        assert(h.call({{"cmd", "open"}, {"run", run_id}})["ok"]);
+        const auto replay_fn = h.call({{"cmd", "functions"}, {"window_s", 0}})["result"].dump();
+        assert(contains(replay_fn, "sensor_poll") && contains(replay_fn, "wifi_tx") && contains(replay_fn, "[sleep]"));
+        assert(h.call({{"cmd", "stop"}})["ok"]);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1258,6 +1640,9 @@ int main() {
     open_after_upload_reenumerates();
     v2_probe_memory_tasks_and_commands();
     v2_memcheck_rpc();
+    probe_and_methods_for_debug_probes();
+    run_plan_no_flash();
+    probe_run_end_to_end();
 #ifndef _WIN32
     pty_serial_attach_and_busy();
 #endif

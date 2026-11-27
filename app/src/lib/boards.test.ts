@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { accessProblem, boardDetail, boardFamily } from './boards';
-import type { UsbInfo } from './types';
+import {
+  accessProblem,
+  boardDetail,
+  boardFamily,
+  canOpenMethod,
+  defaultMethodForDevice,
+  probeDetail,
+  probeTileStatus,
+} from './boards';
+import type { Probe, UsbInfo } from './types';
 
 const usb = (location: string, serial: string): UsbInfo => ({
   vid: '1a86',
@@ -65,5 +73,74 @@ describe('boardFamily', () => {
       text: 'acme',
       tentative: false
     });
+  });
+});
+
+describe('probe helpers', () => {
+  it('formats probe details without repeating matching title and name', () => {
+    expect(probeDetail({ name: 'ST-Link', title: 'ST-Link', usb: usb('1-2', 'ST01') })).toBe('USB 1-2 · serial ST01');
+    expect(probeDetail({ name: 'J-Link', title: 'SEGGER J-Link', usb: usb('1-3', '') })).toBe('J-Link · USB 1-3');
+  });
+
+  it('reports probe tile status for checking, missing OpenOCD, ready, and target-needed states', () => {
+    expect(probeTileStatus(null, '')).toEqual({ text: 'Checking OpenOCD & probe config…', tone: 'muted' });
+    expect(probeTileStatus(null, 'failed')).toEqual({ text: 'failed', tone: 'bad' });
+    expect(
+      probeTileStatus(
+        {
+          openocd: { package: 'tool-openocd', found: false, exe: null, scripts: null },
+          probe_config: null,
+          error: 'OpenOCD (tool-openocd) was not found',
+        },
+        ''
+      )
+    ).toEqual({ text: 'OpenOCD (tool-openocd) was not found', tone: 'bad' });
+    expect(
+      probeTileStatus(
+        {
+          openocd: { package: 'tool-openocd', found: true, exe: '/bin/openocd', scripts: '/scripts' },
+          probe_config: {
+            package: 'tool-openocd',
+            interface_desc: 'ST-Link',
+            target_cfg: 'target/stm32f4x.cfg',
+            openocd_args: [],
+            sample_mode: 'auto',
+            target_arch: null,
+          },
+          error: '',
+        },
+        ''
+      )
+    ).toEqual({ text: '● Ready · target/stm32f4x.cfg', tone: 'good' });
+  });
+
+  it('focuses no_flash for probes when OpenOCD is available even if target_cfg still needs to be picked', () => {
+    const probeNeedingTarget: Probe = {
+      kind: 'probe',
+      busy: false,
+      agent: false,
+      denied: false,
+      family: '',
+      family_name: '',
+      openocd: { package: 'tool-openocd', found: true, exe: '/bin/openocd', scripts: '/scripts' },
+      probe_config: null,
+      error: 'choose the chip target config for OpenOCD',
+      methods: [
+        { id: 'attach', available: false, why: 'requires a serial port' },
+        { id: 'new_run', available: false, why: 'requires a serial port' },
+        { id: 'no_flash', available: false, why: 'choose the chip target config for OpenOCD' },
+      ],
+    };
+    expect(canOpenMethod({ kind: 'probe' }, probeNeedingTarget, probeNeedingTarget.methods[2])).toBe(true);
+    expect(canOpenMethod({ kind: 'probe' }, probeNeedingTarget, probeNeedingTarget.methods[0])).toBe(false);
+    expect(defaultMethodForDevice({ kind: 'probe' }, probeNeedingTarget)).toBe('no_flash');
+
+    const probeMissingOcd: Probe = {
+      ...probeNeedingTarget,
+      openocd: { package: 'tool-openocd', found: false, exe: null, scripts: null },
+    };
+    expect(canOpenMethod({ kind: 'probe' }, probeMissingOcd, probeMissingOcd.methods[2])).toBe(false);
+    expect(defaultMethodForDevice({ kind: 'probe' }, probeMissingOcd)).toBeNull();
+    expect(defaultMethodForDevice({ kind: 'serial' }, probeNeedingTarget)).toBeNull();
   });
 });

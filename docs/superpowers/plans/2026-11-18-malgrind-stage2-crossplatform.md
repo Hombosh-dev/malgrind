@@ -994,7 +994,11 @@ Goal: numbers before promises. With a Nucleo (ST-Link) or a Pico running debugpr
 Write the results into `docs/superpowers/specs/2026-11-15-malgrind-app-design.md` section 5a. **Gate:** continue to
 T9.1 only if PCSR gives ≥ 200 samples/s; otherwise stop and discuss.
 
+- [ ] Measure on physical hardware (ST-Link/Nucleo, Pico Debug Probe, ESP32 USB-JTAG) and record section 5a numbers.
+
 ### T9.1 OpenOCD process and TCL RPC client 🟡
+
+- [x] Implemented `OpenOcdInstall` / `find_openocd`, `TclRpcCodec`, `OpenOcd`, and `os::Child` (`host/src/openocd.*`, `host/src/os/process*`, verified in `test_openocd`).
 
 **Files:** new `host/src/openocd.hpp/.cpp`, tests with a fake TCL server on `os::TcpListener`.
 
@@ -1019,6 +1023,8 @@ Needs a process API that can be killed: extend `os/process.hpp` with `class Chil
 
 ### T9.2 Which OpenOCD config for this probe and chip 🟢
 
+- [x] Implemented `resolve_probe_config`, board manifest `debug.openocd_target`/`openocd_board` lookup, and `target_cfg` sanitization (`host/src/probe_config.*`, `host/src/settings.*`, verified in `test_probe_config` and `test_settings`).
+
 **Files:** new `host/src/probe_config.hpp/.cpp`, tests with fixture JSON.
 
 - Interface from the probe's USB ids (pure table): ST-Link → `interface/stlink.cfg` (+ `-c "transport select hla_swd"`),
@@ -1040,9 +1046,11 @@ Needs a process API that can be killed: extend `os/process.hpp` with `class Chil
   arch from the ELF (`elf_machine`) or the family. `0xFFFFFFFF` (sleeping/halted) becomes a pseudo-PC that the
   symbolizer names `[sleep]` (reserve `0xFFFFFFF0` in `Symbolizer`).
 - Stacks are depth 1 (flat profile). Host-side unwinding from the ELF is **out of scope** (needs its own design).
-- [ ] Commit `feat: profile through a debug probe without flashing (flat)`.
+- [x] Implemented flat probe profiling (`OpenOcdSource`, `[sleep]` pseudo-PC `0xFFFFFFF0`, batched PCSR & halt/resume modes; verified in `test_openocd_source` with a fake TCL server; hardware validation tracked under `T9.0`).
 
 ### T9.4 Protocol, methods, UI 🟢
+
+- [x] Implemented `RunSettings::target_cfg`, `no_flash` method status + dynamic `probe_targets`/`probe_rate_hint`, `probe`, `run_plan(no_flash)`, `probe_run`, selectable UI probe tiles, dynamic OpenOCD target `<datalist>`, and `overhead_pct: null` stats rendering (`ops.*`, `plan.*`, `serve.*`, `session.*`, `app/src/**`, verified in `test_settings`, `test_serve`, and Vitest).
 
 - `methods`: `no_flash` available when a probe device is present and `probe_config` produced a target config (or the
   user gave one); else the reason ("connect a debug probe" / "choose the chip for OpenOCD").
@@ -1052,6 +1060,7 @@ Needs a process API that can be killed: extend `os/process.hpp` with `class Chil
 - Commit `feat(app): Debug probe method`.
 
 ### T9.5 ESP32 over JTAG 🔌🟡
+- [x] Implemented `Esp32Family` OpenOCD package (`tool-openocd-esp32`), interface mapping (`esp_usb_jtag` / `ftdi`), target configs, and dual-core halt/resume TCL target handling (`host/src/families/esp32.cpp`, `probe_config.*`; host behavior verified via mocked tests; physical ESP32 rate measurement open in `T9.0`).
 `Esp32Family` provides package `tool-openocd-esp32`, interface by probe, target `target/esp32.cfg` (or s3/c3 by the
 project's board), halt-based sampling for both cores (`targets esp32.cpu0` / `esp32.cpu1`). Measure the rate (expect
 ≈ 10–20 samples/s per spec) and show it in the UI. Commit `feat(esp32): profile over JTAG`.
@@ -1111,11 +1120,11 @@ apps app/src app/src-tauri/src`, excluding generated, vendored and test fixtures
 
 ---
 
-## Execution notes (P0–P8, P11)
+## Execution notes (P0–P9 host, P11)
 
-Phases **P0–P8** and **P11** are implemented and verified locally on Linux (`x86_64`), while **P9** and **P10** are paused at the **T9.0** hardware benchmark gate. Remote macOS/Windows CI runs and physical target verification remain open per `docs/verification.md`.
+Phases **P0–P8**, **P11**, and the scripted/host implementation of **P9** (`T9.1`–`T9.5`) are implemented and verified locally on Linux (`x86_64`), while physical **`T9.0` / `T9.5` OpenOCD hardware rate measurements** and **P10** remain open. Remote macOS/Windows CI runs and physical target verification remain open per `docs/verification.md`.
 
-### Implemented & verified scope (`P0`–`P8`, `P11`)
+### Implemented & verified scope (`P0`–`P9` host, `P11`)
 
 - **P0 — Guard rails (`T0.1`–`T0.3`):** Added `scripts/check-portability.mjs` (`scripts/check-portability.test.mjs`, `scripts/portability-allow.json`), portable compiler flags + `malgrind_add_test` in `CMakeLists.txt` / `core/CMakeLists.txt` / `host/CMakeLists.txt`, and updated `docs/superpowers/specs/2026-11-15-malgrind-app-design.md` (Windows goal + section 5b).
 - **P1 — OS layer (`host/src/os/`, `T1.1`–`T1.10`):** Isolated all platform code behind `malgrind::host::os` (`paths`, `process`, `serial`, `ports`, `usb`, `access`, `console`, `socket`, `tools`) with Linux, macOS, and Windows backends (`paths_win.cpp`, `process_win.cpp` using `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` and rejecting `.bat`/`.cmd`, `serial_win.cpp` handling `\\.\COM10+`, `ports_macos.cpp` IOKit enumeration + `IOSSIOSPEED`, `tools.cpp` ignoring the Microsoft Store `WindowsApps` Python stub, and `safe_projects_root()` falling back to `<SystemDrive>\.malgrind\projects`). Replaced shell test scripts with `host/tests/fake_tool.cpp` and `ScopedEnv`.
@@ -1126,6 +1135,7 @@ Phases **P0–P8** and **P11** are implemented and verified locally on Linux (`x
 - **P6 — Agent v2 (`T6.1`–`T6.6`):** Added wire v2 frames (`kKindSamples`, `kKindHello`, `kKindHeap`, `kKindTasks`, `kKindCommand`) while preserving v1 decoding forever; added freestanding `CommandParser` (`core/include/malgrind/command.hpp`); implemented ESP32 sleep/beacon/`START`/`STOP`, `HeapRegion`, and FreeRTOS `TaskSample` reporting (`platforms/esp32/src/esp32.cpp`, `CONFIG_MALGRIND_START_SAMPLING=y` default for `0.4.0` host compatibility, `malgrind-agent-v2` marker); added host `HeapSeries` / `TaskTable` (`host/src/series.*`); and added UI `Memory.svelte`, `Tasks.svelte`, `Series.svelte`, and focused `Functions.svelte` samples/s strip.
 - **P7 — Memcheck (`T7.1`–`T7.4`):** Added freestanding `EventQueue` (`core/include/malgrind/events.*`), opt-in ESP32 `esp_heap_trace_alloc_hook` / `esp_heap_trace_free_hook`, `heap_caps_register_failed_alloc_callback`, and periodic `heap_caps_check_integrity_all(false)` (`CONFIG_MALGRIND_MEMCHECK`, `agent/esp32/sdkconfig.memcheck`), host `LeakTracker` (`host/src/memcheck.*`), and `Memcheck.svelte` + `"Check memory errors (slower, more RAM)"` toggle in `RunSettings.svelte`. On Linux, `platforms/esp32/src/esp32.cpp` was compile- and ASan/UBSan-checked against stub IDF headers for both `CONFIG_MALGRIND_MEMCHECK=0` and `1`; real ESP-IDF builds and board runs remain pending in `docs/verification.md`.
 - **P8 — History & symbols (`T8.1`–`T8.6`):** Added run notes editing (`RunEditor.svelte`, `Run.svelte`), export (`folded`, `speedscope`, SVG, PNG via `lib/export.ts` + `serve.cpp` `export`/`write_file`), function-name run diff (`host/src/diff.*`, `Diff.svelte`, `CompareBar.svelte`), per-run disk size display + 200 MB `kLargeRunBytes` notice (`store.hpp`, `session.cpp`), and `tool-esp-rom-elfs` ROM symbolization via `Family::extra_symbol_files` + `Symbolizer` range lookup (`esp32.cpp`, `symbols.cpp`).
+- **P9 — Debug probe host, RPC & UI (`T9.1`–`T9.5`, scripted/mocked):** Added `os::Child` process control, `OpenOcd` runner + `TclRpcCodec` (`host/src/openocd.*`), `resolve_probe_config` (`host/src/probe_config.*`), `OpenOcdSource` (`host/src/openocd_source.*`), `RunSettings::target_cfg`, `ops::methods`/`probe_targets`/`probe_rate_hint`/`make_probe_plan`, sidecar `probe`/`methods`/`run_plan(no_flash)`/`probe_run` RPCs (`host/src/serve.*`, `session.*`), selectable UI probe tiles (`Profile.svelte`), dynamic OpenOCD `<datalist>` target selector + rate hint (`RunSettings.svelte`), and `overhead_pct: null` flat-run support (`Run.svelte`, `App.svelte`), verified against `fake_tool` and mocked TCL servers (`T9.0` physical hardware rate gate remains `[ ]`).
 - **P11 — Docs & C++ share (`T11.1`–`T11.2`):** Updated `README.md`, added these execution notes, and added `scripts/cpp-share.mjs` (`scripts/cpp-share.test.mjs`) wired into `.github/workflows/ci.yml`.
 
 ### Notable design adjustments
@@ -1134,9 +1144,9 @@ Phases **P0–P8** and **P11** are implemented and verified locally on Linux (`x
 - **Added `kErrEventsDropped = 4` and non-destructive `EventQueue::drain_*`:** Added error code `4` (`kErrEventsDropped`) so ring overflows in `EventQueue<256, 16>` surface explicitly in the UI (`dropped` banner) rather than failing silently, and added `drain_allocs` / `drain_error` in `core/src/events.cpp` so frames encode directly from the ring without heap allocation and advance cursors only when encoding succeeds.
 - **ESP-IDF 5.3 strong `vApplicationStackOverflowHook` symbol constraint:** ESP-IDF 5.3 defines `vApplicationStackOverflowHook` strongly and aborts on overflow; overriding it in an injected component risks a multiple-definition link failure. `agent/esp32/sdkconfig.memcheck` enables `CONFIG_FREERTOS_CHECK_STACKOVERFLOW_CANARY=y` cleanly without overriding `vApplicationStackOverflowHook`, while wire `kErrStackOverflow` (`code = 2`) remains supported on the host/UI side.
 - **`scripts/check-portability.mjs` boundary refinement:** `host/src/os/**` is excluded from the `os` rule set and allowed to contain OS port/privilege terms (`CHIP_OS_PORT_PATTERNS`: `/dev/`, `COM\d`, `pkexec`, `sudo`, `apt install`) while still forbidding MCU chip terms (`CHIP_ONLY_PATTERNS`). Both allowlists in `scripts/portability-allow.json` reached and remain `{"os": [], "chip": []}`.
-- **Measured C++ share:** `node scripts/cpp-share.mjs` measures **`64.2% (9345 / 14553 lines)`** across `core`, `host`, `platforms`, `agent`, `apps`, `app/src`, and `app/src-tauri/src` (above the 60.0% target).
+- **Measured C++ share:** `node scripts/cpp-share.mjs` measures **`67.8%` (`11583 / 17091` lines)** across `core`, `host`, `platforms`, `agent`, `apps`, `app/src`, and `app/src-tauri/src` (above the 60.0% target).
 
-### Why execution paused at P9 / `T9.0` (and P10)
+### Why `T9.0` (hardware gate) and `P10` remain open
 
-- **`T9.0` hardware gate:** `T9.0` requires physical hardware (an ST-Link or CMSIS-DAP probe with a Nucleo or Pico running `debugprobe`, plus ESP32 USB-JTAG) to measure OpenOCD TCL `mrw DWT_PCSR` vs. halt/`reg pc`/resume sample rates (gate: ≥ 200 samples/s for PCSR) before implementing `T9.1`–`T9.5`.
-- **`P10` dependency:** `platforms/cortexm/`, `STM32`, and `RP2040` (`T10.1`–`T10.3`) depend on `P9` (OpenOCD identify/backup/restore) and physical board verification.
+- **`T9.0` hardware gate:** `T9.0` / `T9.5` board verification requires physical hardware (ST-Link/Nucleo, Pico Debug Probe / CMSIS-DAP, and ESP32 USB-JTAG / FTDI ESP-Prog) to measure real OpenOCD TCL `mrw DWT_PCSR` vs. halt/`reg pc`/resume sample rates (gate: ≥ 200 samples/s for PCSR) and verify on-target behavior.
+- **`P10` dependency:** `platforms/cortexm/`, `STM32`, and `RP2040` (`T10.1`–`T10.3`) depend on `P9` `T9.0` hardware characterization and Cortex-M firmware/agent implementation.

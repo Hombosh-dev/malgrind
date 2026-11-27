@@ -11,9 +11,9 @@
 //   devices                                -> {devices: [{id, kind, path, name, title, usb, access, family_hint, family_hint_name}], can_grant_access}
 //                                             kind = "serial"|"probe"; usb = {vid, pid, serial, location, product, manufacturer}|null;
 //                                             access = {ok, group, in_group, fixable}; nothing is opened
-//   probe {device, project?}               -> {busy, agent, denied, family, family_name, arch?, ncores?, cpu_mhz?, caps?, state?, methods}   listens up to 2 s, records nothing;
-//                                             methods = [{id: attach|new_run|no_flash, available, why}]; `project` (an id) only
-//                                             decides whether new_run is possible with it
+//   probe {device, project?, env?, target_cfg?} -> for serial: {kind:"serial", busy, agent, denied, family, family_name, arch?, ncores?, cpu_mhz?, caps?, state?, methods, probe_targets, probe_sample_mode, probe_rate_hint};
+//                                             for probe: {kind:"probe", busy:false, agent:false, denied:false, family, family_name, openocd, probe_config, probe_targets, probe_sample_mode, probe_rate_hint, error, methods}
+//   methods {device?, vid?, pid?, serial?, project?, env?, target_cfg?} -> {methods, probe_targets, probe_sample_mode, probe_rate_hint, openocd, probe_config, error}
 //   chip_id {device}                       -> {chip}                                    resets the board
 //   setup                                  -> {pio, python, python_hint, git (paths or null), can_grant_access (bool), os, user}   what the app needs from the machine
 //   install_pio {}                         -> {pio}   creates a PlatformIO venv + pip install platformio; streams `build` events
@@ -28,12 +28,14 @@
 //   run_plan {project, device, mode?, settings?} -> {detected, last, caps, envs, elf_hint, detected_commands, commands, error}   what the settings
 //                                             panel shows before a run: the detected RunSettings, the project's last-used ones, and the
 //                                             exact commands (+ environment) for `settings` as they are now. A field that does not hold up
-//                                             is `error` (commands null), not a failed request. mode "attach": only `detected` and `last`.
+//                                             is `error` (commands null), not a failed request. mode "attach": only `detected` and `last`;
+//                                             mode "no_flash": OpenOCD preview, probe_targets, probe_sample_mode, probe_rate_hint, openocd, note.
 //   new_run {project, device, name, settings?} -> {run}   backs up the board's flash (first time), builds with the agent, uploads,
 //                                             then records live; streams `build` events. `settings` = RunSettings {env, extra_args,
 //                                             build_flags, rate_hz, elf, build_command, upload_command}, all checked first; stored with
 //                                             the run and as the project's last_settings
 //   attach {device, name, project?, elf?, settings?} -> {run}   records a board that already runs the agent; `project` is an id
+//   probe_run {device, name, project?, env?, elf?, target_cfg?, poll_hz?, settings?} -> {run}   starts flat sampling via debug probe (OpenOCD) without flashing
 //   stop                                   -> {}      ends the live run, or closes an opened one
 //   remove_agent {device, how?, project?}  -> {}      how "restore" (default): writes the board's backup back; "rebuild": builds
 //                                             the project (an id) without the agent and uploads it
@@ -55,14 +57,20 @@
 // new_run, remove_agent, project_add, install_pio, grant_access and chip_id are slow and run on a worker thread; only one at a time ("busy: ...").
 
 #include "devices.hpp"
+#include "openocd_source.hpp"
 #include "ops.hpp"
+#include "probe_config.hpp"
 
 #include <filesystem>
 #include <functional>
 #include <istream>
+#include <memory>
 #include <ostream>
 
 namespace malgrind::host {
+
+using ProbeSourceFactory =
+    std::function<std::unique_ptr<ByteSource>(const ProbeConfig& cfg, const OpenOcdSourceOptions& options)>;
 
 struct ServeOptions {
     std::filesystem::path data_dir;  // where runs are stored
@@ -72,6 +80,7 @@ struct ServeOptions {
     std::filesystem::path projects_dir; // projects and clones of GitHub projects (see projects.hpp)
     std::function<std::vector<Device>()> devices = list_devices;
     SourceFactory open_source{};
+    ProbeSourceFactory open_probe{};
 };
 
 // Serves requests from `in` until it ends (the app closed, or end of file), then closes the live run. Returns 0.
