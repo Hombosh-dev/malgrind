@@ -9,4 +9,21 @@ menu "malgrind agent"
             RTOS tick. The cost is about 1.5 % of one core per 1000 Hz. malgrind sets this from its run settings; changing it
             changes the sdkconfig, which makes ESP-IDF rebuild the agent.
 
+    config MALGRIND_START_SAMPLING
+        bool "Start sampling immediately on boot"
+        default y
+        help
+            When enabled (default), the agent starts sampling immediately on boot for compatibility with older hosts
+            (<= 0.4) that expect sample frames right away without sending a START command. Disable this to boot in
+            sleep mode (timers stopped, ~0 CPU overhead, emitting a HELLO beacon every 1000 ms) until a v2 host sends
+            a START command.
+
+    config MALGRIND_MEMCHECK
+        bool "Check memory errors (allocations, leaks, corruption)"
+        default n
+        help
+            When enabled, records heap allocation/free events with backtraces, failed allocations, and periodic heap
+            integrity checks. Adds noticeable per-allocation CPU and RAM overhead; keep disabled unless diagnosing
+            memory issues.
+
 endmenu

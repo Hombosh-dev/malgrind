@@ -7,6 +7,7 @@
 #include "ops.hpp"
 #include "settings.hpp"
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -22,11 +23,13 @@ namespace malgrind::host {
 [[nodiscard]] std::string join_command(const std::vector<std::string>& words);
 
 struct Plan {
-    Invocation build;  // compiles the project with the agent
-    Invocation upload; // flashes it (after the backup)
+    Invocation build;                  // compiles the project with the agent
+    Invocation upload;                 // flashes it (after the backup)
+    std::filesystem::path elf;         // firmware ELF produced by the agent build
     std::string build_text, upload_text; // the two command lines as text, for the app to show
-    std::string env;   // the PlatformIO environment the plan builds (the setting, else the detected one)
-    unsigned rate_hz = 0; // 0: the agent's default. Reaches the agent as CONFIG_MALGRIND_RATE_HZ in the sdkconfig (write_plan_files)
+    std::string env;                   // the PlatformIO environment the plan builds (the setting, else the detected one)
+    unsigned rate_hz = 0;              // 0: the agent's default; written into the build config by write_plan_files
+    bool check_memory = false;         // opt-in memcheck hooks; written into the build config by write_plan_files
 };
 
 // The detected commands, changed by `settings`: extra arguments appended to both, PLATFORMIO_BUILD_FLAGS in their environment,
@@ -37,7 +40,38 @@ struct Plan {
 // ELF that does not exist.
 [[nodiscard]] Plan make_plan(const Prepared& prepared, const std::filesystem::path& agent_dir, const RunSettings& settings);
 
-// What a plan needs on disk before it runs: <project>/.pio/malgrind/sdkconfig.<env> (the only place malgrind writes in a project).
+// What a plan needs on disk before it runs (generated agent build configuration under <project>/.pio/malgrind/).
 void write_plan_files(const Prepared& prepared, const std::filesystem::path& agent_dir, const Plan& plan);
+
+struct ProbePlanRequest {
+    std::filesystem::path home;
+    Device probe;
+    std::optional<ProjectInfo> project{};
+    std::filesystem::path project_elf{};
+    RunSettings settings{};
+    bool assume_openocd_available = false;
+};
+
+struct ProbePlan {
+    ProbeConfig config;
+    std::optional<OpenOcdInstall> openocd;
+    Invocation openocd_invocation;
+    std::string command_text;
+    std::filesystem::path elf;
+    std::string env;
+    std::string summary;
+    std::string note;
+    ProbeSampleMode sample_mode = ProbeSampleMode::Auto;
+    std::string rate_hint;
+    std::vector<ProbeTargetOption> targets;
+};
+
+// Preview and validation for debug probe (`mode == "no_flash"`) runs. Checks settings, resolves OpenOCD config and
+// package installation, locates an optional firmware ELF for symbolization, and writes nothing to disk. Throws on error.
+[[nodiscard]] ProbePlan make_probe_plan(const ProbePlanRequest& req);
+
+// Best-effort ELF lookup for a `no_flash` project (prefers plain PlatformIO/IDF builds matching `env` / `arch`).
+[[nodiscard]] std::filesystem::path find_probe_elf(const ProjectInfo& project, std::string_view env = {},
+                                                     std::optional<Arch> arch = std::nullopt);
 
 } // namespace malgrind::host

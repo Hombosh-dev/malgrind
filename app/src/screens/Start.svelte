@@ -1,8 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CompareBar from '../components/CompareBar.svelte';
+  import RunEditor from '../components/RunEditor.svelte';
   import Setup from '../components/Setup.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import { formatDuration, formatWhen } from '../lib/format';
+  import { pickSlot, toggleRunPick } from '../lib/diff';
+  import { formatBytes, formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
   import type { ProjectMeta, RunMeta } from '../lib/types';
@@ -12,8 +15,9 @@
     onNewProject(): void;
     onProject(id: string): void;
     onRun(run: RunMeta): void; // a stored run, opened for replay
+    onCompare(a: RunMeta, b: RunMeta): void;
   }
-  let { sidecar, onNewProject, onProject, onRun }: Props = $props();
+  let { sidecar, onNewProject, onProject, onRun, onCompare }: Props = $props();
 
   let projects = $state<ProjectMeta[]>([]);
   let runs = $state<RunMeta[]>([]);
@@ -23,6 +27,12 @@
   let deleting = $state<string | null>(null); // id waiting for "yes, delete"
   let renaming = $state<string | null>(null);
   let draft = $state('');
+  let editingRun = $state<string | null>(null);
+  let selectedIds = $state<string[]>([]);
+
+  const selectedRuns = $derived(
+    selectedIds.map((id) => runs.find((r) => r.id === id)).filter((r): r is RunMeta => r !== undefined),
+  );
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -44,12 +54,12 @@
     }
   }
 
-  async function commitRename(kind: 'project' | 'run', item: ProjectMeta | RunMeta) {
+  async function commitRename(project: ProjectMeta) {
     const name = draft.trim();
     renaming = null;
-    if (!name || name === item.name) return;
+    if (!name || name === project.name) return;
     try {
-      Object.assign(item, await sidecar.call(kind === 'project' ? 'project_update' : 'update', { [kind === 'project' ? 'project' : 'run']: item.id, name }));
+      Object.assign(project, await sidecar.call<ProjectMeta>('project_update', { project: project.id, name }));
     } catch (e) {
       fail(e);
     }
@@ -60,7 +70,10 @@
     try {
       await sidecar.call(kind === 'project' ? 'project_remove' : 'delete', { [kind === 'project' ? 'project' : 'run']: id });
       if (kind === 'project') projects = projects.filter((p) => p.id !== id);
-      else runs = runs.filter((r) => r.id !== id);
+      else {
+        runs = runs.filter((r) => r.id !== id);
+        selectedIds = selectedIds.filter((x) => x !== id);
+      }
     } catch (e) {
       fail(e);
     }
@@ -80,7 +93,7 @@
   {#if error}<div class="error" role="alert">{error}</div>{/if}
 
   {#if !loaded}
-    <p class="empty muted">Loading…</p>
+    <p class="empty muted">Loading...</p>
   {:else if first}
     <section class="welcome">
       <h1>Profile the firmware on your board</h1>
@@ -107,53 +120,82 @@
           <li>
             {#if renaming === project.id}
               <input class="rename" bind:value={draft} use:focusAndSelect aria-label="Project name"
-                onkeydown={(e) => (e.key === 'Enter' ? commitRename('project', project) : e.key === 'Escape' ? (renaming = null) : null)}
-                onblur={() => commitRename('project', project)} />
+                onkeydown={(e) => (e.key === 'Enter' ? commitRename(project) : e.key === 'Escape' ? (renaming = null) : null)}
+                onblur={() => commitRename(project)} />
             {:else}
               <button class="row" onclick={() => onProject(project.id)}>
                 <b class="name">{project.name}</b>
                 {#if project.problem}<span class="tag warn" title={project.problem}>folder not found</span>{/if}
                 <span class="tag">{sourceLabel(project)}</span>
-                <span class="muted when">{project.run_count ? `${project.run_count} run${project.run_count === 1 ? '' : 's'} · ${formatWhen(project.last_run ?? '')}` : 'no runs yet'}</span>
+                <span class="muted when">{project.run_count ? `${project.run_count} run${project.run_count === 1 ? '' : 's'} | ${formatWhen(project.last_run ?? '')}` : 'no runs yet'}</span>
               </button>
-              <button class="icon" title="Rename" onclick={() => ((renaming = project.id), (draft = project.name))}>✎</button>
+              <button class="icon" title="Rename" onclick={() => ((renaming = project.id), (draft = project.name))}>Edit</button>
               {#if deleting === project.id}
                 <button class="link danger-link" onclick={() => remove('project', project.id)}>Delete? (its runs stay)</button>
                 <button class="link" onclick={() => (deleting = null)}>No</button>
               {:else}
-                <button class="icon" title="Delete" onclick={() => (deleting = project.id)}>🗑</button>
+                <button class="icon" title="Delete" onclick={() => (deleting = project.id)}>Del</button>
               {/if}
             {/if}
           </li>
         {/each}
       </ul>
     {:else}
-      {#if runs.length === 0}<p class="empty muted">No runs yet.</p>{/if}
-      <ul class="rows">
-        {#each runs as run (run.id)}
-          <li>
-            {#if renaming === run.id}
-              <input class="rename" bind:value={draft} use:focusAndSelect aria-label="Run name"
-                onkeydown={(e) => (e.key === 'Enter' ? commitRename('run', run) : e.key === 'Escape' ? (renaming = null) : null)}
-                onblur={() => commitRename('run', run)} />
-            {:else}
-              <button class="row" onclick={() => openRun(run)}>
-                <b class="name">{run.name || run.id}</b>
-                <span class="muted when">{formatWhen(run.started)}</span>
-                <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
-                <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
-              </button>
-              <button class="icon" title="Rename" onclick={() => ((renaming = run.id), (draft = run.name))}>✎</button>
-              {#if deleting === run.id}
-                <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
-                <button class="link" onclick={() => (deleting = null)}>No</button>
+      {#if runs.length === 0}
+        <p class="empty muted">No runs yet.</p>
+      {:else}
+        {#if runs.length >= 2 || selectedRuns.length > 0}
+          <div class="compare-wrap">
+            <CompareBar selected={selectedRuns} {onCompare} onClear={() => (selectedIds = [])} />
+          </div>
+        {/if}
+        <ul class="rows">
+          {#each runs as run (run.id)}
+            {@const slot = pickSlot(selectedIds, run.id)}
+            <li class:editing={editingRun === run.id}>
+              {#if editingRun === run.id}
+                <RunEditor
+                  {sidecar}
+                  {run}
+                  onSave={(updated) => Object.assign(run, updated)}
+                  onClose={() => (editingRun = null)}
+                  onError={(msg) => (error = msg)}
+                />
               {:else}
-                <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>🗑</button>
+                <label class="pick" title={slot ? `Selected as ${slot}` : selectedRuns.length >= 2 ? 'Two runs already selected' : 'Select to compare'}>
+                  <input
+                    type="checkbox"
+                    checked={slot !== null}
+                    disabled={slot === null && selectedRuns.length >= 2}
+                    aria-label="Select {run.name || run.id} to compare"
+                    onchange={() => (selectedIds = toggleRunPick(selectedIds, run.id))}
+                  />
+                  {#if slot}<span class="slot" class:target={slot === 'B'}>{slot}</span>{/if}
+                </label>
+                <button class="row" onclick={() => openRun(run)}>
+                  <span class="name-wrap">
+                    <b class="name">{run.name || run.id}</b>
+                    {#if run.notes?.trim()}
+                      <span class="muted note-preview" title={run.notes}>Note: {run.notes.trim()}</span>
+                    {/if}
+                  </span>
+                  <span class="muted when">{formatWhen(run.started)}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` | ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
+                  {#if run.bytes !== undefined}<span class="tag">{formatBytes(run.bytes)}</span>{/if}
+                </button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => ((editingRun = run.id), (deleting = null))}>Edit</button>
+                {#if deleting === run.id}
+                  <button class="link danger-link" onclick={() => remove('run', run.id)}>Delete?</button>
+                  <button class="link" onclick={() => (deleting = null)}>No</button>
+                {:else}
+                  <button class="icon" title="Delete" onclick={() => (deleting = run.id)}>Del</button>
+                {/if}
               {/if}
-            {/if}
-          </li>
-        {/each}
-      </ul>
+            </li>
+          {/each}
+        </ul>
+      {/if}
     {/if}
   {/if}
 </div>
@@ -173,15 +215,25 @@
   .tabs button { padding: 8px 14px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 600; }
   .tabs button.on { color: var(--fg); border-bottom-color: var(--accent); }
   .count { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--line); margin-left: 4px; }
+  .compare-wrap { padding: 12px 18px 8px; border-bottom: 1px solid var(--line); }
   .rows { list-style: none; margin: 0; padding: 0; }
   li { display: flex; align-items: center; gap: 6px; padding: 0 12px 0 0; border-bottom: 1px solid var(--line); }
-  .row { flex: 1; display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: none; border: 0; text-align: left; }
+  li.editing { padding: 0; }
+  .pick { display: inline-flex; align-items: center; gap: 6px; padding: 8px 0 8px 18px; cursor: pointer; flex-shrink: 0; }
+  .pick input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .pick input:disabled { cursor: not-allowed; }
+  .slot { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--line); color: var(--fg); }
+  .slot.target { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--accent); }
+  .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 18px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
-  .name { flex: 1; }
+  .name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .name-wrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .name-wrap .name { flex: 0 1 auto; }
+  .note-preview { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .when { font-size: 12px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--line); }
   .tag.warn { color: var(--danger); }
-  .icon, .link { background: none; border: 0; padding: 4px 8px; color: var(--muted); }
+  .icon, .link { background: none; border: 0; padding: 4px 8px; font-size: 12px; color: var(--muted); }
   .icon:hover, .link:hover { color: var(--fg); }
   .danger-link { color: var(--danger); }
   .rename { flex: 1; margin: 8px 18px; padding: 6px 10px; font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; }

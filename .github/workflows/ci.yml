@@ -3,23 +3,24 @@ on: [push, pull_request]
 jobs:
   engine:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-      - run: cmake --build build
-      - run: ctest --test-dir build --output-on-failure
+      - run: cmake --build build --config Release
+      - run: ctest --test-dir build -C Release --output-on-failure
 
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 12
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -33,3 +34,7 @@ jobs:
       # one version everywhere: VERSION, the app and the Rust shell
       - run: node scripts/version.mjs check
       - run: node --test scripts/version.test.mjs
+      - run: node scripts/check-portability.mjs
+      - run: node --test scripts/check-portability.test.mjs
+      - run: node scripts/cpp-share.mjs
+      - run: node --test scripts/cpp-share.test.mjs

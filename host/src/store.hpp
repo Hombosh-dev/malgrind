@@ -22,17 +22,20 @@
 
 namespace malgrind::host {
 
+inline constexpr std::uint64_t kLargeRunBytes = 200ull * 1024 * 1024;
+
 // The current UTC time through strftime, e.g. utc_now("%Y%m%d-%H%M%S"). Also names the flash backups.
 [[nodiscard]] std::string utc_now(const char* fmt);
 
 struct RunMeta {
-    std::string id{}, name{}, notes{}, project{}, env{}, port{};
+    std::string id{}, name{}, notes{}, project{}, env{}, port{}, device_id{};
     std::string project_id{}; // the malgrind project (projects.hpp) this run belongs to; empty for runs made without one
     std::string started{}; // ISO-8601 UTC, "2026-11-15T20:01:02Z"
     std::optional<Arch> arch{};
     unsigned ncores = 0;
     double cpu_mhz = 0;
     std::uint64_t duration_ms = 0;
+    std::uint64_t bytes = 0;
     bool has_elf = false;
     std::optional<RunSettings> settings{}; // what the run was made with; absent for runs made before settings existed
 };
@@ -53,22 +56,26 @@ public:
     void set_elf(const std::filesystem::path& elf); // copies it into the run directory
     void finish(std::uint64_t duration_ms);
     [[nodiscard]] const RunMeta& meta() const { return meta_; }
+    [[nodiscard]] std::uint64_t bytes() const { return frames_bytes_ + elf_bytes_ + meta_bytes_; }
 
 private:
     friend class RunStore;
     RunWriter(std::filesystem::path dir, RunMeta meta);
-    void save() const;
+    void save();
 
     std::filesystem::path dir_;
     RunMeta meta_;
     std::ofstream frames_;
     std::uint32_t last_saved_ms_ = 0;
+    std::uint64_t frames_bytes_ = 0;
+    std::uint64_t elf_bytes_ = 0;
+    std::uint64_t meta_bytes_ = 0;
 };
 
 class RunStore {
 public:
     explicit RunStore(std::filesystem::path root); // created if missing
-    // $XDG_DATA_HOME/malgrind/runs, else ~/.local/share/malgrind/runs; macOS: ~/Library/Application Support/malgrind/runs
+    // Per-user data directory (os::user_data_dir()) + "/malgrind/runs".
     [[nodiscard]] static std::filesystem::path default_root();
 
     [[nodiscard]] RunWriter create(RunMeta meta); // assigns id ("yyyymmdd-hhmmss", "-2"... on a clash) and `started`

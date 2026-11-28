@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import CompareBar from '../components/CompareBar.svelte';
+  import RunEditor from '../components/RunEditor.svelte';
   import TopBar from '../components/TopBar.svelte';
-  import { formatDuration, formatWhen } from '../lib/format';
+  import { pickSlot, toggleRunPick } from '../lib/diff';
+  import { formatBytes, formatDuration, formatWhen } from '../lib/format';
   import { sourceLabel } from '../lib/projects';
   import type { Sidecar } from '../lib/sidecar';
   import type { ProjectMeta, RunMeta } from '../lib/types';
@@ -12,14 +15,21 @@
     onBack(): void;
     onProfile(project: ProjectMeta): void;
     onRun(run: RunMeta): void; // a stored run of this project, opened for replay
+    onCompare(a: RunMeta, b: RunMeta): void;
   }
-  let { sidecar, id, onBack, onProfile, onRun }: Props = $props();
+  let { sidecar, id, onBack, onProfile, onRun, onCompare }: Props = $props();
 
   let project = $state<ProjectMeta | null>(null);
   let runs = $state<RunMeta[]>([]);
   let error = $state('');
   let renaming = $state(false);
   let draft = $state('');
+  let editingRun = $state<string | null>(null);
+  let selectedIds = $state<string[]>([]);
+
+  const selectedRuns = $derived(
+    selectedIds.map((rid) => runs.find((r) => r.id === rid)).filter((r): r is RunMeta => r !== undefined),
+  );
 
   const fail = (e: unknown) => (error = String(e instanceof Error ? e.message : e));
 
@@ -75,7 +85,7 @@
               onkeydown={(e) => (e.key === 'Enter' ? commitRename() : e.key === 'Escape' ? (renaming = false) : null)}
               onblur={commitRename} />
           {:else}
-            <h1>{project.name} <button class="icon" title="Rename the project" aria-label="Rename the project" onclick={() => ((renaming = true), (draft = project!.name))}>✎</button></h1>
+            <h1>{project.name} <button class="icon" title="Rename the project" aria-label="Rename the project" onclick={() => ((renaming = true), (draft = project!.name))}>Edit</button></h1>
           {/if}
           <p class="muted">
             <span class="tag">{sourceLabel(project)}</span>
@@ -83,7 +93,7 @@
           </p>
           {#if project.problem}<p class="error">{project.problem}</p>{/if}
         </div>
-        <button class="btn big" onclick={() => onProfile(project!)} disabled={!!project.problem && project.source !== 'none'}>Profile ▸</button>
+        <button class="btn big" onclick={() => onProfile(project!)} disabled={!!project.problem && project.source !== 'none'}>Profile &gt;</button>
       </div>
 
       {#if project.source === 'git' && !project.trusted}
@@ -104,14 +114,49 @@
       {#if runs.length === 0}
         <p class="muted">Nothing recorded yet. Press Profile, choose the board and how to look at it.</p>
       {:else}
+        {#if runs.length >= 2 || selectedRuns.length > 0}
+          <div class="compare-wrap">
+            <CompareBar selected={selectedRuns} {onCompare} onClear={() => (selectedIds = [])} />
+          </div>
+        {/if}
         <ul>
           {#each runs as run (run.id)}
-            <li><button class="row" onclick={() => open(run)}>
-              <b class="name">{run.name || run.id}</b>
-              <span class="muted when">{formatWhen(run.started)}</span>
-              <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` · ${run.ncores} cores` : ''}</span>
-              <span class="tag">{formatDuration(run.duration_ms)}</span>
-            </button></li>
+            {@const slot = pickSlot(selectedIds, run.id)}
+            <li>
+              {#if editingRun === run.id}
+                <RunEditor
+                  {sidecar}
+                  {run}
+                  onSave={(updated) => Object.assign(run, updated)}
+                  onClose={() => (editingRun = null)}
+                  onError={(msg) => (error = msg)}
+                />
+              {:else}
+                <label class="pick" title={slot ? `Selected as ${slot}` : selectedRuns.length >= 2 ? 'Two runs already selected' : 'Select to compare'}>
+                  <input
+                    type="checkbox"
+                    checked={slot !== null}
+                    disabled={slot === null && selectedRuns.length >= 2}
+                    aria-label="Select {run.name || run.id} to compare"
+                    onchange={() => (selectedIds = toggleRunPick(selectedIds, run.id))}
+                  />
+                  {#if slot}<span class="slot" class:target={slot === 'B'}>{slot}</span>{/if}
+                </label>
+                <button class="row" onclick={() => open(run)}>
+                  <span class="name-wrap">
+                    <b class="name">{run.name || run.id}</b>
+                    {#if run.notes?.trim()}
+                      <span class="muted note-preview" title={run.notes}>Note: {run.notes.trim()}</span>
+                    {/if}
+                  </span>
+                  <span class="muted when">{formatWhen(run.started)}</span>
+                  <span class="tag">{run.arch ?? 'no data'}{run.ncores ? ` | ${run.ncores} cores` : ''}</span>
+                  <span class="tag">{run.live ? 'recording' : formatDuration(run.duration_ms)}</span>
+                  {#if run.bytes !== undefined}<span class="tag">{formatBytes(run.bytes)}</span>{/if}
+                </button>
+                <button class="icon" title="Edit name and notes" aria-label="Edit name and notes" onclick={() => (editingRun = run.id)}>Edit</button>
+              {/if}
+            </li>
           {/each}
         </ul>
       {/if}
@@ -125,19 +170,27 @@
   section { max-width: 820px; margin: 0 auto; padding: 24px; }
   .head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
   h1 { margin: 0 0 4px; font-size: 24px; }
-  .icon { background: none; border: 0; padding: 2px 6px; font-size: 15px; color: var(--muted); vertical-align: middle; }
+  .icon { background: none; border: 0; padding: 2px 6px; font-size: 12px; color: var(--muted); vertical-align: middle; }
   .icon:hover { color: var(--fg); }
   .rename { width: 100%; margin: 0 0 6px; padding: 6px 10px; font: 600 22px var(--font); color: var(--fg); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; }
   h2 { margin: 28px 0 8px; font-size: 15px; }
+  .compare-wrap { margin: 0 0 10px; }
   .btn.big { padding: 14px 32px; font-size: 16px; }
   .trust { margin: 16px 0; padding: 12px 14px; border: 1px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
   .trust .btn { margin-top: 10px; }
   .env { display: block; margin-top: 14px; }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
-  li { border-bottom: 1px solid var(--line); }
-  .row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 6px; background: none; border: 0; text-align: left; }
+  li { display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--line); }
+  .pick { display: inline-flex; align-items: center; gap: 6px; padding: 8px 4px; cursor: pointer; flex-shrink: 0; }
+  .pick input { margin: 0; accent-color: var(--accent); cursor: pointer; }
+  .pick input:disabled { cursor: not-allowed; }
+  .slot { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 5px; background: var(--line); color: var(--fg); }
+  .slot.target { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); color: var(--accent); }
+  .row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 6px; background: none; border: 0; text-align: left; }
   .row:hover { background: var(--panel); }
-  .name { flex: 1; }
+  .name-wrap { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
+  .name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .note-preview { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
   .when { font-size: 12px; }
   .tag { font-size: 11px; padding: 2px 8px; border-radius: 5px; background: var(--line); margin-right: 6px; }
   .count { font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--line); }

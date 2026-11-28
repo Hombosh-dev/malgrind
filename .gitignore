@@ -22,7 +22,6 @@ __pycache__/
 *.egg-info/
 
 sdkconfig.esp32dev*
-.superpowers/
 build-app/
 app/node_modules/
 app/dist/

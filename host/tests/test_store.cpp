@@ -1,6 +1,8 @@
 // Run store self-check: persistence, crash safety and the id rules.
 #include "store.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
@@ -113,10 +115,87 @@ void elf_copy() {
     fs::create_directories(root);
     std::ofstream(elf) << "ELF!";
     RunStore store(root / "runs");
-    auto w = store.create({});
-    assert(store.elf(w.meta().id).empty());
-    w.set_elf(elf);
-    assert(store.get(w.meta().id)->has_elf && fs::file_size(store.elf(w.meta().id)) == 4);
+    {
+        auto w = store.create({});
+        assert(store.elf(w.meta().id).empty());
+        w.set_elf(elf);
+        assert(store.get(w.meta().id)->has_elf && fs::file_size(store.elf(w.meta().id)) == 4);
+    }
+    fs::remove_all(root);
+}
+
+void device_id_roundtrip_and_legacy_meta() {
+    const auto root = fresh_root("malgrind_store_g");
+    std::string id;
+    {
+        RunStore store(root);
+        id = store.create({.name = "dev-run", .port = "ttyUSB0", .device_id = "usb-10c4-ea60-sn-0001"}).meta().id;
+    }
+    RunStore again(root);
+    const auto roundtrip = again.get(id);
+    assert(roundtrip && roundtrip->port == "ttyUSB0" && roundtrip->device_id == "usb-10c4-ea60-sn-0001");
+
+    // Old meta.json written before device_id and bytes existed must load cleanly and compute bytes from disk.
+    const auto legacy_dir = root / "20260101-000000";
+    fs::create_directories(legacy_dir);
+    const std::string legacy_meta =
+        R"({"id":"20260101-000000","name":"legacy","port":"/dev/ttyUSB0","started":"2026-01-01T00:00:00Z"})";
+    std::ofstream(legacy_dir / "meta.json") << legacy_meta;
+    std::ofstream(legacy_dir / "frames.mlg", std::ios::binary) << "12345678";
+    const auto expected_legacy_bytes = fs::file_size(legacy_dir / "meta.json") + fs::file_size(legacy_dir / "frames.mlg");
+    const auto legacy = again.get("20260101-000000");
+    assert(legacy && legacy->port == "/dev/ttyUSB0" && legacy->device_id.empty());
+    assert(legacy->bytes == expected_legacy_bytes);
+    const auto all_runs = again.list();
+    assert(all_runs.size() == 2 && all_runs[1].id == "20260101-000000" && all_runs[1].bytes == expected_legacy_bytes);
+    fs::remove_all(root);
+}
+
+void bytes_tracked_across_writes() {
+    const auto root = fresh_root("malgrind_store_bytes");
+    const auto elf = root / "in.elf";
+    fs::create_directories(root);
+    std::ofstream(elf, std::ios::binary) << std::string(512, 'E');
+
+    RunStore store(root / "runs");
+    std::string id;
+    std::uint64_t final_bytes = 0;
+    {
+        auto w = store.create({.name = "sized"});
+        id = w.meta().id;
+        const auto after_create = w.bytes();
+        assert(after_create > 0 && w.meta().bytes == after_create);
+        assert(store.get(id)->bytes == after_create);
+
+        w.append(10, kAb); // 6-byte header + 2 bytes payload = 8 bytes
+        assert(w.bytes() == after_create + 8);
+        assert(w.meta().bytes == w.bytes());
+
+        // Chunk > 65535 splits into two records (2 * 6 + 70000 bytes).
+        const std::vector<std::uint8_t> big(70000, 0x5a);
+        w.append(20, big);
+        assert(w.bytes() == after_create + 8 + 12 + big.size());
+
+        const auto before_elf = w.bytes();
+        w.set_elf(elf);
+        assert(w.bytes() >= before_elf + 512);
+        assert(w.meta().bytes == w.bytes());
+
+        w.finish(25);
+        final_bytes = w.bytes();
+        assert(w.meta().bytes == final_bytes);
+    }
+
+    const auto listed = store.list();
+    assert(listed.size() == 1 && listed[0].bytes == final_bytes);
+    const auto fetched = store.get(id);
+    assert(fetched && fetched->bytes == final_bytes);
+
+    {
+        std::ifstream meta_in(root / "runs" / id / "meta.json");
+        const auto meta_json = nlohmann::json::parse(meta_in);
+        assert(meta_json.contains("bytes") && meta_json["bytes"].is_number_unsigned() && meta_json["bytes"] > 0);
+    }
     fs::remove_all(root);
 }
 
@@ -130,5 +209,7 @@ int main() {
     update_and_remove();
     id_collision();
     elf_copy();
+    device_id_roundtrip_and_legacy_meta();
+    bytes_tracked_across_writes();
     std::puts("store ok");
 }
