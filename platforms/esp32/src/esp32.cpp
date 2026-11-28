@@ -317,7 +317,7 @@ void send_hello(std::uint16_t seq, bool sampling, std::uint32_t analyses) {
 
 // Called from flusher_task only (never from the timer ISR).
 void send_heap_stats(std::uint16_t seq, std::uint32_t t_ms) {
-    HeapRegion regions[3]{};
+    malgrind::HeapRegion regions[3]{};
     std::size_t count = 0;
 
     auto add_region = [&](std::uint8_t id, std::uint32_t caps, bool required) {
