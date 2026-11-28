@@ -225,7 +225,7 @@ fs::path agent_elf(const ProjectInfo& project, const std::string& env) {
     return project.dir / ".pio/malgrind/build" / env / "firmware.elf";
 }
 
-std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args) {
+std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, const std::string& port, unsigned baud, std::vector<std::string> args) {
     const fs::path script_path = home / ".platformio/packages/tool-esptoolpy/esptool.py";
     // PlatformIO's own Python has pyserial; its launcher script names it in the shebang line
     std::ifstream script(pio);
@@ -235,13 +235,13 @@ std::optional<Invocation> esptool(const fs::path& pio, const fs::path& home, con
     Invocation inv; // "#!/usr/bin/env python3" is two words
     std::istringstream words(shebang.substr(2));
     for (std::string w; words >> w;) inv.argv.push_back(w);
-    for (auto& a : std::vector<std::string>{script_path.string(), "--port", port, "--baud", "921600"}) inv.argv.push_back(std::move(a));
+    for (auto& a : std::vector<std::string>{script_path.string(), "--port", port, "--baud", std::to_string(baud)}) inv.argv.push_back(std::move(a));
     for (auto& a : args) inv.argv.push_back(std::move(a));
     return inv;
 }
 
 std::optional<std::string> chip_id(const fs::path& pio, const std::string& port, const fs::path& home) {
-    const auto inv = esptool(pio, home, port, {"chip_id"});
+    const auto inv = esptool(pio, home, port, 115200, {"chip_id"}); // moves no data: the slow rate cannot fail on a poor cable
     if (!inv) return std::nullopt;
     const auto out = capture(inv->argv);
     const auto at = out.find("Chip is ");

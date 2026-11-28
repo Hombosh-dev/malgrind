@@ -86,11 +86,11 @@ void write_agent_sdkconfig(const ProjectInfo& project, const std::string& env, c
 // The ELF agent_build produces (it symbolizes the frames the flashed board sends).
 [[nodiscard]] std::filesystem::path agent_elf(const ProjectInfo& project, const std::string& env);
 
-// esptool.py (PlatformIO's copy, run with PlatformIO's Python) as `esptool.py --port P --baud 921600 <args>`.
+// esptool.py (PlatformIO's copy, run with PlatformIO's Python) as `esptool.py --port P --baud <baud> <args>`.
 // nullopt if the launcher's interpreter or the esptool package cannot be found. esptool resets the board, and every
 // command prints "Chip is ..." and "MAC: ..." when it connects.
 [[nodiscard]] std::optional<Invocation> esptool(const std::filesystem::path& pio, const std::filesystem::path& home,
-                                                const std::string& port, std::vector<std::string> args);
+                                                const std::string& port, unsigned baud, std::vector<std::string> args);
 
 // "ESP32-D0WD-V3 (revision v3.1)" etc. through esptool, which resets the board. nullopt if esptool cannot be run.
 [[nodiscard]] std::optional<std::string> chip_id(const std::filesystem::path& pio, const std::string& port,

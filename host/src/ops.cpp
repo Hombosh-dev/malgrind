@@ -90,18 +90,26 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// An esptool command, its output forwarded line by line and also returned as one text. Throws if it fails.
+// Fastest first. A poor cable or USB-serial chip connects at 115200 but garbles the faster rates ("Invalid SLIP escape").
+constexpr std::array kEsptoolBauds{921600u, 460800u, 230400u, 115200u};
+
+// An esptool command, its output forwarded line by line and also returned as one text. Throws if it fails. If esptool
+// connected but failed after it switched to the fast rate, the command is run again, slower: they are all safe to repeat.
 std::string run_esptool(const fs::path& pio, const fs::path& home, const std::string& port, std::vector<std::string> args,
                         const LineFn& on_line) {
-    const auto inv = esptool(pio, home, port, std::move(args));
-    if (!inv) throw std::runtime_error("esptool was not found: PlatformIO has not downloaded it yet (build any ESP32 project once)");
-    std::string all;
-    const int code = run_lines(inv->argv, inv->env, [&](std::string_view line) {
-        all.append(line).append("\n");
-        on_line(line);
-    });
-    if (code != 0) throw std::runtime_error(std::format("esptool failed (exit code {}): is the board connected and not in use?\n{}", code, all));
-    return all;
+    for (std::size_t i = 0;; ++i) {
+        const auto inv = esptool(pio, home, port, kEsptoolBauds[i], args);
+        if (!inv) throw std::runtime_error("esptool was not found: PlatformIO has not downloaded it yet (build any ESP32 project once)");
+        std::string all;
+        const int code = run_lines(inv->argv, inv->env, [&](std::string_view line) {
+            all.append(line).append("\n");
+            on_line(line);
+        });
+        if (code == 0) return all;
+        if (all.find("Changing baud rate") == std::string::npos || i + 1 == kEsptoolBauds.size())
+            throw std::runtime_error(std::format("esptool failed (exit code {}): is the board connected and not in use?\n{}", code, all));
+        on_line(std::format("the link broke at {} baud (a poor cable or USB-serial chip?): trying {}", kEsptoolBauds[i], kEsptoolBauds[i + 1]));
+    }
 }
 
 struct Board {

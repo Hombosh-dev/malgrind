@@ -52,9 +52,13 @@ echo "pio $* build=$PLATFORMIO_BUILD_DIR rate=$MALGRIND_RATE_HZ flags=$PLATFORMI
 mkdir -p "$FAKE_ESPTOOL_DIR" && cp "$FAKE_ESPTOOL_SRC" "$FAKE_ESPTOOL_DIR/esptool.py"
 )", true);
         write(root / "esptool.src", R"(echo "esptool $*" >> "$FAKE_LOG"
+BAUD=$4
 shift 4   # --port P --baud B
 echo "Chip is ESP32-D0WD-V3"
 echo "MAC: 24:0a:c4:AA:bb:0c"
+if [ -n "$FAKE_MAX_BAUD" ] && [ "$BAUD" -gt "$FAKE_MAX_BAUD" ]; then   # a poor cable
+  echo "Changing baud rate to $BAUD"; echo "A fatal error occurred: Invalid SLIP escape 0xdb" >&2; exit 2
+fi
 case "$1" in
 flash_id) echo "Detected flash size: 4MB" ;;
 read_flash)
@@ -74,6 +78,7 @@ exit 0
         setenv("FAKE_LOG", log.c_str(), 1);
         setenv("PATH", "/usr/bin:/bin", 1); // not the real pio
         unsetenv("FAKE_FAIL");
+        unsetenv("FAKE_MAX_BAUD");
         unsetenv("FAKE_AGENT_IMAGE");
     }
     ~Fake() { fs::remove_all(root); }
@@ -236,8 +241,31 @@ void methods_say_what_is_missing() {
 
 } // namespace
 
+void a_poor_cable_gets_a_slower_rate() {
+    Fake fake;
+    Pty board;
+    setenv("FAKE_MAX_BAUD", "230400", 1);
+    Lines lines;
+    fake.flash(board.slave, lines);
+    const auto calls = fake.calls();
+    assert(contains(lines.text, "trying 460800") && contains(lines.text, "trying 230400") && !contains(lines.text, "trying 115200"));
+    assert(contains(calls, "--baud 230400 read_flash") && fake.backup_count() == 1);
+
+    Fake fake2; // a board that stays in its pty busy after a flash: use a fresh one
+    Pty board2;
+    setenv("FAKE_MAX_BAUD", "9600", 1); // nothing works: the last error is reported, not retried for ever
+    bool threw = false;
+    try {
+        fake2.flash(board2.slave, lines);
+    } catch (const std::exception& e) {
+        threw = contains(e.what(), "Invalid SLIP escape");
+    }
+    assert(threw);
+}
+
 int main() {
     backs_up_then_flashes();
+    a_poor_cable_gets_a_slower_rate();
     no_backup_no_flash();
     board_with_agent_is_not_backed_up_again();
     our_own_image_is_not_kept();

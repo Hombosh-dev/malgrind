@@ -66,6 +66,12 @@ std::optional<Source> Source::open(const std::string& port, unsigned baud) {
     return Source(fd, true);
 }
 
+Source Source::from_fd(int fd, std::shared_ptr<void> owner) {
+    Source source(fd, true);
+    source.owner_ = std::move(owner);
+    return source;
+}
+
 Source::~Source() {
     if (owns_ && fd_ >= 0) ::close(fd_);
 }
