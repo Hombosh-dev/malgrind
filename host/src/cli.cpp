@@ -99,6 +99,7 @@ std::optional<Device> resolve_serial_device(const Options& o, const ServeOptions
             std::cerr << "device " << ref << " is not a serial port\n";
             return std::nullopt;
         }
+        if (ref == "-") return Device{.id = "", .kind = DeviceKind::Serial, .path = "-", .name = "stdin"}; // `host_runner | attach`
         if (std::error_code ec; fs::exists(os::from_utf8(ref), ec)) {
             return Device{.id = "", .kind = DeviceKind::Serial, .path = ref, .name = os::to_utf8(os::from_utf8(ref).filename())};
         }
